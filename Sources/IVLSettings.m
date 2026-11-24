@@ -1,0 +1,104 @@
+#import "IVLSettings.h"
+
+NSNotificationName const IVLSettingsDidChangeNotification = @"IVLSettingsDidChangeNotification";
+
+NSString *const IVLKeyEnabled = @"enabled";
+NSString *const IVLKeyShowButton = @"showButton";
+NSString *const IVLKeyMiniLyric = @"miniLyric";
+NSString *const IVLKeyKeepAwake = @"keepAwake";
+NSString *const IVLKeyFontSize = @"fontSize";
+NSString *const IVLKeyAlignment = @"alignment";
+NSString *const IVLKeyKaraoke = @"karaoke";
+NSString *const IVLKeyShowBreaks = @"showBreaks";
+NSString *const IVLKeyBackground = @"background";
+NSString *const IVLKeyTranslation = @"translation";
+NSString *const IVLKeyTranslationLang = @"translationLang";
+NSString *const IVLKeyPronunciation = @"pronunciation";
+NSString *const IVLKeyProviderUnison = @"providerUnison";
+NSString *const IVLKeyProviderLRCLIB = @"providerLRCLIB";
+NSString *const IVLKeyProviderOrder = @"providerOrder";
+NSString *const IVLKeyGlobalOffset = @"globalOffset";
+NSString *const IVLKeyAutoResume = @"autoResume";
+NSString *const IVLKeyButtonX = @"buttonX";
+NSString *const IVLKeyButtonY = @"buttonY";
+NSString *const IVLKeySongOffsets = @"songOffsets";
+
+static NSString *const kDomain = @"ivLyricsYTM";
+
+@implementation IVLSettings
+
++ (NSDictionary *)defaults {
+    static NSDictionary *d;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        d = @{
+            IVLKeyEnabled: @YES,
+            IVLKeyShowButton: @YES,
+            IVLKeyMiniLyric: @YES,
+            IVLKeyKeepAwake: @YES,
+            IVLKeyFontSize: @28.0,
+            IVLKeyAlignment: @0,
+            IVLKeyKaraoke: @YES,
+            IVLKeyShowBreaks: @YES,
+            IVLKeyBackground: @0,
+            IVLKeyTranslation: @NO,
+            IVLKeyTranslationLang: [self defaultTranslationLanguage],
+            IVLKeyPronunciation: @0,
+            IVLKeyProviderUnison: @YES,
+            IVLKeyProviderLRCLIB: @YES,
+            IVLKeyProviderOrder: @0,
+            IVLKeyGlobalOffset: @0,
+            IVLKeyAutoResume: @3,
+            IVLKeyButtonX: @0.9,
+            IVLKeyButtonY: @0.2,
+            IVLKeySongOffsets: @{},
+        };
+    });
+    return d;
+}
+
++ (NSString *)defaultTranslationLanguage {
+    NSString *pref = [NSLocale preferredLanguages].firstObject ?: @"en";
+    if ([pref hasPrefix:@"zh-Hant"] || [pref hasPrefix:@"zh-TW"] || [pref hasPrefix:@"zh-HK"]) return @"zh-TW";
+    if ([pref hasPrefix:@"zh"]) return @"zh-CN";
+    NSString *code = [[pref componentsSeparatedByString:@"-"] firstObject];
+    return code.length ? code : @"en";
+}
+
++ (NSDictionary *)store {
+    return [[NSUserDefaults standardUserDefaults] dictionaryForKey:kDomain] ?: @{};
+}
+
++ (id)objectForKey:(NSString *)key {
+    id v = [self store][key];
+    return v ?: [self defaults][key];
+}
+
++ (BOOL)boolForKey:(NSString *)key { return [[self objectForKey:key] boolValue]; }
++ (NSInteger)integerForKey:(NSString *)key { return [[self objectForKey:key] integerValue]; }
++ (double)doubleForKey:(NSString *)key { return [[self objectForKey:key] doubleValue]; }
+
++ (void)setObject:(id)value forKey:(NSString *)key {
+    NSMutableDictionary *m = [[self store] mutableCopy];
+    if (value) m[key] = value; else [m removeObjectForKey:key];
+    [[NSUserDefaults standardUserDefaults] setObject:m forKey:kDomain];
+    [[NSNotificationCenter defaultCenter] postNotificationName:IVLSettingsDidChangeNotification object:key];
+}
+
++ (void)setBool:(BOOL)value forKey:(NSString *)key { [self setObject:@(value) forKey:key]; }
+
++ (NSInteger)songOffsetForVideoID:(NSString *)videoID {
+    if (!videoID.length) return 0;
+    NSDictionary *d = [self objectForKey:IVLKeySongOffsets];
+    return [d isKindOfClass:[NSDictionary class]] ? [d[videoID] integerValue] : 0;
+}
+
++ (void)setSongOffset:(NSInteger)ms forVideoID:(NSString *)videoID {
+    if (!videoID.length) return;
+    NSDictionary *d = [self objectForKey:IVLKeySongOffsets];
+    NSMutableDictionary *m = [d isKindOfClass:[NSDictionary class]] ? [d mutableCopy] : [NSMutableDictionary dictionary];
+    if (ms == 0) [m removeObjectForKey:videoID]; else m[videoID] = @(ms);
+    [self setObject:m forKey:IVLKeySongOffsets];
+}
+
+@end

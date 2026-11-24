@@ -1,0 +1,88 @@
+name: Build ivLyricsYTM
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      ipa_url:
+        description: "(Optional) URL of a decrypted YouTube Music IPA to inject the dylib into"
+        default: ""
+        required: false
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: main
+
+      - name: Install dependencies
+        run: brew install make ldid
+
+      - name: Set PATH environment variables
+        run: |
+          echo "$(brew --prefix make)/libexec/gnubin" >> $GITHUB_PATH
+          echo "THEOS=${{ github.workspace }}/theos" >> $GITHUB_ENV
+
+      - name: Cache Theos
+        id: theos
+        uses: actions/cache@v4
+        with:
+          path: theos/
+          key: theos_cache_344ee59
+
+      - name: Setup Theos
+        if: steps.theos.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: theos/theos
+          ref: 344ee5925df036dbd1312b783ad5a00d153c2445
+          path: theos
+          submodules: recursive
+
+      - name: Download iOS SDK
+        if: steps.theos.outputs.cache-hit != 'true'
+        run: |
+          git clone --quiet -n --depth=1 --filter=tree:0 https://github.com/theos/sdks.git
+          cd sdks
+          git sparse-checkout set --no-cone iPhoneOS16.5.sdk
+          git checkout
+          mv *.sdk $THEOS/sdks
+
+      - name: Build dylib
+        run: |
+          cd main
+          make clean all DEBUG=0 FINALPACKAGE=1
+          mkdir -p ../out
+          cp "$(find .theos/obj -name 'ivLyricsYTM.dylib' -not -path '*/arm64/*' | head -n 1)" ../out/ivLyricsYTM.dylib
+          file ../out/ivLyricsYTM.dylib
+          otool -L ../out/ivLyricsYTM.dylib
+
+      - name: Build jailbreak packages
+        run: |
+          cd main
+          make clean package DEBUG=0 FINALPACKAGE=1 JAILBREAK=1
+          make clean package DEBUG=0 FINALPACKAGE=1 JAILBREAK=1 ROOTLESS=1
+          cp packages/*.deb ../out/
+
+      - name: Inject into IPA
+        if: ${{ inputs.ipa_url != '' }}
+        run: |
+          pipx install --force https://github.com/asdfzxcvbn/pyzule-rw/archive/main.zip
+          wget "${{ inputs.ipa_url }}" --no-verbose -O ytm.ipa
+          cyan -i ytm.ipa -o out/YouTubeMusic_ivLyrics.ipa -uwsf out/ivLyricsYTM.dylib
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ivLyricsYTM
+          path: out/*
