@@ -52,7 +52,7 @@ NSNotificationName const IVLLyricsDidChangeNotification = @"IVLLyricsDidChangeNo
     if ([key isEqualToString:IVLKeyTranslation] || [key isEqualToString:IVLKeyTranslationLang] || [key isEqualToString:IVLKeyPronunciation]) {
         [self refreshExtras];
     } else if ([key isEqualToString:IVLKeyProviderUnison] || [key isEqualToString:IVLKeyProviderLRCLIB] || [key isEqualToString:IVLKeyProviderOrder]
-               || [key isEqualToString:IVLKeyProviderLyricsPlus] || [key isEqualToString:IVLKeyProviderLyrically]) {
+               || [key isEqualToString:IVLKeyProviderLyricsPlus] || [key isEqualToString:IVLKeyProviderYouTube] || [key isEqualToString:IVLKeyProviderLyrically]) {
         if (self.state == IVLLyricsStateNotFound || self.state == IVLLyricsStateError) [self reloadLyrics];
     }
 }
@@ -210,6 +210,7 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
 
     IVLTrack *t = [IVLTrack new];
     t.videoID = key;
+    t.youtubeVideoID = vid.length ? vid : nil;
     t.title = title;
     t.artist = artist;
     t.duration = duration;

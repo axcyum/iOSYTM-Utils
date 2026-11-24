@@ -19,6 +19,7 @@ extern NSString *const IVLKeyTranslationLang;    // NSString (BCP-47, e.g. "ja")
 extern NSString *const IVLKeyPronunciation;      // 0 = off, 1 = romaji/latin, 2 = kana (Japanese)
 extern NSString *const IVLKeyProviderUnison;     // BOOL
 extern NSString *const IVLKeyProviderLRCLIB;     // BOOL
+extern NSString *const IVLKeyProviderYouTube;    // BOOL
 extern NSString *const IVLKeyProviderLyricsPlus; // BOOL
 extern NSString *const IVLKeyProviderLyrically;  // BOOL
 extern NSString *const IVLKeyProviderOrder;      // NSArray of provider ids, highest priority first
@@ -41,7 +42,7 @@ extern NSString *const IVLKeySongOffsets;        // NSDictionary videoID -> ms
 
 + (NSString *)defaultTranslationLanguage;
 
-/// Lyrics providers: "lyricsplus", "unison", "lyrically", "lrclib"
+/// Lyrics providers: "youtube", "lyricsplus", "unison", "lyrically", "lrclib"
 + (NSArray<NSString *> *)providerIDs;                 // all known ids in user order
 + (void)setProviderIDs:(NSArray<NSString *> *)ids;
 + (NSArray<NSString *> *)enabledProviderIDs;

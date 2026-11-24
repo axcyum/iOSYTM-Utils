@@ -16,6 +16,7 @@ NSString *const IVLKeyTranslationLang = @"translationLang";
 NSString *const IVLKeyPronunciation = @"pronunciation";
 NSString *const IVLKeyProviderUnison = @"providerUnison";
 NSString *const IVLKeyProviderLRCLIB = @"providerLRCLIB";
+NSString *const IVLKeyProviderYouTube = @"providerYouTube";
 NSString *const IVLKeyProviderLyricsPlus = @"providerLyricsPlus";
 NSString *const IVLKeyProviderLyrically = @"providerLyrically";
 NSString *const IVLKeyProviderOrder = @"providerOrderList";
@@ -48,6 +49,7 @@ static NSString *const kDomain = @"ivLyricsYTM";
             IVLKeyPronunciation: @0,
             IVLKeyProviderUnison: @YES,
             IVLKeyProviderLRCLIB: @YES,
+            IVLKeyProviderYouTube: @YES,
             IVLKeyProviderLyricsPlus: @YES,
             IVLKeyProviderLyrically: @YES,
             IVLKeyProviderOrder: [self knownProviders],
@@ -71,7 +73,7 @@ static NSString *const kDomain = @"ivLyricsYTM";
 
 + (NSArray<NSString *> *)knownProviders {
     // word-synced sources first
-    return @[@"lyricsplus", @"unison", @"lyrically", @"lrclib"];
+    return @[@"youtube", @"lyricsplus", @"unison", @"lyrically", @"lrclib"];
 }
 
 + (NSArray<NSString *> *)providerIDs {
@@ -81,19 +83,22 @@ static NSString *const kDomain = @"ivLyricsYTM";
     if ([saved isKindOfClass:[NSArray class]]) {
         for (id pid in saved) if ([known containsObject:pid] && ![out containsObject:pid]) [out addObject:pid];
     }
-    for (NSString *pid in known) if (![out containsObject:pid]) [out addObject:pid];
+    // providers added in an update go to their default position, not to the end
+    for (NSUInteger i = 0; i < known.count; i++) {
+        if (![out containsObject:known[i]]) [out insertObject:known[i] atIndex:MIN(i, out.count)];
+    }
     return out;
 }
 
 + (void)setProviderIDs:(NSArray<NSString *> *)ids { [self setObject:[ids copy] forKey:IVLKeyProviderOrder]; }
 
 + (NSString *)enableKeyForProvider:(NSString *)pid {
-    return @{ @"lyricsplus": IVLKeyProviderLyricsPlus, @"unison": IVLKeyProviderUnison,
+    return @{ @"youtube": IVLKeyProviderYouTube, @"lyricsplus": IVLKeyProviderLyricsPlus, @"unison": IVLKeyProviderUnison,
               @"lyrically": IVLKeyProviderLyrically, @"lrclib": IVLKeyProviderLRCLIB }[pid] ?: @"";
 }
 
 + (NSString *)nameForProvider:(NSString *)pid {
-    return @{ @"lyricsplus": @"LyricsPlus", @"unison": @"Unison", @"lyrically": @"Lyrically", @"lrclib": @"LRCLIB" }[pid] ?: pid;
+    return @{ @"youtube": @"YouTube Music", @"lyricsplus": @"LyricsPlus", @"unison": @"Unison", @"lyrically": @"Lyrically", @"lrclib": @"LRCLIB" }[pid] ?: pid;
 }
 
 + (NSArray<NSString *> *)enabledProviderIDs {

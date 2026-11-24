@@ -33,7 +33,8 @@ UI はスマートフォンで片手操作しやすいように、一から作�
 - アカウントメニューにも「ivLyrics」の設定項目を追加します
 
 **歌詞の取得**
-- LyricsPlus / Unison / Lyrically（Apple Music カタログ・KuGou）/ LRCLIB に対応
+- YouTube Music 公式歌詞（アプリの「歌詞」タブと同じもの。InnerTube のモバイルクライアントから時間同期付きで取得）/ LyricsPlus / Unison / Lyrically（Apple Music カタログ・KuGou）/ LRCLIB に対応
+- 日本語・韓国語・中国語の曲でローマ字化された歌詞が返ってきた場合は、優先度を下げます
 - 有効なソースは同時に検索し、単語同期 > 行同期 > テキストの順で採用します。同じ種類なら、設定画面でドラッグして決めた順番が上のソースを優先します
 - 同期歌詞が見つからないときは、テキスト歌詞を表示します
 - 「(Official Video)」「- Topic」「feat.」などのタイトル・アーティスト表記を整えてから検索します
@@ -84,6 +85,7 @@ Sources/
   YTMHeaders.h                YouTube Music のプライベート API 宣言（YTMusicUltimate の Headers から抜粋）
   IVLPlaybackManager.*        曲変更の検出、再生位置（補間・オフセット込み）、シーク
   IVLLyricsService.*          ソースの並列検索と選択、Unison / LRCLIB、メタデータ整形、キャッシュ、言語判定
+  IVLYouTubeProvider.m        YouTube Music 公式歌詞（next → 歌詞 browseId → browse の timedLyricsData）
   IVLExtraProviders.m         LyricsPlus / Lyrically（ivLyrics の各 Addon を移植）
   IVLLyricsParser.*           LRC / 拡張 LRC / TTML / プレーンテキストのパーサー（ivLyrics の実装を移植）
   IVLTranslator.*             翻訳（Google gtx）と端末内の発音生成（CFStringTokenizer / ICU）

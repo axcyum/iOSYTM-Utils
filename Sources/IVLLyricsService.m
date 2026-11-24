@@ -55,7 +55,7 @@ static const NSTimeInterval kDurationTolerance = 15.0;   // same as ivLyrics' LR
     NSString *pattern = [NSString stringWithFormat:@"\\s*[\\(\\[【「（][^\\)\\]】」）]*%@[^\\)\\]】」）]*[\\)\\]】」）]", kw];
     t = [t stringByReplacingOccurrencesOfString:pattern withString:@"" options:NSRegularExpressionSearch | NSCaseInsensitiveSearch range:NSMakeRange(0, t.length)];
     // (feat. X) / ft. X
-    t = [t stringByReplacingOccurrencesOfString:@"\\s*[\\(\\[](feat\\.?|ft\\.?|featuring)\\s[^\\)\\]]*[\\)\\]]" withString:@"" options:NSRegularExpressionSearch | NSCaseInsensitiveSearch range:NSMakeRange(0, t.length)];
+    t = [t stringByReplacingOccurrencesOfString:@"\\s*[\\(\\[（](feat\\.?|ft\\.?|featuring)\\s[^\\)\\]）]*[\\)\\]）]" withString:@"" options:NSRegularExpressionSearch | NSCaseInsensitiveSearch range:NSMakeRange(0, t.length)];
     t = [t stringByReplacingOccurrencesOfString:@"\\s+(feat\\.?|ft\\.?)\\s.*$" withString:@"" options:NSRegularExpressionSearch | NSCaseInsensitiveSearch range:NSMakeRange(0, t.length)];
     t = [t stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
     return t.length ? t : title;
@@ -225,17 +225,30 @@ static NSURL *IVLURL(NSString *base, NSString *path, NSDictionary<NSString *, NS
 }
 
 - (void)invokeProvider:(NSString *)pid track:(IVLTrack *)track completion:(IVLLyricsCompletion)done {
-    if ([pid isEqualToString:@"lyricsplus"]) [self lyricsPlusForTrack:track completion:done];
+    if ([pid isEqualToString:@"youtube"]) [self youtubeForTrack:track completion:done];
+    else if ([pid isEqualToString:@"lyricsplus"]) [self lyricsPlusForTrack:track completion:done];
     else if ([pid isEqualToString:@"unison"]) [self unisonForTrack:track completion:done];
     else if ([pid isEqualToString:@"lyrically"]) [self lyricallyForTrack:track completion:done];
     else if ([pid isEqualToString:@"lrclib"]) [self lrclibForTrack:track completion:done];
     else done(nil, nil);
 }
 
-static NSInteger IVLLyricsQuality(IVLLyrics *ly) {
+static BOOL IVLHasCJK(NSString *s) {
+    return s.length && [s rangeOfString:@"[\\u3040-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uac00-\\ud7af]" options:NSRegularExpressionSearch].location != NSNotFound;
+}
+
+/// Japanese/Korean/Chinese song whose lyrics came back romanized ("Yoake ga o heya o ...")
+static BOOL IVLLooksRomanized(IVLLyrics *ly, IVLTrack *track) {
+    if (!IVLHasCJK([NSString stringWithFormat:@"%@ %@", track.title ?: @"", track.artist ?: @""])) return NO;
+    return !IVLHasCJK([ly plainText]);
+}
+
+/// word sync 30 > line sync 20 > plain 10; romanized lyrics of a CJK song drop below the next tier
+static NSInteger IVLLyricsQuality(IVLLyrics *ly, IVLTrack *track) {
     if (!ly.lines.count) return 0;
-    if (ly.karaoke) return 3;
-    return ly.synced ? 2 : 1;
+    NSInteger q = ly.karaoke ? 30 : (ly.synced ? 20 : 10);
+    if (IVLLooksRomanized(ly, track)) q -= 15;
+    return q;
 }
 
 /// All enabled providers run in parallel. The first word-synced result in priority order wins
@@ -266,12 +279,12 @@ static NSInteger IVLLyricsQuality(IVLLyrics *ly) {
         for (NSUInteger i = 0; i < n; i++) {
             if (![finished[i] boolValue]) { prefixDone = NO; allDone = NO; continue; }
             IVLLyrics *ly = results[i] == [NSNull null] ? nil : results[i];
-            NSInteger quality = IVLLyricsQuality(ly);
-            if (quality == 3 && prefixDone) { finish(ly); return; }
+            NSInteger quality = IVLLyricsQuality(ly, track);
+            if (quality == 30 && prefixDone) { finish(ly); return; }
             if (quality > bestQ) { bestQ = quality; best = ly; }
         }
         if (allDone || force) { finish(best); return; }
-        if (bestQ >= 2 && !graceArmed) {
+        if (bestQ >= 20 && !graceArmed) {
             graceArmed = YES;
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), q, ^{ if (evaluate) evaluate(YES); });
         }
@@ -393,7 +406,7 @@ static NSInteger IVLLyricsQuality(IVLLyrics *ly) {
 
 - (NSString *)cacheDir {
     NSString *base = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject;
-    return [base stringByAppendingPathComponent:@"ivLyricsYTM/lyrics"];
+    return [base stringByAppendingPathComponent:@"ivLyricsYTM/lyrics2"];   // bumped: provider selection changed
 }
 
 - (NSString *)manualDir {

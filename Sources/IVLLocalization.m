@@ -2,6 +2,7 @@
 
 static NSDictionary<NSString *, NSString *> *IVLStringsJA(void) {
     return @{
+        @"src_youtube": @"行同期。アプリの「歌詞」タブと同じ公式歌詞",
         @"sources_order": @"検索順",
         @"src_lyricsplus": @"単語同期。Apple Music / Musixmatch 系の歌詞",
         @"src_unison": @"単語同期・行同期。コミュニティ歌詞",
@@ -76,7 +77,7 @@ static NSDictionary<NSString *, NSString *> *IVLStringsJA(void) {
         @"footer_display": @"行をタップでその位置へ移動、長押しでコピーや同期調整ができます。",
         @"footer_translation": @"翻訳は Google 翻訳の非公式ウェブエンドポイントを使用します(キー不要・試験的)。発音表記は端末上で生成され、通信しません。",
         @"priority": @"優先",
-        @"footer_sources": @"LyricsPlus / Unison / Lyrically / LRCLIB に対応。同期歌詞が見つからない場合はテキスト歌詞を表示します。",
+        @"footer_sources": @"YouTube Music / LyricsPlus / Unison / Lyrically / LRCLIB に対応。同期歌詞が見つからない場合はテキスト歌詞を表示します。",
         @"global_offset": @"全体のずれ補正",
         @"auto_resume": @"自動で追従に戻る",
         @"footer_sync": @"プラス値で歌詞が早く進みます。曲ごとの補正は歌詞画面の「同期」ボタンから。",
@@ -88,6 +89,7 @@ static NSDictionary<NSString *, NSString *> *IVLStringsJA(void) {
 
 static NSDictionary<NSString *, NSString *> *IVLStringsEN(void) {
     return @{
+        @"src_youtube": @"Line sync. The official lyrics shown in the app's Lyrics tab",
         @"sources_order": @"Search order",
         @"src_lyricsplus": @"Word sync. Apple Music / Musixmatch-style lyrics",
         @"src_unison": @"Word & line sync. Community lyrics",
@@ -162,7 +164,7 @@ static NSDictionary<NSString *, NSString *> *IVLStringsEN(void) {
         @"footer_display": @"Tap a line to jump there. Long press for copy and sync options.",
         @"footer_translation": @"Translation uses the unofficial Google Translate web endpoint (keyless, experimental). Pronunciation is generated on-device without network access.",
         @"priority": @"Priority",
-        @"footer_sources": @"Supports LyricsPlus / Unison / Lyrically / LRCLIB. If no synced lyrics are found, plain lyrics are shown.",
+        @"footer_sources": @"Supports YouTube Music / LyricsPlus / Unison / Lyrically / LRCLIB. If no synced lyrics are found, plain lyrics are shown.",
         @"global_offset": @"Global offset",
         @"auto_resume": @"Auto follow again",
         @"footer_sync": @"Positive values make lyrics run earlier. Per-song offset is in the Sync button of the lyrics screen.",
@@ -174,6 +176,7 @@ static NSDictionary<NSString *, NSString *> *IVLStringsEN(void) {
 
 static NSDictionary<NSString *, NSString *> *IVLStringsKO(void) {
     return @{
+        @"src_youtube": @"줄 싱크. 앱의 가사 탭과 같은 공식 가사",
         @"sources_order": @"검색 순서",
         @"src_lyricsplus": @"단어 싱크. Apple Music / Musixmatch 계열 가사",
         @"src_unison": @"단어·줄 싱크. 커뮤니티 가사",
@@ -248,7 +251,7 @@ static NSDictionary<NSString *, NSString *> *IVLStringsKO(void) {
         @"footer_display": @"줄을 탭하면 해당 위치로 이동, 길게 누르면 복사·싱크 조정.",
         @"footer_translation": @"번역은 Google 번역 비공식 웹 엔드포인트를 사용합니다(키 불필요, 실험적). 발음은 기기에서 생성되며 통신하지 않습니다.",
         @"priority": @"우선순위",
-        @"footer_sources": @"LyricsPlus / Unison / Lyrically / LRCLIB 지원. 싱크 가사가 없으면 일반 가사를 표시합니다.",
+        @"footer_sources": @"YouTube Music / LyricsPlus / Unison / Lyrically / LRCLIB 지원. 싱크 가사가 없으면 일반 가사를 표시합니다.",
         @"global_offset": @"전체 싱크 보정",
         @"auto_resume": @"자동으로 다시 따라가기",
         @"footer_sync": @"양수 값이면 가사가 빨라집니다. 곡별 보정은 가사 화면의 싱크 버튼에서.",
