@@ -3,6 +3,13 @@
 [ivLyrics](https://github.com/ivLis-Studio/ivLyrics)（Spicetify 用の歌詞拡張）を、iOS 版 YouTube Music 向けに移植した dylib です。
 UI はスマートフォンで片手操作しやすいように、一から作り直しました。
 
+次の 2 つの tweak も統合しています。設定はすべて ivLyrics の設定画面にまとまっています。
+
+- [LockLyrics](https://github.com/axcyum/LockLyrics)：ロック画面に歌詞を表示
+- [YTMusic-iOS-Presence](https://github.com/axcyum/YTMusic-iOS-Presence)：Discord Rich Presence
+
+対応 OS：iOS 18 以降
+
 > この tweak は歌詞を見やすく・使いやすくすることだけを目的にしています。
 > 広告ブロック、Premium 機能の解除、ダウンロード、その他アプリの制限を回避する機能は**一切含みません**。
 > YouTube Music 内部の構造は [YTMusicUltimate](https://github.com/dayanch96/YTMusicUltimate) を参考にしていますが、利用しているのは再生状態とメタデータを読み取るフックだけです。
@@ -41,6 +48,25 @@ UI はスマートフォンで片手操作しやすいように、一から作�
 - 手動検索：LRCLIB を検索し、長押しでプレビューしてから選べます。選んだ歌詞はその曲に固定されます
 - 取得した歌詞はディスクにキャッシュします
 
+**ロック画面の歌詞**（LockLyrics を統合）
+- ロック画面とコントロールセンターのジャケット部分に、再生中の歌詞を描画します
+- 歌詞ソース・曲ごとの同期補正・翻訳／発音は、歌詞画面と同じものを使います
+- 元の LockLyrics から変えた点：
+  - 行の切り替わりをスライド＋フェードのアニメーションにしました（元は一瞬で切り替わっていました）
+  - ロック画面の表示遅れを補うため、少し早めに次の行を出します（先読み時間は設定で変更可）
+  - 単語同期の曲では、歌っている位置までカラオケ風に色が変わります
+  - 歌詞ソースが LRCLIB だけではなく、全ソースになりました
+
+**Spotify の歌詞**
+- 設定 → Spotify から open.spotify.com にログインすると、Spotify アプリと同じ歌詞を「Spotify」ソースとして取得します
+- Web 版プレーヤー自身が取得したアクセストークンを使います。ログイン情報はこの端末の WebKit にだけ保存されます
+- Spotify の非公開 API を使うため、予告なく使えなくなることがあります
+
+**Discord Rich Presence**（YTMusic-iOS-Presence を統合）
+- 再生中の曲名・アーティスト・残り時間・ジャケットを Discord のアクティビティに表示します
+- 連携・共有の停止／再開・サムネイル・診断ログ・連携解除は、iOS のポップアップではなく設定画面から操作します
+- 公式の Discord Social SDK が必要です（下記「ビルド」を参照）。SDK なしでビルドした場合、この機能は「非対応ビルド」と表示されます
+
 **翻訳・発音**
 - 翻訳：Google 翻訳の非公式ウェブエンドポイント（ivLyrics の `Addon_AI_GoogleTranslate` と同じもの。API キーは不要）
 - 発音表記は**端末上で生成**し、通信はしません
@@ -52,13 +78,19 @@ UI はスマートフォンで片手操作しやすいように、一から作�
 
 ## ビルド
 
-[Theos](https://theos.dev) と iOS SDK 16.5 が必要です。
+macOS、[Theos](https://theos.dev)、Xcode（iOS 18 以降の SDK）が必要です。
 
 ```sh
 make package                         # 既定: ivLyricsYTM.dylib（サイドロード / IPA 注入用）
 make package JAILBREAK=1             # 脱獄環境向けの .deb（rootful）
 make package JAILBREAK=1 ROOTLESS=1  # 脱獄環境向けの .deb（rootless）
+
+# Discord Rich Presence も有効にする場合（Discord Social SDK の iOS 実機スライスを指定）
+make package DISCORD_SDK=/path/to/discord_partner_sdk.xcframework/ios-arm64
 ```
+
+- Discord のフレームワークは弱リンクです。`discord_partner_sdk.framework` がアプリ内に無くても dylib は読み込まれ、Discord 機能だけが無効になります
+- Discord を使う場合は、`discord_partner_sdk.framework` も IPA の `Frameworks/` に入れてください
 
 - 既定のビルドは `library.mk` を使います。Logos の生成方式は `internal`（ObjC ランタイムを直接使う方式）なので、**CydiaSubstrate / ElleKit に依存しない単体の dylib** になります
 - 生成物は `.theos/obj/ivLyricsYTM.dylib` に出力されます
@@ -68,11 +100,15 @@ make package JAILBREAK=1 ROOTLESS=1  # 脱獄環境向けの .deb（rootless）
 `.github/workflows/build.yml` は macOS ランナーで dylib と deb をビルドし、成果物（Artifacts）としてアップロードします。
 `workflow_dispatch` で復号済み IPA の URL を渡すと、[cyan](https://github.com/asdfzxcvbn/pyzule-rw) を使って dylib を注入した IPA も作ります。
 
+Discord Social SDK はリポジトリに含められないため、このリポジトリのリリース `build-inputs` に `discord-sdk.zip` として置いています。CI はそれがあれば Discord 付きでビルドし、`discord_partner_sdk.framework` も成果物と IPA に同梱します。
+
 ## インストール（サイドロード）
 
 1. 復号済みの YouTube Music IPA を用意します
-2. Sideloadly / Feather / ESign / cyan などで `ivLyricsYTM.dylib` を注入します
-   （例：`cyan -i YouTubeMusic.ipa -o out.ipa -f ivLyricsYTM.dylib`）
+2. Sideloadly / Feather / ESign / cyan などで `ivLyricsYTM.dylib`（Discord を使う場合は `discord_partner_sdk.framework` も）を注入します
+   （例：`cyan -i YouTubeMusic.ipa -o out.ipa -f ivLyricsYTM.dylib discord_partner_sdk.framework`）
+
+LockLyrics と YTMusic-iOS-Presence はこの dylib に含まれているので、それらの dylib は一緒に注入しないでください（ロック画面の表示や Discord の送信が二重になります）。
 3. 署名してインストールします
 
 YTMusicUltimate と同時に注入しても動作します（フックしているメソッドは同じでも、どちらも `%orig` を呼んでつなぐ作りになっています）。
@@ -93,7 +129,10 @@ Sources/
   IVLLyricCell.*              歌詞の行セルと、カラオケ描画ラベル（TextKit の 2 回描画 + クリップ）
   IVLFloatingButton.*         Now Playing 上のドラッグできるボタン・ミニ歌詞
   IVLSearchViewController.*   手動検索
-  IVLSettingsViewController.* 設定・翻訳先の言語選択
+  IVLSettingsViewController.* 設定（ロック画面 / Spotify / Discord のページを含む）・翻訳先の言語選択
+  IVLLockScreen.*             ロック画面の歌詞（LockLyrics を統合）
+  IVLSpotify.*                Spotify ログインと Spotify の歌詞
+  IVLDiscord.* / IVLDiscordLog.* Discord Rich Presence（YTMusic-iOS-Presence を統合）
   IVLSettings.* / IVLLocalization.* / IVLModels.*
 ```
 
@@ -104,6 +143,7 @@ YouTube Music 側で使っているもの（YTMusicUltimate と同じフック�
 - `currentVideoMediaTime` / `seekToTime:` / `playerResponse.playerData.videoDetails`：再生位置・シーク・曲名・アーティスト・アートワーク
 - `-[YTMNowPlayingViewController viewDidLoad]`：ボタンの設置
 - `-[YTMAvatarAccountView setAccountMenuUpperButtons:lowerButtons:]`：設定への入口
+- `-[MPNowPlayingInfoCenter setNowPlayingInfo:]`（公開 API）：曲情報の取得、ロック画面の歌詞、Discord
 
 アプリの更新でクラス名やメソッド名が変わったときに落ちないよう、呼び出しはすべて `respondsToSelector:` で確認し、クラスが存在するときだけ `%init` します。
 
@@ -113,7 +153,6 @@ Spicetify 版にある次の機能は、モバイルでは使い勝手が悪い�
 
 - API キーが必要な AI 翻訳・AI 発音（ChatGPT / Claude / Gemini など）。発音は端末内の生成で置き換えています
 - 動画背景、コミュニティ同期オフセットの共有、マーケットプレイス、学習モード、同期データ作成ツール、Vinyl モード
-- Spotify 専用の歌詞ソース
 
 ## 注意
 
@@ -124,5 +163,9 @@ Spicetify 版にある次の機能は、モバイルでは使い勝手が悪い�
 
 ## ライセンス
 
-LGPL-2.1（元の ivLyrics と同じ）。[LICENSE](LICENSE) を参照してください。
+GPL-3.0。[LICENSE](LICENSE) を参照してください。
+
+YTMusic-iOS-Presence（GPL-3.0）のコードを含むため、全体を GPL-3.0 で配布します。ivLyrics 由来の部分は LGPL-2.1 で、LGPL-2.1 第 3 条に基づいて GPL として扱っています（元のライセンス文は [LICENSE.ivLyrics-LGPL-2.1](LICENSE.ivLyrics-LGPL-2.1)）。
+Discord Social SDK は Discord のライセンスに従い、このリポジトリには含めていません。
+
 ivLyrics © ivLis STUDIO。LyricsPlus、Unison、Lyrically (Paxsenix)、LRCLIB、YTMusicUltimate の各作者に感謝します。
