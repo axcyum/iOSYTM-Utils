@@ -4,6 +4,7 @@
 #import "IVLSettings.h"
 #import "IVLLocalization.h"
 #import "IVLSearchViewController.h"
+#import "IVLProviderPickerViewController.h"
 #import "IVLSettingsViewController.h"
 
 #pragma mark - Helpers
@@ -378,7 +379,7 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     _spinner.color = UIColor.whiteColor;
 
     _retryButton = [self pillButton:IVLLoc(@"retry") symbol:@"arrow.clockwise" action:@selector(reload)];
-    _searchButton = [self pillButton:IVLLoc(@"search_manually") symbol:@"magnifyingglass" action:@selector(openSearch)];
+    _searchButton = [self pillButton:IVLLoc(@"choose_provider") symbol:@"list.bullet.rectangle" action:@selector(openProviderPicker)];
     UIStackView *buttons = [[UIStackView alloc] initWithArrangedSubviews:@[_retryButton, _searchButton]];
     buttons.axis = UILayoutConstraintAxisVertical;
     buttons.spacing = 10;
@@ -635,6 +636,7 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     IVLPlaybackManager *m = [IVLPlaybackManager shared];
     __weak typeof(self) ws = self;
     NSMutableArray *items = [NSMutableArray array];
+    [items addObject:[UIAction actionWithTitle:IVLLoc(@"choose_provider") image:[UIImage systemImageNamed:@"list.bullet.rectangle"] identifier:nil handler:^(UIAction *a) { [ws openProviderPicker]; }]];
     [items addObject:[UIAction actionWithTitle:IVLLoc(@"search_lyrics") image:[UIImage systemImageNamed:@"magnifyingglass"] identifier:nil handler:^(UIAction *a) { [ws openSearch]; }]];
     [items addObject:[UIAction actionWithTitle:IVLLoc(@"reload") image:[UIImage systemImageNamed:@"arrow.clockwise"] identifier:nil handler:^(UIAction *a) { [ws reload]; }]];
     if (m.lyrics) {
@@ -791,6 +793,13 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
 - (void)reload {
     IVLPlaybackManager *m = [IVLPlaybackManager shared];
     if (m.track) [m reloadLyrics]; else [m refreshNow];
+}
+
+- (void)openProviderPicker {
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:[IVLProviderPickerViewController new]];
+    nav.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    nav.modalPresentationStyle = UIModalPresentationPageSheet;
+    [self presentViewController:nav animated:YES completion:nil];
 }
 
 - (void)openSearch {

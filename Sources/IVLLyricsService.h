@@ -20,6 +20,8 @@ typedef void (^IVLLyricsCompletion)(IVLLyrics *_Nullable lyrics, NSError *_Nulla
 
 /// Cache -> manual override -> providers (Unison / LRCLIB in configured order).
 - (void)lyricsForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)completion;
+/// Runs a single provider (also when disabled in settings). Completion on main queue.
+- (void)fetchProvider:(NSString *)providerID track:(IVLTrack *)track completion:(IVLLyricsCompletion)completion;
 /// Free-text search on LRCLIB for the manual picker.
 - (void)searchQuery:(NSString *)query completion:(void (^)(NSArray<IVLSearchResult *> *results, NSError *_Nullable error))completion;
 

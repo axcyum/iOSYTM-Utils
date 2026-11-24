@@ -2,6 +2,15 @@
 
 static NSDictionary<NSString *, NSString *> *IVLStringsJA(void) {
     return @{
+        @"choose_provider": @"歌詞プロバイダーを選択",
+        @"current_provider_fmt": @"現在のプロバイダー: %@",
+        @"auto_provider": @"自動（おすすめ）",
+        @"footer_auto": @"単語同期 > 行同期 > テキストの順で、設定の検索順に従って自動で選びます。",
+        @"footer_pick_provider": @"すべてのソースを同時に検索しています。タップすると、その結果をこの曲に固定します（設定でオフにしたソースも表示します）。",
+        @"lines_unit": @"行",
+        @"search_lrclib_hint": @"LRCLIB をキーワードで検索",
+        @"provider_error": @"接続エラー（サーバーが応答していません）",
+        @"disabled_in_settings": @"設定でオフ",
         @"src_youtube": @"行同期。アプリの「歌詞」タブと同じ公式歌詞",
         @"sources_order": @"検索順",
         @"src_lyricsplus": @"単語同期。Apple Music / Musixmatch 系の歌詞",
@@ -89,6 +98,15 @@ static NSDictionary<NSString *, NSString *> *IVLStringsJA(void) {
 
 static NSDictionary<NSString *, NSString *> *IVLStringsEN(void) {
     return @{
+        @"choose_provider": @"Choose Lyrics Provider",
+        @"current_provider_fmt": @"Current provider: %@",
+        @"auto_provider": @"Automatic (recommended)",
+        @"footer_auto": @"Picks word sync > line sync > plain text, following the search order in settings.",
+        @"footer_pick_provider": @"All sources are queried at once. Tap one to pin its result to this song (sources turned off in settings are shown too).",
+        @"lines_unit": @"lines",
+        @"search_lrclib_hint": @"Keyword search on LRCLIB",
+        @"provider_error": @"Connection error (server not responding)",
+        @"disabled_in_settings": @"off in settings",
         @"src_youtube": @"Line sync. The official lyrics shown in the app's Lyrics tab",
         @"sources_order": @"Search order",
         @"src_lyricsplus": @"Word sync. Apple Music / Musixmatch-style lyrics",
@@ -176,6 +194,15 @@ static NSDictionary<NSString *, NSString *> *IVLStringsEN(void) {
 
 static NSDictionary<NSString *, NSString *> *IVLStringsKO(void) {
     return @{
+        @"choose_provider": @"가사 제공자 선택",
+        @"current_provider_fmt": @"현재 제공자: %@",
+        @"auto_provider": @"자동 (권장)",
+        @"footer_auto": @"단어 싱크 > 줄 싱크 > 텍스트 순으로, 설정의 검색 순서에 따라 자동 선택합니다.",
+        @"footer_pick_provider": @"모든 소스를 동시에 검색합니다. 탭하면 그 결과를 이 곡에 고정합니다 (설정에서 끈 소스도 표시).",
+        @"lines_unit": @"줄",
+        @"search_lrclib_hint": @"LRCLIB 키워드 검색",
+        @"provider_error": @"연결 오류 (서버 응답 없음)",
+        @"disabled_in_settings": @"설정에서 꺼짐",
         @"src_youtube": @"줄 싱크. 앱의 가사 탭과 같은 공식 가사",
         @"sources_order": @"검색 순서",
         @"src_lyricsplus": @"단어 싱크. Apple Music / Musixmatch 계열 가사",

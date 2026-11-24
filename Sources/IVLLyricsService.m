@@ -306,6 +306,13 @@ static NSInteger IVLLyricsQuality(IVLLyrics *ly, IVLTrack *track) {
 
 #pragma mark - Public
 
+- (void)fetchProvider:(NSString *)providerID track:(IVLTrack *)track completion:(IVLLyricsCompletion)completion {
+    [self invokeProvider:providerID track:track completion:^(IVLLyrics *ly, NSError *err) {
+        if (ly && !ly.language) ly.language = [IVLLyricsService detectLanguage:ly];
+        dispatch_async(dispatch_get_main_queue(), ^{ completion(ly.lines.count ? ly : nil, err); });
+    }];
+}
+
 - (void)lyricsForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)completion {
     IVLLyricsCompletion main = ^(IVLLyrics *ly, NSError *e) { dispatch_async(dispatch_get_main_queue(), ^{ completion(ly, e); }); };
     NSString *vid = track.videoID;
