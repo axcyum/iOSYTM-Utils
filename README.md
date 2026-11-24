@@ -33,7 +33,8 @@ UI はスマートフォンで片手操作しやすいように、一から作�
 - アカウントメニューにも「ivLyrics」の設定項目を追加します
 
 **歌詞の取得**
-- Unison と LRCLIB に対応（優先順を設定でき、どちらかをオフにもできます）
+- LyricsPlus / Unison / Lyrically（Apple Music カタログ・KuGou）/ LRCLIB に対応
+- 有効なソースは同時に検索し、単語同期 > 行同期 > テキストの順で採用します。同じ種類なら、設定画面でドラッグして決めた順番が上のソースを優先します
 - 同期歌詞が見つからないときは、テキスト歌詞を表示します
 - 「(Official Video)」「- Topic」「feat.」などのタイトル・アーティスト表記を整えてから検索します
 - 手動検索：LRCLIB を検索し、長押しでプレビューしてから選べます。選んだ歌詞はその曲に固定されます
@@ -82,7 +83,8 @@ Sources/
   Tweak.x                     フック（YTPlayerViewController / YTMNowPlayingViewController / YTMAvatarAccountView）
   YTMHeaders.h                YouTube Music のプライベート API 宣言（YTMusicUltimate の Headers から抜粋）
   IVLPlaybackManager.*        曲変更の検出、再生位置（補間・オフセット込み）、シーク
-  IVLLyricsService.*          Unison / LRCLIB の検索、メタデータ整形、キャッシュ、言語判定
+  IVLLyricsService.*          ソースの並列検索と選択、Unison / LRCLIB、メタデータ整形、キャッシュ、言語判定
+  IVLExtraProviders.m         LyricsPlus / Lyrically（ivLyrics の各 Addon を移植）
   IVLLyricsParser.*           LRC / 拡張 LRC / TTML / プレーンテキストのパーサー（ivLyrics の実装を移植）
   IVLTranslator.*             翻訳（Google gtx）と端末内の発音生成（CFStringTokenizer / ICU）
   IVLLyricsViewController.*   全画面の歌詞 UI
@@ -121,4 +123,4 @@ Spicetify 版にある次の機能は、モバイルでは使い勝手が悪い�
 ## ライセンス
 
 LGPL-2.1（元の ivLyrics と同じ）。[LICENSE](LICENSE) を参照してください。
-ivLyrics © ivLis STUDIO。LRCLIB、Unison、YTMusicUltimate の各作者に感謝します。
+ivLyrics © ivLis STUDIO。LyricsPlus、Unison、Lyrically (Paxsenix)、LRCLIB、YTMusicUltimate の各作者に感謝します。

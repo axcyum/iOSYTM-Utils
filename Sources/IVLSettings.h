@@ -19,7 +19,9 @@ extern NSString *const IVLKeyTranslationLang;    // NSString (BCP-47, e.g. "ja")
 extern NSString *const IVLKeyPronunciation;      // 0 = off, 1 = romaji/latin, 2 = kana (Japanese)
 extern NSString *const IVLKeyProviderUnison;     // BOOL
 extern NSString *const IVLKeyProviderLRCLIB;     // BOOL
-extern NSString *const IVLKeyProviderOrder;      // 0 = Unison first, 1 = LRCLIB first
+extern NSString *const IVLKeyProviderLyricsPlus; // BOOL
+extern NSString *const IVLKeyProviderLyrically;  // BOOL
+extern NSString *const IVLKeyProviderOrder;      // NSArray of provider ids, highest priority first
 extern NSString *const IVLKeyGlobalOffset;       // NSInteger ms (positive = lyrics earlier)
 extern NSString *const IVLKeyAutoResume;         // NSInteger seconds, 0 = never
 extern NSString *const IVLKeyButtonX;            // double 0..1
@@ -38,6 +40,13 @@ extern NSString *const IVLKeySongOffsets;        // NSDictionary videoID -> ms
 + (void)setSongOffset:(NSInteger)ms forVideoID:(NSString *)videoID;
 
 + (NSString *)defaultTranslationLanguage;
+
+/// Lyrics providers: "lyricsplus", "unison", "lyrically", "lrclib"
++ (NSArray<NSString *> *)providerIDs;                 // all known ids in user order
++ (void)setProviderIDs:(NSArray<NSString *> *)ids;
++ (NSArray<NSString *> *)enabledProviderIDs;
++ (NSString *)enableKeyForProvider:(NSString *)pid;
++ (NSString *)nameForProvider:(NSString *)pid;
 @end
 
 NS_ASSUME_NONNULL_END

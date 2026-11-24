@@ -16,7 +16,9 @@ NSString *const IVLKeyTranslationLang = @"translationLang";
 NSString *const IVLKeyPronunciation = @"pronunciation";
 NSString *const IVLKeyProviderUnison = @"providerUnison";
 NSString *const IVLKeyProviderLRCLIB = @"providerLRCLIB";
-NSString *const IVLKeyProviderOrder = @"providerOrder";
+NSString *const IVLKeyProviderLyricsPlus = @"providerLyricsPlus";
+NSString *const IVLKeyProviderLyrically = @"providerLyrically";
+NSString *const IVLKeyProviderOrder = @"providerOrderList";
 NSString *const IVLKeyGlobalOffset = @"globalOffset";
 NSString *const IVLKeyAutoResume = @"autoResume";
 NSString *const IVLKeyButtonX = @"buttonX";
@@ -46,7 +48,9 @@ static NSString *const kDomain = @"ivLyricsYTM";
             IVLKeyPronunciation: @0,
             IVLKeyProviderUnison: @YES,
             IVLKeyProviderLRCLIB: @YES,
-            IVLKeyProviderOrder: @0,
+            IVLKeyProviderLyricsPlus: @YES,
+            IVLKeyProviderLyrically: @YES,
+            IVLKeyProviderOrder: [self knownProviders],
             IVLKeyGlobalOffset: @0,
             IVLKeyAutoResume: @3,
             IVLKeyButtonX: @0.9,
@@ -63,6 +67,39 @@ static NSString *const kDomain = @"ivLyricsYTM";
     if ([pref hasPrefix:@"zh"]) return @"zh-CN";
     NSString *code = [[pref componentsSeparatedByString:@"-"] firstObject];
     return code.length ? code : @"en";
+}
+
++ (NSArray<NSString *> *)knownProviders {
+    // word-synced sources first
+    return @[@"lyricsplus", @"unison", @"lyrically", @"lrclib"];
+}
+
++ (NSArray<NSString *> *)providerIDs {
+    NSArray *known = [self knownProviders];
+    NSMutableArray *out = [NSMutableArray array];
+    id saved = [self store][IVLKeyProviderOrder];
+    if ([saved isKindOfClass:[NSArray class]]) {
+        for (id pid in saved) if ([known containsObject:pid] && ![out containsObject:pid]) [out addObject:pid];
+    }
+    for (NSString *pid in known) if (![out containsObject:pid]) [out addObject:pid];
+    return out;
+}
+
++ (void)setProviderIDs:(NSArray<NSString *> *)ids { [self setObject:[ids copy] forKey:IVLKeyProviderOrder]; }
+
++ (NSString *)enableKeyForProvider:(NSString *)pid {
+    return @{ @"lyricsplus": IVLKeyProviderLyricsPlus, @"unison": IVLKeyProviderUnison,
+              @"lyrically": IVLKeyProviderLyrically, @"lrclib": IVLKeyProviderLRCLIB }[pid] ?: @"";
+}
+
++ (NSString *)nameForProvider:(NSString *)pid {
+    return @{ @"lyricsplus": @"LyricsPlus", @"unison": @"Unison", @"lyrically": @"Lyrically", @"lrclib": @"LRCLIB" }[pid] ?: pid;
+}
+
++ (NSArray<NSString *> *)enabledProviderIDs {
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSString *pid in [self providerIDs]) if ([self boolForKey:[self enableKeyForProvider:pid]]) [out addObject:pid];
+    return out;
 }
 
 + (NSDictionary *)store {

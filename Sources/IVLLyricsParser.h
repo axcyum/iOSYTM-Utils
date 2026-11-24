@@ -11,6 +11,13 @@ NS_ASSUME_NONNULL_BEGIN
 + (nullable IVLLyrics *)parseTTML:(NSString *)ttml durationMs:(NSInteger)durationMs;
 /// Unsynced lyrics.
 + (nullable IVLLyrics *)parsePlain:(NSString *)text;
+
+/// Shared post-processing for providers that return structured JSON lines
+/// (sort, end times, word end times, instrumental breaks).
++ (nullable IVLLyrics *)lyricsWithTimedLines:(NSMutableArray<IVLLyricLine *> *)lines durationMs:(NSInteger)durationMs explicitEnds:(BOOL)explicitEnds;
+/// Collapses whitespace inside/between words, trims the edges, drops empty words and
+/// returns the joined line text (so karaoke character ranges match the drawn string).
++ (NSString *)normalizeWords:(NSMutableArray<IVLWord *> *)words;
 @end
 
 NS_ASSUME_NONNULL_END

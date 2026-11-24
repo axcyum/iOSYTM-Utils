@@ -189,6 +189,28 @@ static IVLLyrics *IVLFinalize(NSMutableArray<IVLLyricLine *> *lines, NSInteger d
     return IVLFinalize(lines, durationMs, NO);
 }
 
+#pragma mark - Shared
+
++ (IVLLyrics *)lyricsWithTimedLines:(NSMutableArray<IVLLyricLine *> *)lines durationMs:(NSInteger)durationMs explicitEnds:(BOOL)explicitEnds {
+    if (!lines.count) return nil;
+    return IVLFinalize(lines, durationMs, explicitEnds);
+}
+
++ (NSString *)normalizeWords:(NSMutableArray<IVLWord *> *)words {
+    NSCharacterSet *ws = [NSCharacterSet whitespaceCharacterSet];
+    for (IVLWord *w in words) w.text = IVLCollapseWhitespace(w.text ?: @"");
+    for (NSUInteger i = 1; i < words.count; i++) {
+        if ([words[i - 1].text hasSuffix:@" "] && [words[i].text hasPrefix:@" "]) words[i].text = [words[i].text substringFromIndex:1];
+    }
+    while (words.firstObject.text.length && [ws characterIsMember:[words.firstObject.text characterAtIndex:0]])
+        words.firstObject.text = [words.firstObject.text substringFromIndex:1];
+    words.lastObject.text = [words.lastObject.text stringByTrimmingCharactersInSet:ws];
+    [words filterUsingPredicate:[NSPredicate predicateWithFormat:@"text.length > 0"]];
+    NSMutableString *joined = [NSMutableString string];
+    for (IVLWord *w in words) [joined appendString:w.text];
+    return joined;
+}
+
 #pragma mark - Plain
 
 + (IVLLyrics *)parsePlain:(NSString *)text {

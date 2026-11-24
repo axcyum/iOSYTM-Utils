@@ -71,6 +71,14 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
     lang.detail = ^NSString *{ return [IVLLanguagePickerViewController nameForCode:[IVLSettings objectForKey:IVLKeyTranslationLang]]; };
     lang.action = ^(UIViewController *vc) { [vc.navigationController pushViewController:[IVLLanguagePickerViewController new] animated:YES]; };
 
+    IVLRow *sources = [IVLRow type:IVLRowLink key:IVLKeyProviderOrder title:IVLLoc(@"sources_order")];
+    sources.detail = ^NSString *{
+        NSMutableArray *names = [NSMutableArray array];
+        for (NSString *pid in [IVLSettings enabledProviderIDs]) [names addObject:[IVLSettings nameForProvider:pid]];
+        return names.count ? [names componentsJoinedByString:@" › "] : IVLLoc(@"off");
+    };
+    sources.action = ^(UIViewController *vc) { [vc.navigationController pushViewController:[IVLProvidersViewController new] animated:YES]; };
+
     IVLRow *offset = [IVLRow type:IVLRowStepper key:IVLKeyGlobalOffset title:IVLLoc(@"global_offset")];
     offset.min = -3000; offset.max = 3000; offset.step = 50;
     offset.format = ^NSString *(double v) { return [NSString stringWithFormat:@"%+.2fs", v / 1000.0]; };
@@ -110,11 +118,7 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
             lang,
             seg(IVLKeyPronunciation, IVLLoc(@"pronunciation"), @[IVLLoc(@"off"), IVLLoc(@"romaji"), IVLLoc(@"kana")]),
         ]],
-        [IVLSection title:IVLLoc(@"sec_sources") footer:IVLLoc(@"footer_sources") rows:@[
-            sw(IVLKeyProviderUnison, @"Unison"),
-            sw(IVLKeyProviderLRCLIB, @"LRCLIB"),
-            seg(IVLKeyProviderOrder, IVLLoc(@"priority"), @[@"Unison", @"LRCLIB"]),
-        ]],
+        [IVLSection title:IVLLoc(@"sec_sources") footer:IVLLoc(@"footer_sources") rows:@[sources]],
         [IVLSection title:IVLLoc(@"sec_sync") footer:IVLLoc(@"footer_sync") rows:@[offset, resume]],
         [IVLSection title:IVLLoc(@"sec_data") footer:nil rows:@[clear]],
         [IVLSection title:IVLLoc(@"sec_about") footer:IVLLoc(@"footer_about") rows:@[version]],
@@ -201,6 +205,63 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     IVLRow *row = _sections[indexPath.section].rows[indexPath.row];
     if (row.action) row.action(self);
+}
+
+@end
+
+#pragma mark - Providers
+
+@implementation IVLProvidersViewController {
+    NSMutableArray<NSString *> *_ids;
+}
+
+- (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = IVLLoc(@"sec_sources");
+    _ids = [[IVLSettings providerIDs] mutableCopy];
+    self.tableView.editing = YES;
+    self.tableView.allowsSelectionDuringEditing = NO;
+}
+
++ (NSString *)detailFor:(NSString *)pid {
+    if ([pid isEqualToString:@"lyricsplus"]) return IVLLoc(@"src_lyricsplus");
+    if ([pid isEqualToString:@"unison"]) return IVLLoc(@"src_unison");
+    if ([pid isEqualToString:@"lyrically"]) return IVLLoc(@"src_lyrically");
+    return IVLLoc(@"src_lrclib");
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return _ids.count; }
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section { return IVLLoc(@"footer_sources_order"); }
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
+    NSString *pid = _ids[indexPath.row];
+    c.textLabel.text = [NSString stringWithFormat:@"%ld. %@", (long)indexPath.row + 1, [IVLSettings nameForProvider:pid]];
+    c.textLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    c.detailTextLabel.text = [IVLProvidersViewController detailFor:pid];
+    c.detailTextLabel.textColor = UIColor.secondaryLabelColor;
+    c.detailTextLabel.numberOfLines = 0;
+    c.showsReorderControl = YES;
+    UISwitch *sw = [UISwitch new];
+    NSString *key = [IVLSettings enableKeyForProvider:pid];
+    sw.on = [IVLSettings boolForKey:key];
+    [sw addAction:[UIAction actionWithHandler:^(UIAction *a) { [IVLSettings setBool:((UISwitch *)a.sender).on forKey:key]; }] forControlEvents:UIControlEventValueChanged];
+    c.editingAccessoryView = sw;
+    return c;
+}
+
+- (UITableViewCellEditingStyle)tableView:(UITableView *)tableView editingStyleForRowAtIndexPath:(NSIndexPath *)indexPath { return UITableViewCellEditingStyleNone; }
+- (BOOL)tableView:(UITableView *)tableView shouldIndentWhileEditingRowAtIndexPath:(NSIndexPath *)indexPath { return NO; }
+- (BOOL)tableView:(UITableView *)tableView canMoveRowAtIndexPath:(NSIndexPath *)indexPath { return YES; }
+
+- (void)tableView:(UITableView *)tableView moveRowAtIndexPath:(NSIndexPath *)from toIndexPath:(NSIndexPath *)to {
+    NSString *pid = _ids[from.row];
+    [_ids removeObjectAtIndex:from.row];
+    [_ids insertObject:pid atIndex:to.row];
+    [IVLSettings setProviderIDs:_ids];
+    dispatch_async(dispatch_get_main_queue(), ^{ [tableView reloadData]; });   // renumber
 }
 
 @end

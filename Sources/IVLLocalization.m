@@ -2,6 +2,12 @@
 
 static NSDictionary<NSString *, NSString *> *IVLStringsJA(void) {
     return @{
+        @"sources_order": @"検索順",
+        @"src_lyricsplus": @"単語同期。Apple Music / Musixmatch 系の歌詞",
+        @"src_unison": @"単語同期・行同期。コミュニティ歌詞",
+        @"src_lyrically": @"単語同期。Apple Music カタログと KuGou（アジア圏の曲に強い）",
+        @"src_lrclib": @"行同期。オープンな LRC データベース",
+        @"footer_sources_order": @"右端をドラッグすると順番を変えられます。有効なソースは同時に検索し、単語同期 > 行同期 > テキストの順で採用します。同じ種類なら上にあるソースが優先です。",
         @"lyrics": @"歌詞",
         @"button_hint": @"タップで歌詞、長押しで設定、ドラッグで移動",
         @"close": @"閉じる",
@@ -70,18 +76,24 @@ static NSDictionary<NSString *, NSString *> *IVLStringsJA(void) {
         @"footer_display": @"行をタップでその位置へ移動、長押しでコピーや同期調整ができます。",
         @"footer_translation": @"翻訳は Google 翻訳の非公式ウェブエンドポイントを使用します(キー不要・試験的)。発音表記は端末上で生成され、通信しません。",
         @"priority": @"優先",
-        @"footer_sources": @"単語同期の歌詞が見つかりやすい順に検索します。同期歌詞が見つからない場合はテキスト歌詞を表示します。",
+        @"footer_sources": @"LyricsPlus / Unison / Lyrically / LRCLIB に対応。同期歌詞が見つからない場合はテキスト歌詞を表示します。",
         @"global_offset": @"全体のずれ補正",
         @"auto_resume": @"自動で追従に戻る",
         @"footer_sync": @"プラス値で歌詞が早く進みます。曲ごとの補正は歌詞画面の「同期」ボタンから。",
         @"clear_cache": @"キャッシュを削除",
         @"version": @"バージョン",
-        @"footer_about": @"ivLyrics (ivLis STUDIO, LGPL-2.1) の YouTube Music 向け移植版。歌詞: LRCLIB / Unison。広告ブロック等の機能は含みません。",
+        @"footer_about": @"ivLyrics (ivLis STUDIO, LGPL-2.1) の YouTube Music 向け移植版。歌詞: LyricsPlus / Unison / Lyrically / LRCLIB。広告ブロック等の機能は含みません。",
     };
 }
 
 static NSDictionary<NSString *, NSString *> *IVLStringsEN(void) {
     return @{
+        @"sources_order": @"Search order",
+        @"src_lyricsplus": @"Word sync. Apple Music / Musixmatch-style lyrics",
+        @"src_unison": @"Word & line sync. Community lyrics",
+        @"src_lyrically": @"Word sync. Apple Music catalog and KuGou (strong for Asian songs)",
+        @"src_lrclib": @"Line sync. Open LRC database",
+        @"footer_sources_order": @"Drag the handles to reorder. Enabled sources are queried at the same time; word sync beats line sync beats plain text, and sources higher in the list win ties.",
         @"lyrics": @"Lyrics",
         @"button_hint": @"Tap for lyrics, long press for settings, drag to move",
         @"close": @"Close",
@@ -150,18 +162,24 @@ static NSDictionary<NSString *, NSString *> *IVLStringsEN(void) {
         @"footer_display": @"Tap a line to jump there. Long press for copy and sync options.",
         @"footer_translation": @"Translation uses the unofficial Google Translate web endpoint (keyless, experimental). Pronunciation is generated on-device without network access.",
         @"priority": @"Priority",
-        @"footer_sources": @"Sources are queried in order. If no synced lyrics are found, plain lyrics are shown.",
+        @"footer_sources": @"Supports LyricsPlus / Unison / Lyrically / LRCLIB. If no synced lyrics are found, plain lyrics are shown.",
         @"global_offset": @"Global offset",
         @"auto_resume": @"Auto follow again",
         @"footer_sync": @"Positive values make lyrics run earlier. Per-song offset is in the Sync button of the lyrics screen.",
         @"clear_cache": @"Clear Cache",
         @"version": @"Version",
-        @"footer_about": @"YouTube Music port of ivLyrics (ivLis STUDIO, LGPL-2.1). Lyrics: LRCLIB / Unison. Contains no ad-blocking or similar features.",
+        @"footer_about": @"YouTube Music port of ivLyrics (ivLis STUDIO, LGPL-2.1). Lyrics: LyricsPlus / Unison / Lyrically / LRCLIB. Contains no ad-blocking or similar features.",
     };
 }
 
 static NSDictionary<NSString *, NSString *> *IVLStringsKO(void) {
     return @{
+        @"sources_order": @"검색 순서",
+        @"src_lyricsplus": @"단어 싱크. Apple Music / Musixmatch 계열 가사",
+        @"src_unison": @"단어·줄 싱크. 커뮤니티 가사",
+        @"src_lyrically": @"단어 싱크. Apple Music 카탈로그와 KuGou(아시아 곡에 강함)",
+        @"src_lrclib": @"줄 싱크. 오픈 LRC 데이터베이스",
+        @"footer_sources_order": @"오른쪽 핸들을 드래그해 순서를 바꿉니다. 켜진 소스는 동시에 검색하며 단어 싱크 > 줄 싱크 > 텍스트 순으로 채택하고, 같은 종류면 위에 있는 소스를 우선합니다.",
         @"lyrics": @"가사",
         @"button_hint": @"탭: 가사, 길게 누르기: 설정, 드래그: 이동",
         @"close": @"닫기",
@@ -230,13 +248,13 @@ static NSDictionary<NSString *, NSString *> *IVLStringsKO(void) {
         @"footer_display": @"줄을 탭하면 해당 위치로 이동, 길게 누르면 복사·싱크 조정.",
         @"footer_translation": @"번역은 Google 번역 비공식 웹 엔드포인트를 사용합니다(키 불필요, 실험적). 발음은 기기에서 생성되며 통신하지 않습니다.",
         @"priority": @"우선순위",
-        @"footer_sources": @"순서대로 검색합니다. 싱크 가사가 없으면 일반 가사를 표시합니다.",
+        @"footer_sources": @"LyricsPlus / Unison / Lyrically / LRCLIB 지원. 싱크 가사가 없으면 일반 가사를 표시합니다.",
         @"global_offset": @"전체 싱크 보정",
         @"auto_resume": @"자동으로 다시 따라가기",
         @"footer_sync": @"양수 값이면 가사가 빨라집니다. 곡별 보정은 가사 화면의 싱크 버튼에서.",
         @"clear_cache": @"캐시 삭제",
         @"version": @"버전",
-        @"footer_about": @"ivLyrics (ivLis STUDIO, LGPL-2.1)의 YouTube Music 이식판. 가사: LRCLIB / Unison. 광고 차단 등의 기능은 없습니다.",
+        @"footer_about": @"ivLyrics (ivLis STUDIO, LGPL-2.1)의 YouTube Music 이식판. 가사: LyricsPlus / Unison / Lyrically / LRCLIB. 광고 차단 등의 기능은 없습니다.",
     };
 }
 

@@ -1,4 +1,5 @@
 #import "IVLLyricsService.h"
+#import "IVLLyricsService+Private.h"
 #import "IVLLyricsParser.h"
 #import "IVLSettings.h"
 #import <NaturalLanguage/NaturalLanguage.h>
@@ -11,7 +12,6 @@ static NSString *const kUnisonBase = @"https://unison.boidu.dev";
 static NSString *const kLRCLIBBase = @"https://lrclib.net/api";
 static const NSTimeInterval kDurationTolerance = 15.0;   // same as ivLyrics' LRCLIB addon
 
-typedef void (^IVLProviderBlock)(IVLTrack *track, IVLLyricsCompletion done);
 
 @implementation IVLSearchResult
 @end
@@ -123,6 +123,10 @@ static NSURL *IVLURL(NSString *base, NSString *path, NSDictionary<NSString *, NS
     return c.URL;
 }
 
++ (NSURL *)URLWithBase:(NSString *)base path:(NSString *)path query:(NSDictionary<NSString *, NSString *> *)query {
+    return IVLURL(base, path, query);
+}
+
 #pragma mark - Providers
 
 - (void)unisonForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)done {
@@ -220,24 +224,71 @@ static NSURL *IVLURL(NSString *base, NSString *path, NSDictionary<NSString *, NS
     }];
 }
 
-- (NSArray<IVLProviderBlock> *)providers {
-    __weak typeof(self) ws = self;
-    IVLProviderBlock unison = ^(IVLTrack *t, IVLLyricsCompletion d) { [ws unisonForTrack:t completion:d]; };
-    IVLProviderBlock lrclib = ^(IVLTrack *t, IVLLyricsCompletion d) { [ws lrclibForTrack:t completion:d]; };
-    NSMutableArray *a = [NSMutableArray array];
-    BOOL lrclibFirst = [IVLSettings integerForKey:IVLKeyProviderOrder] == 1;
-    if ([IVLSettings boolForKey:IVLKeyProviderUnison]) [a addObject:unison];
-    if ([IVLSettings boolForKey:IVLKeyProviderLRCLIB]) [a insertObject:lrclib atIndex:lrclibFirst ? 0 : a.count];
-    return a;
+- (void)invokeProvider:(NSString *)pid track:(IVLTrack *)track completion:(IVLLyricsCompletion)done {
+    if ([pid isEqualToString:@"lyricsplus"]) [self lyricsPlusForTrack:track completion:done];
+    else if ([pid isEqualToString:@"unison"]) [self unisonForTrack:track completion:done];
+    else if ([pid isEqualToString:@"lyrically"]) [self lyricallyForTrack:track completion:done];
+    else if ([pid isEqualToString:@"lrclib"]) [self lrclibForTrack:track completion:done];
+    else done(nil, nil);
 }
 
-- (void)runProviders:(NSArray<IVLProviderBlock> *)providers index:(NSUInteger)i track:(IVLTrack *)track
-            fallback:(IVLLyrics *)fallback lastError:(NSError *)lastError completion:(IVLLyricsCompletion)done {
-    if (i >= providers.count) { done(fallback, fallback ? nil : lastError); return; }
-    providers[i](track, ^(IVLLyrics *ly, NSError *err) {
-        if (ly.synced) { done(ly, nil); return; }
-        [self runProviders:providers index:i + 1 track:track fallback:(fallback ?: ly) lastError:(err ?: lastError) completion:done];
-    });
+static NSInteger IVLLyricsQuality(IVLLyrics *ly) {
+    if (!ly.lines.count) return 0;
+    if (ly.karaoke) return 3;
+    return ly.synced ? 2 : 1;
+}
+
+/// All enabled providers run in parallel. The first word-synced result in priority order wins
+/// as soon as every higher-priority provider has answered; otherwise the best result
+/// (word > line > plain, then priority) is taken when all are done, 3 s after the first
+/// synced result arrived, or after 15 s at the latest.
+- (void)runProviders:(NSArray<NSString *> *)ids track:(IVLTrack *)track completion:(IVLLyricsCompletion)done {
+    NSUInteger n = ids.count;
+    if (!n) { done(nil, nil); return; }
+    dispatch_queue_t q = dispatch_queue_create("ivlyrics.race", DISPATCH_QUEUE_SERIAL);
+    NSMutableArray *results = [NSMutableArray arrayWithCapacity:n];
+    NSMutableArray<NSNumber *> *finished = [NSMutableArray arrayWithCapacity:n];
+    for (NSUInteger i = 0; i < n; i++) { [results addObject:[NSNull null]]; [finished addObject:@NO]; }
+    __block BOOL decided = NO, graceArmed = NO;
+    __block NSError *lastError = nil;
+
+    __block void (^evaluate)(BOOL);
+    void (^finish)(IVLLyrics *) = ^(IVLLyrics *ly) {
+        decided = YES;
+        done(ly, ly ? nil : lastError);
+        dispatch_async(q, ^{ evaluate = nil; });   // break the self-referencing block after this call returns
+    };
+    void (^evaluateImpl)(BOOL) = ^(BOOL force) {
+        if (decided) return;
+        BOOL prefixDone = YES, allDone = YES;
+        IVLLyrics *best = nil;
+        NSInteger bestQ = 0;
+        for (NSUInteger i = 0; i < n; i++) {
+            if (![finished[i] boolValue]) { prefixDone = NO; allDone = NO; continue; }
+            IVLLyrics *ly = results[i] == [NSNull null] ? nil : results[i];
+            NSInteger quality = IVLLyricsQuality(ly);
+            if (quality == 3 && prefixDone) { finish(ly); return; }
+            if (quality > bestQ) { bestQ = quality; best = ly; }
+        }
+        if (allDone || force) { finish(best); return; }
+        if (bestQ >= 2 && !graceArmed) {
+            graceArmed = YES;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), q, ^{ if (evaluate) evaluate(YES); });
+        }
+    };
+    evaluate = evaluateImpl;
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(15 * NSEC_PER_SEC)), q, ^{ if (evaluate) evaluate(YES); });
+    for (NSUInteger i = 0; i < n; i++) {
+        [self invokeProvider:ids[i] track:track completion:^(IVLLyrics *ly, NSError *err) {
+            dispatch_async(q, ^{
+                if (ly) results[i] = ly;
+                if (err) lastError = err;
+                finished[i] = @YES;
+                if (evaluate) evaluate(NO);
+            });
+        }];
+    }
 }
 
 #pragma mark - Public
@@ -252,8 +303,7 @@ static NSURL *IVLURL(NSString *base, NSString *path, NSDictionary<NSString *, NS
         IVLLyrics *disk = [self readFile:[self manualPathFor:vid]] ?: [self readFile:[self cachePathFor:vid]];
         if (disk) { [self->_memory setObject:disk forKey:vid]; main(disk, nil); return; }
 
-        NSArray *providers = [self providers];
-        [self runProviders:providers index:0 track:track fallback:nil lastError:nil completion:^(IVLLyrics *ly, NSError *err) {
+        [self runProviders:[IVLSettings enabledProviderIDs] track:track completion:^(IVLLyrics *ly, NSError *err) {
             if (ly) {
                 ly.language = [IVLLyricsService detectLanguage:ly];
                 if (vid.length) {
