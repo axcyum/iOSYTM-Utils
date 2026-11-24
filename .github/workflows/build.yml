@@ -38,7 +38,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: theos/
-          key: theos_cache_344ee59
+          key: theos_xcode_sdk_344ee59
 
       - name: Setup Theos
         if: steps.theos.outputs.cache-hit != 'true'
@@ -49,14 +49,9 @@ jobs:
           path: theos
           submodules: recursive
 
-      - name: Download iOS SDK
-        if: steps.theos.outputs.cache-hit != 'true'
-        run: |
-          git clone --quiet -n --depth=1 --filter=tree:0 https://github.com/theos/sdks.git
-          cd sdks
-          git sparse-checkout set --no-cone iPhoneOS16.5.sdk
-          git checkout
-          mv *.sdk $THEOS/sdks
+      # iOS 18+ target: build against the iPhoneOS SDK shipped with the runner's Xcode
+      - name: Show Xcode SDK
+        run: xcrun --sdk iphoneos --show-sdk-path && xcodebuild -version
 
       # Optional: Discord Rich Presence needs the official Discord Social SDK, which cannot be
       # redistributed in the repository. Upload it as `discord-sdk.zip` to a release tagged

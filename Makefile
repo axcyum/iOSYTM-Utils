@@ -8,7 +8,7 @@
 #   discord_partner_sdk.framework (the iOS device slice of the official Social SDK):
 #   make package DISCORD_SDK=/path/to/discord_partner_sdk.xcframework/ios-arm64
 
-TARGET := iphone:clang:16.5:15.0
+TARGET := iphone:clang:latest:18.0
 ARCHS := arm64
 INSTALL_TARGET_PROCESSES = YouTubeMusic
 PACKAGE_VERSION = 1.0.0
