@@ -35,7 +35,7 @@ ivLyricsYTM_FRAMEWORKS = UIKit Foundation QuartzCore CoreText CoreImage NaturalL
 ifneq ($(DISCORD_SDK),)
 # weak link: the dylib still loads when the framework is missing (Discord is then reported as unavailable)
 ivLyricsYTM_CFLAGS += -DIVL_DISCORD=1 -F$(DISCORD_SDK)
-ivLyricsYTM_LDFLAGS += -F$(DISCORD_SDK) -weak_framework discord_partner_sdk -Wl,-rpath,@executable_path/Frameworks -Wl,-rpath,@loader_path
+ivLyricsYTM_LDFLAGS += -F$(DISCORD_SDK) -weak_framework discord_partner_sdk -Wl,-not_for_dyld_shared_cache -Wl,-rpath,@executable_path/Frameworks -Wl,-rpath,@loader_path
 endif
 # Hooks use the ObjC runtime directly -> the dylib has no CydiaSubstrate/ElleKit dependency
 ivLyricsYTM_LOGOS_DEFAULT_GENERATOR = internal
@@ -43,6 +43,6 @@ ivLyricsYTM_LOGOS_DEFAULT_GENERATOR = internal
 ifeq ($(JAILBREAK),1)
 include $(THEOS_MAKE_PATH)/tweak.mk
 else
-ivLyricsYTM_INSTALL_PATH = /usr/lib
+ivLyricsYTM_INSTALL_PATH = /Library/ivLyrics
 include $(THEOS_MAKE_PATH)/library.mk
 endif
