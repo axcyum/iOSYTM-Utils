@@ -244,6 +244,8 @@ static BOOL IVLIsNoLyricsPlaceholder(NSString *text) {
             // a valid but empty answer means "not found" on every mirror
             if (IVLArray(payload[@"lyrics"])) { done(nil, nil); return; }
         }
+        // a mirror that answers 404 knows the song is missing: that wins over another mirror being offline
+        if (status == 404) { done(nil, nil); return; }
         [self lyricsPlusTry:urls index:i + 1 durationMs:durMs lastError:(error ?: lastError) completion:done];
     }];
 }
