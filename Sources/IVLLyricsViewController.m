@@ -117,8 +117,8 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
 }
 
 + (void)presentFromViewController:(UIViewController *)presenter {
-    UIViewController *p = presenter ?: IVLTopViewController();
-    if ([p.presentedViewController isKindOfClass:self]) return;
+    UIViewController *p = IVLTopViewController() ?: presenter;
+    if ([p isKindOfClass:self] || [p.presentedViewController isKindOfClass:self]) return;
     IVLLyricsViewController *vc = [self new];
     vc.modalPresentationStyle = UIModalPresentationOverFullScreen;
     vc.modalTransitionStyle = UIModalTransitionStyleCoverVertical;
@@ -147,6 +147,7 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     [nc addObserver:self selector:@selector(lyricsChanged) name:IVLLyricsDidChangeNotification object:nil];
     [nc addObserver:self selector:@selector(settingsChanged:) name:IVLSettingsDidChangeNotification object:nil];
 
+    [[IVLPlaybackManager shared] refreshNow];
     [self trackChanged];
 }
 
@@ -481,11 +482,11 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     IVLTrack *t = [IVLPlaybackManager shared].track;
     _titleLabel.text = t.title ?: IVLLoc(@"nothing_playing");
     _artistLabel.text = t.artist;
-    _artwork.image = nil;
-    _bgImage.image = nil;
+    _artwork.image = t.artworkImage;
+    _bgImage.image = t.artworkImage;
     NSString *url = t.artworkURL;
     IVLLoadImage(url, ^(UIImage *img) {
-        if (![[IVLPlaybackManager shared].track.artworkURL isEqualToString:url]) return;
+        if (!img || ![[IVLPlaybackManager shared].track.artworkURL isEqualToString:url]) return;
         [UIView transitionWithView:self.view duration:0.4 options:UIViewAnimationOptionTransitionCrossDissolve | UIViewAnimationOptionAllowUserInteraction animations:^{
             self->_artwork.image = img;
             self->_bgImage.image = img;
@@ -530,7 +531,9 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
                 _stateLabel.text = IVLLoc(@"error"); break;
             default:
                 _stateIcon.image = [UIImage systemImageNamed:@"music.note"];
-                _stateLabel.text = IVLLoc(@"nothing_playing"); break;
+                _stateLabel.text = [NSString stringWithFormat:@"%@\n\n%@", IVLLoc(@"nothing_playing"), [m diagnostics]];
+                _retryButton.hidden = NO;
+                break;
         }
     }
 
@@ -785,7 +788,10 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
 #pragma mark Actions
 
 - (void)close { [self dismissViewControllerAnimated:YES completion:nil]; }
-- (void)reload { [[IVLPlaybackManager shared] reloadLyrics]; }
+- (void)reload {
+    IVLPlaybackManager *m = [IVLPlaybackManager shared];
+    if (m.track) [m reloadLyrics]; else [m refreshNow];
+}
 
 - (void)openSearch {
     IVLSearchViewController *s = [IVLSearchViewController new];

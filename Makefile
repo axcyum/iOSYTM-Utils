@@ -25,7 +25,7 @@ endif
 
 ivLyricsYTM_FILES = $(wildcard Sources/*.x) $(wildcard Sources/*.m)
 ivLyricsYTM_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-unused-function -Wno-format-nonliteral -Wno-format-security -Wno-error -ISources -DIVL_VERSION=\"$(PACKAGE_VERSION)\"
-ivLyricsYTM_FRAMEWORKS = UIKit Foundation QuartzCore CoreText NaturalLanguage
+ivLyricsYTM_FRAMEWORKS = UIKit Foundation QuartzCore CoreText NaturalLanguage MediaPlayer
 # Hooks use the ObjC runtime directly -> the dylib has no CydiaSubstrate/ElleKit dependency
 ivLyricsYTM_LOGOS_DEFAULT_GENERATOR = internal
 

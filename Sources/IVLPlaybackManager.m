@@ -4,6 +4,8 @@
 #import "IVLSettings.h"
 #import "YTMHeaders.h"
 #import <QuartzCore/QuartzCore.h>
+#import <MediaPlayer/MediaPlayer.h>
+#import <CommonCrypto/CommonDigest.h>
 
 NSNotificationName const IVLTrackDidChangeNotification = @"IVLTrackDidChangeNotification";
 NSNotificationName const IVLLyricsDidChangeNotification = @"IVLLyricsDidChangeNotification";
@@ -20,7 +22,11 @@ NSNotificationName const IVLLyricsDidChangeNotification = @"IVLLyricsDidChangeNo
     NSInteger _lastRaw;
     CFTimeInterval _lastRawChange;
     BOOL _playing;
-    NSString *_pendingVideoID;
+    NSString *_lastPlayerVid;
+    NSDictionary *_npInfo;
+    CFTimeInterval _npStamp;
+    NSString *_npKey;
+    NSUInteger _activateCount, _heartbeatCount, _npCount;
 }
 
 + (instancetype)shared {
@@ -40,7 +46,7 @@ NSNotificationName const IVLLyricsDidChangeNotification = @"IVLLyricsDidChangeNo
 - (void)settingsChanged:(NSNotification *)n {
     NSString *key = n.object;
     if ([key isEqualToString:IVLKeyEnabled]) {
-        if ([IVLSettings boolForKey:IVLKeyEnabled] && self.player && !self.track) [self playerDidActivateVideo:self.player];
+        if ([IVLSettings boolForKey:IVLKeyEnabled] && !self.track) [self scheduleResolve];
         return;
     }
     if ([key isEqualToString:IVLKeyTranslation] || [key isEqualToString:IVLKeyTranslationLang] || [key isEqualToString:IVLKeyPronunciation]) {
@@ -51,41 +57,109 @@ NSNotificationName const IVLLyricsDidChangeNotification = @"IVLLyricsDidChangeNo
 }
 
 #pragma mark - Track detection
+// Two independent sources:
+//  1. YTPlayerViewController (videoID, exact position, seek) - private, may change between app versions
+//  2. MPNowPlayingInfoCenter (title, artist, duration, artwork, elapsed) - public API, always available
 
-- (void)playerDidActivateVideo:(UIViewController *)player {
-    self.player = player;
+static NSString *IVLStr(id v) { return [v isKindOfClass:[NSString class]] ? v : nil; }
+
+static BOOL IVLLooseEqual(NSString *a, NSString *b) {
+    if (!a.length || !b.length) return NO;
+    NSString *x = a.lowercaseString, *y = b.lowercaseString;
+    return [x isEqualToString:y] || [x containsString:y] || [y containsString:x];
+}
+
+static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
+    NSData *d = [[NSString stringWithFormat:@"%@\n%@", title ?: @"", artist ?: @""] dataUsingEncoding:NSUTF8StringEncoding];
+    unsigned char out[CC_SHA1_DIGEST_LENGTH];
+    CC_SHA1(d.bytes, (CC_LONG)d.length, out);
+    NSMutableString *h = [NSMutableString stringWithString:@"np_"];
+    for (int i = 0; i < 10; i++) [h appendFormat:@"%02x", out[i]];
+    return h;
+}
+
+- (void)scheduleResolve {
     if (![IVLSettings boolForKey:IVLKeyEnabled]) return;
-    _pendingVideoID = [self playerVideoID];
     NSUInteger gen = ++_generation;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [self resolveTrackAttempt:0 generation:gen];
     });
 }
 
+- (void)playerDidActivateVideo:(UIViewController *)player {
+    _activateCount++;
+    if (player) self.player = player;
+    _lastPlayerVid = [self playerVideoID];
+    [self scheduleResolve];
+}
+
 - (void)playerHeartbeat:(UIViewController *)player {
-    // Fallback for app versions where didActivateVideo is not delivered.
+    _heartbeatCount++;
     if (!self.player) self.player = player;
     if (player != self.player || ![IVLSettings boolForKey:IVLKeyEnabled]) return;
     NSString *vid = [self playerVideoID];
-    if (!vid.length || [vid isEqualToString:self.track.videoID] || [vid isEqualToString:_pendingVideoID]) return;
-    [self playerDidActivateVideo:player];
+    if (!vid.length || [vid isEqualToString:_lastPlayerVid]) return;
+    _lastPlayerVid = vid;
+    [self scheduleResolve];
+}
+
+- (void)nowPlayingInfoDidChange:(NSDictionary *)info {
+    NSDictionary *copy = [info isKindOfClass:[NSDictionary class]] ? [info copy] : nil;
+    CFTimeInterval stamp = CACurrentMediaTime();
+    void (^apply)(void) = ^{
+        self->_npCount++;
+        if (!copy) return;
+        self->_npInfo = copy;
+        self->_npStamp = stamp;
+        NSString *title = IVLStr(copy[MPMediaItemPropertyTitle]);
+        NSString *key = [NSString stringWithFormat:@"%@\n%@", title ?: @"", IVLStr(copy[MPMediaItemPropertyArtist]) ?: @""];
+        if (title.length && ![key isEqualToString:self->_npKey]) {
+            self->_npKey = key;
+            [self scheduleResolve];
+        }
+    };
+    if (NSThread.isMainThread) apply(); else dispatch_async(dispatch_get_main_queue(), apply);
+}
+
+- (void)refreshNow {
+    if (!_npInfo) {
+        NSDictionary *info = [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo;
+        if (info.count) [self nowPlayingInfoDidChange:info];
+    }
+    if (!self.track) [self scheduleResolve];
+}
+
+- (NSString *)diagnostics {
+    NSDictionary *np = _npInfo ?: [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo;
+    return [NSString stringWithFormat:@"player %@ · nowPlaying %@ · act %lu · hb %lu · np %lu",
+            self.player ? @"✓" : @"✗", IVLStr(np[MPMediaItemPropertyTitle]).length ? @"✓" : @"✗",
+            (unsigned long)_activateCount, (unsigned long)_heartbeatCount, (unsigned long)_npCount];
 }
 
 - (NSString *)playerVideoID {
     YTPlayerViewController *p = (YTPlayerViewController *)self.player;
     NSString *vid = nil;
-    if ([p respondsToSelector:@selector(currentVideoID)]) vid = [p currentVideoID];
-    if (!vid.length && [p respondsToSelector:@selector(contentVideoID)]) vid = p.contentVideoID;
+    @try {
+        if ([p respondsToSelector:@selector(currentVideoID)]) vid = IVLStr([p currentVideoID]);
+        if (!vid.length && [p respondsToSelector:@selector(contentVideoID)]) vid = IVLStr(p.contentVideoID);
+    } @catch (__unused NSException *e) {}
     return vid;
 }
 
 - (void)resolveTrackAttempt:(NSInteger)attempt generation:(NSUInteger)gen {
     if (gen != _generation) return;
-    YTPlayerViewController *p = (YTPlayerViewController *)self.player;
-    if (!p) return;
+    void (^retry)(void) = ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self resolveTrackAttempt:attempt + 1 generation:gen];
+        });
+    };
 
-    NSString *vid = [self playerVideoID];
+    // --- player side
+    YTPlayerViewController *p = (YTPlayerViewController *)self.player;
+    NSString *pVid = [self playerVideoID];
     YTIVideoDetails *details = nil;
+    NSString *pTitle = nil, *pArtist = nil, *pThumb = nil;
+    CGFloat pDuration = 0;
     @try {
         if ([p respondsToSelector:@selector(playerResponse)]) {
             YTPlayerResponse *resp = p.playerResponse;
@@ -94,41 +168,58 @@ NSNotificationName const IVLLyricsDidChangeNotification = @"IVLLyricsDidChangeNo
                 if ([data respondsToSelector:@selector(videoDetails)]) details = data.videoDetails;
             }
         }
-    } @catch (__unused NSException *e) {}
-
-    NSString *title = [details respondsToSelector:@selector(title)] ? details.title : nil;
-    NSString *artist = [details respondsToSelector:@selector(author)] ? details.author : nil;
-    if (!vid.length && [details respondsToSelector:@selector(videoId)]) vid = details.videoId;
-    CGFloat duration = [p respondsToSelector:@selector(currentVideoTotalMediaTime)] ? p.currentVideoTotalMediaTime : 0;
-
-    BOOL detailsMatch = vid.length && title.length;
-    if ([details respondsToSelector:@selector(videoId)] && details.videoId.length && vid.length) {
-        detailsMatch = detailsMatch && [details.videoId isEqualToString:vid];   // response may still be the previous song
-    }
-    if ((!detailsMatch && attempt < 20) || (duration <= 0 && attempt < 8)) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [self resolveTrackAttempt:attempt + 1 generation:gen];
-        });
-        return;
-    }
-    if (!vid.length || !title.length) return;
-    if ([self.track.videoID isEqualToString:vid]) return;
-
-    IVLTrack *t = [IVLTrack new];
-    t.videoID = vid;
-    t.title = title;
-    t.artist = artist ?: @"";
-    t.duration = duration;
-    @try {
-        NSArray *thumbs = details.thumbnail.thumbnailsArray;
-        YTIThumbnailDetails_Thumbnail *thumb = thumbs.lastObject;
-        if ([thumb respondsToSelector:@selector(URL)]) {
-            NSString *url = thumb.URL;
-            // request a larger square artwork from googleusercontent ("=w120-h120-..." / "w120-h120")
-            url = [url stringByReplacingOccurrencesOfString:@"w\\d+-h\\d+" withString:@"w720-h720" options:NSRegularExpressionSearch range:NSMakeRange(0, url.length)];
-            t.artworkURL = url;
+        if ([details respondsToSelector:@selector(title)]) pTitle = IVLStr(details.title);
+        if ([details respondsToSelector:@selector(author)]) pArtist = IVLStr(details.author);
+        if ([details respondsToSelector:@selector(videoId)]) {
+            NSString *dv = IVLStr(details.videoId);
+            if (!pVid.length) pVid = dv;
+            else if (dv.length && ![dv isEqualToString:pVid]) pTitle = nil;   // response still from the previous song
+        }
+        if ([p respondsToSelector:@selector(currentVideoTotalMediaTime)]) pDuration = p.currentVideoTotalMediaTime;
+        if ([details respondsToSelector:@selector(thumbnail)]) {
+            YTIThumbnailDetails_Thumbnail *thumb = [details.thumbnail.thumbnailsArray lastObject];
+            if ([thumb respondsToSelector:@selector(URL)]) pThumb = IVLStr(thumb.URL);
         }
     } @catch (__unused NSException *e) {}
+
+    // --- system now playing side
+    NSDictionary *np = _npInfo ?: [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo;
+    NSString *nTitle = IVLStr(np[MPMediaItemPropertyTitle]);
+    NSString *nArtist = IVLStr(np[MPMediaItemPropertyArtist]);
+    double nDuration = [np[MPMediaItemPropertyPlaybackDuration] doubleValue];
+
+    NSString *title, *artist, *vid = nil;
+    double duration;
+    if (nTitle.length) {
+        title = nTitle;
+        artist = nArtist.length ? nArtist : (pArtist ?: @"");
+        duration = nDuration > 0 ? nDuration : pDuration;
+        if (pVid.length && IVLLooseEqual(pTitle, nTitle)) vid = pVid;
+        else if (p && attempt < 6) { retry(); return; }   // give the player a moment to catch up
+    } else if (pVid.length && pTitle.length) {
+        if (pDuration <= 0 && attempt < 8) { retry(); return; }
+        title = pTitle; artist = pArtist ?: @""; duration = pDuration; vid = pVid;
+    } else {
+        if (attempt < 20) retry();
+        return;
+    }
+
+    NSString *key = vid.length ? vid : IVLSyntheticKey(title, artist);
+    if ([self.track.videoID isEqualToString:key]) return;
+
+    IVLTrack *t = [IVLTrack new];
+    t.videoID = key;
+    t.title = title;
+    t.artist = artist;
+    t.duration = duration;
+    id art = np[MPMediaItemPropertyArtwork];
+    if (nTitle.length && [art isKindOfClass:[MPMediaItemArtwork class]]) {
+        @try { t.artworkImage = [(MPMediaItemArtwork *)art imageWithSize:CGSizeMake(600, 600)]; } @catch (__unused NSException *e) {}
+    }
+    if (vid && pThumb.length) {
+        // request a larger square artwork from googleusercontent ("w120-h120")
+        t.artworkURL = [pThumb stringByReplacingOccurrencesOfString:@"w\\d+-h\\d+" withString:@"w720-h720" options:NSRegularExpressionSearch range:NSMakeRange(0, pThumb.length)];
+    }
 
     self.track = t;
     self.lyrics = nil;
@@ -189,7 +280,15 @@ NSNotificationName const IVLLyricsDidChangeNotification = @"IVLLyricsDidChangeNo
 
 - (NSInteger)rawTimeMs {
     YTPlayerViewController *p = (YTPlayerViewController *)self.player;
-    if (![p respondsToSelector:@selector(currentVideoMediaTime)]) return 0;
+    if (![p respondsToSelector:@selector(currentVideoMediaTime)]) {
+        // system now-playing fallback: elapsed + (now - when it was set) * rate
+        if (!_npInfo) return 0;
+        double elapsed = [_npInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] doubleValue];
+        id rateObj = _npInfo[MPNowPlayingInfoPropertyPlaybackRate];
+        double rate = rateObj ? [rateObj doubleValue] : 1.0;
+        _playing = rate > 0;
+        return (NSInteger)llround((elapsed + (CACurrentMediaTime() - _npStamp) * rate) * 1000.0);
+    }
     NSInteger raw = (NSInteger)llround([p currentVideoMediaTime] * 1000.0);
     CFTimeInterval now = CACurrentMediaTime();
     if (raw != _lastRaw) {

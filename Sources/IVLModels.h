@@ -43,6 +43,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy) NSString *artist;
 @property (nonatomic, assign) NSTimeInterval duration;   // seconds, 0 = unknown
 @property (nonatomic, copy, nullable) NSString *artworkURL;
+@property (nonatomic, strong, nullable) id artworkImage;   // UIImage from the system now-playing info
 @end
 
 NS_ASSUME_NONNULL_END

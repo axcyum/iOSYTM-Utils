@@ -3,6 +3,7 @@
 #import "IVLPlaybackManager.h"
 #import "IVLSettings.h"
 #import "IVLLocalization.h"
+#import "YTMHeaders.h"
 
 static const CGFloat kSize = 44;
 static const CGFloat kEdge = 8;
@@ -138,6 +139,18 @@ static const CGFloat kEdge = 8;
 
 - (void)tap {
     [[UIImpactFeedbackGenerator new] impactOccurred];
+    // Hand the player to the manager if the track callbacks were missed
+    IVLPlaybackManager *m = [IVLPlaybackManager shared];
+    if (!m.player) {
+        for (UIViewController *vc = self.hostViewController.parentViewController; vc; vc = vc.parentViewController) {
+            if ([vc respondsToSelector:@selector(playerViewController)]) {
+                UIViewController *player = [(YTMWatchViewController *)vc playerViewController];
+                if (player) [m playerDidActivateVideo:player];
+                break;
+            }
+        }
+    }
+    [m refreshNow];
     UIViewController *host = self.hostViewController ?: IVLTopViewController();
     [IVLLyricsViewController presentFromViewController:host];
 }

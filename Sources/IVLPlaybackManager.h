@@ -27,6 +27,11 @@ typedef NS_ENUM(NSInteger, IVLLyricsState) {
 - (void)playerDidActivateVideo:(UIViewController *)player;
 /// Called from the player's time-change callback (cheap; detects missed track changes).
 - (void)playerHeartbeat:(UIViewController *)player;
+/// Called from the MPNowPlayingInfoCenter hook (any thread).
+- (void)nowPlayingInfoDidChange:(nullable NSDictionary *)info;
+/// Re-check sources now (called when the lyrics UI opens).
+- (void)refreshNow;
+- (NSString *)diagnostics;
 
 /// Playback position in ms with global + per-song offset applied.
 - (NSInteger)currentTimeMs;

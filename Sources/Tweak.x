@@ -7,6 +7,7 @@
 
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
+#import <MediaPlayer/MediaPlayer.h>
 #import "YTMHeaders.h"
 #import "IVLPlaybackManager.h"
 #import "IVLFloatingButton.h"
@@ -35,6 +36,17 @@ static const void *kIVLButtonKey = &kIVLButtonKey;
     [[IVLPlaybackManager shared] playerHeartbeat:self];
 }
 
+%end
+%end
+
+#pragma mark - System now-playing info (public API, version independent)
+
+%group NowPlayingInfo
+%hook MPNowPlayingInfoCenter
+- (void)setNowPlayingInfo:(NSDictionary *)info {
+    %orig;
+    if (self == [MPNowPlayingInfoCenter defaultCenter]) [[IVLPlaybackManager shared] nowPlayingInfoDidChange:info];
+}
 %end
 %end
 
@@ -108,6 +120,7 @@ static UIImage *IVLMenuIcon(void) {
 
 %ctor {
     @autoreleasepool {
+        %init(NowPlayingInfo);
         if (objc_getClass("YTPlayerViewController")) %init(Player);
         if (objc_getClass("YTMNowPlayingViewController")) %init(NowPlaying);
         if (objc_getClass("YTMAvatarAccountView")) %init(AccountMenu);
