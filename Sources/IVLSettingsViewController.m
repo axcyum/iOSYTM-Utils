@@ -3,6 +3,8 @@
 #import "IVLLocalization.h"
 #import "IVLLyricsService.h"
 #import "IVLTranslator.h"
+#import "IVLSpotify.h"
+#import "IVLDiscord.h"
 
 #ifndef IVL_VERSION
 #define IVL_VERSION "1.0.0"
@@ -20,6 +22,10 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
 @property (nonatomic, copy) NSString *(^format)(double v);
 @property (nonatomic, copy) void (^action)(UIViewController *vc);
 @property (nonatomic, copy) NSString *(^detail)(void);
+@property (nonatomic, copy) BOOL (^getBool)(void);           // custom switch (no settings key)
+@property (nonatomic, copy) void (^setBool)(BOOL on);
+@property (nonatomic, assign) BOOL destructive;
+@property (nonatomic, copy) NSString *symbol;                 // SF Symbol for link rows
 @end
 @implementation IVLRow
 + (instancetype)type:(IVLRowType)t key:(NSString *)k title:(NSString *)title {
@@ -39,25 +45,132 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
 
 @implementation IVLSettingsViewController {
     NSArray<IVLSection *> *_sections;
+    NSString *_page;
 }
 
-- (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
+- (instancetype)init { return [self initWithPage:nil]; }
+
+- (instancetype)initWithPage:(NSString *)page {
+    if ((self = [super initWithStyle:UITableViewStyleInsetGrouped])) _page = [page copy];
+    return self;
+}
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"ivLyrics";
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(done)];
+    self.title = [_page isEqualToString:@"lock"] ? IVLLoc(@"sec_lock") : [_page isEqualToString:@"spotify"] ? @"Spotify"
+               : [_page isEqualToString:@"discord"] ? @"Discord Rich Presence" : @"ivLyrics";
+    if (!_page) self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(done)];
     [self buildSections];
+    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+    [nc addObserver:self selector:@selector(rebuild) name:IVLSpotifyStateDidChangeNotification object:nil];
+    [nc addObserver:self selector:@selector(rebuild) name:IVLDiscordStatusDidChangeNotification object:nil];
+}
+
+- (void)rebuild {
+    [self buildSections];
+    [self.tableView reloadData];
+}
+
+- (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
+
+- (NSArray<IVLSection *> *)lockSections {
+    IVLRow *(^sw)(NSString *, NSString *) = ^(NSString *k, NSString *t) { return [IVLRow type:IVLRowSwitch key:k title:t]; };
+    IVLRow *lead = [IVLRow type:IVLRowStepper key:IVLKeyLockLead title:IVLLoc(@"lock_lead")];
+    lead.min = 0; lead.max = 1000; lead.step = 50;
+    lead.format = ^NSString *(double v) { return [NSString stringWithFormat:@"%.2fs", v / 1000.0]; };
+    return @[
+        [IVLSection title:nil footer:IVLLoc(@"footer_lock") rows:@[sw(IVLKeyLockEnabled, IVLLoc(@"lock_enabled"))]],
+        [IVLSection title:IVLLoc(@"sec_display") footer:IVLLoc(@"footer_lock_lead") rows:@[
+            sw(IVLKeyLockAnimation, IVLLoc(@"lock_animation")),
+            sw(IVLKeyLockKaraoke, IVLLoc(@"lock_karaoke")),
+            sw(IVLKeyLockTranslation, IVLLoc(@"lock_translation")),
+            lead,
+        ]],
+    ];
+}
+
+- (NSArray<IVLSection *> *)spotifySections {
+    IVLSpotify *sp = [IVLSpotify shared];
+    IVLRow *state = [IVLRow type:IVLRowInfo key:@"" title:IVLLoc(@"status")];
+    state.detail = ^NSString *{ return [IVLSpotify shared].statusText; };
+    IVLRow *login = [IVLRow type:IVLRowAction key:@"" title:sp.loggedIn ? IVLLoc(@"spotify_relogin") : IVLLoc(@"spotify_login")];
+    login.action = ^(UIViewController *vc) { [vc presentViewController:[[IVLSpotify shared] loginViewController] animated:YES completion:nil]; };
+    IVLRow *logout = [IVLRow type:IVLRowAction key:@"" title:IVLLoc(@"spotify_logout")];
+    logout.destructive = YES;
+    logout.action = ^(UIViewController *vc) { [[IVLSpotify shared] logout]; };
+    IVLRow *use = [IVLRow type:IVLRowSwitch key:IVLKeyProviderSpotify title:IVLLoc(@"spotify_use")];
+    NSMutableArray *rows = [NSMutableArray arrayWithObjects:state, login, nil];
+    if (sp.loggedIn) [rows addObject:logout];
+    return @[
+        [IVLSection title:nil footer:IVLLoc(@"footer_spotify") rows:rows],
+        [IVLSection title:nil footer:nil rows:@[use]],
+    ];
+}
+
+- (NSArray<IVLSection *> *)discordSections {
+    IVLDiscord *d = [IVLDiscord shared];
+    IVLRow *state = [IVLRow type:IVLRowInfo key:@"" title:IVLLoc(@"status")];
+    state.detail = ^NSString *{ return [IVLDiscord shared].status; };
+    if (![IVLDiscord available]) {
+        return @[[IVLSection title:nil footer:IVLLoc(@"footer_discord_unavailable") rows:@[state]]];
+    }
+    IVLRow *login = [IVLRow type:IVLRowAction key:@"" title:d.linked ? IVLLoc(@"discord_relink") : IVLLoc(@"discord_link")];
+    login.action = ^(UIViewController *vc) { [[IVLDiscord shared] login]; };
+    IVLRow *share = [IVLRow type:IVLRowSwitch key:@"" title:IVLLoc(@"discord_share")];
+    share.getBool = ^BOOL { return [[IVLDiscord shared] enabled]; };
+    share.setBool = ^(BOOL on) { on ? [[IVLDiscord shared] retry] : [[IVLDiscord shared] disable]; };
+    IVLRow *cover = [IVLRow type:IVLRowSwitch key:@"" title:IVLLoc(@"discord_cover")];
+    cover.getBool = ^BOOL { return [[IVLDiscord shared] coverEnabled]; };
+    cover.setBool = ^(BOOL on) { [[IVLDiscord shared] setCoverEnabled:on]; };
+    IVLRow *logs = [IVLRow type:IVLRowAction key:@"" title:IVLLoc(@"discord_logs")];
+    logs.action = ^(UIViewController *vc) {
+        NSArray *files = [[IVLDiscord shared] logFiles];
+        if (!files.count) return;
+        UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:files applicationActivities:nil];
+        share.popoverPresentationController.sourceView = vc.view;
+        [vc presentViewController:share animated:YES completion:nil];
+    };
+    IVLRow *forget = [IVLRow type:IVLRowAction key:@"" title:IVLLoc(@"discord_forget")];
+    forget.destructive = YES;
+    forget.action = ^(UIViewController *vc) {
+        UIAlertController *a = [UIAlertController alertControllerWithTitle:IVLLoc(@"discord_forget") message:IVLLoc(@"discord_forget_confirm") preferredStyle:UIAlertControllerStyleAlert];
+        [a addAction:[UIAlertAction actionWithTitle:IVLLoc(@"cancel") style:UIAlertActionStyleCancel handler:nil]];
+        [a addAction:[UIAlertAction actionWithTitle:IVLLoc(@"discord_forget") style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x) { [[IVLDiscord shared] forget]; }]];
+        [vc presentViewController:a animated:YES completion:nil];
+    };
+    NSMutableArray *account = [NSMutableArray arrayWithObjects:state, login, nil];
+    if (d.linked) [account addObject:forget];
+    return @[
+        [IVLSection title:nil footer:IVLLoc(@"footer_discord") rows:account],
+        [IVLSection title:nil footer:nil rows:@[share, cover]],
+        [IVLSection title:nil footer:nil rows:@[logs]],
+    ];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    [self.tableView reloadData];
+    [self rebuild];
 }
 
 - (void)done { [self dismissViewControllerAnimated:YES completion:nil]; }
 
 - (void)buildSections {
+    if ([_page isEqualToString:@"lock"]) { _sections = [self lockSections]; return; }
+    if ([_page isEqualToString:@"spotify"]) { _sections = [self spotifySections]; return; }
+    if ([_page isEqualToString:@"discord"]) { _sections = [self discordSections]; return; }
+    IVLRow *(^page)(NSString *, NSString *, NSString *, NSString *(^)(void)) = ^(NSString *pageID, NSString *title, NSString *symbol, NSString *(^detail)(void)) {
+        IVLRow *r = [IVLRow type:IVLRowLink key:@"" title:title];
+        r.symbol = symbol;
+        r.detail = detail;
+        r.action = ^(UIViewController *vc) { [vc.navigationController pushViewController:[[IVLSettingsViewController alloc] initWithPage:pageID] animated:YES]; };
+        return r;
+    };
+    IVLRow *lockPage = page(@"lock", IVLLoc(@"sec_lock"), @"lock.fill", ^NSString *{ return IVLLoc([IVLSettings boolForKey:IVLKeyLockEnabled] ? @"on" : @"off"); });
+    IVLRow *spotifyPage = page(@"spotify", @"Spotify", @"music.note.list", ^NSString *{ return [IVLSpotify shared].loggedIn ? IVLLoc(@"spotify_logged_in") : IVLLoc(@"spotify_logged_out"); });
+    IVLRow *discordPage = page(@"discord", @"Discord Rich Presence", @"bubble.left.and.bubble.right.fill", ^NSString *{
+        return [IVLDiscord available] ? ([[IVLDiscord shared] enabled] ? IVLLoc(@"on") : IVLLoc(@"off")) : IVLLoc(@"discord_na_short");
+    });
+
     IVLRow *(^sw)(NSString *, NSString *) = ^(NSString *k, NSString *t) { return [IVLRow type:IVLRowSwitch key:k title:t]; };
     IVLRow *(^seg)(NSString *, NSString *, NSArray *) = ^(NSString *k, NSString *t, NSArray *o) {
         IVLRow *r = [IVLRow type:IVLRowSegment key:k title:t]; r.options = o; return r;
@@ -106,6 +219,7 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
             sw(IVLKeyMiniLyric, IVLLoc(@"mini_lyric")),
             sw(IVLKeyKeepAwake, IVLLoc(@"keep_awake")),
         ]],
+        [IVLSection title:IVLLoc(@"sec_integrations") footer:nil rows:@[lockPage, spotifyPage, discordPage]],
         [IVLSection title:IVLLoc(@"sec_display") footer:IVLLoc(@"footer_display") rows:@[
             size,
             seg(IVLKeyAlignment, IVLLoc(@"alignment"), @[IVLLoc(@"align_left"), IVLLoc(@"align_center")]),
@@ -140,9 +254,13 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
     switch (row.type) {
         case IVLRowSwitch: {
             UISwitch *s = [UISwitch new];
-            s.on = [IVLSettings boolForKey:row.key];
+            s.on = row.getBool ? row.getBool() : [IVLSettings boolForKey:row.key];
             NSString *key = row.key;
-            [s addAction:[UIAction actionWithHandler:^(UIAction *a) { [IVLSettings setBool:((UISwitch *)a.sender).on forKey:key]; }] forControlEvents:UIControlEventValueChanged];
+            void (^custom)(BOOL) = row.setBool;
+            [s addAction:[UIAction actionWithHandler:^(UIAction *a) {
+                BOOL on = ((UISwitch *)a.sender).on;
+                if (custom) custom(on); else [IVLSettings setBool:on forKey:key];
+            }] forControlEvents:UIControlEventValueChanged];
             c.accessoryView = s;
             break;
         }
@@ -185,12 +303,13 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
             break;
         }
         case IVLRowLink:
+            if (row.symbol) c.imageView.image = [UIImage systemImageNamed:row.symbol];
             c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
             c.detailTextLabel.text = row.detail ? row.detail() : nil;
             c.selectionStyle = UITableViewCellSelectionStyleDefault;
             break;
         case IVLRowAction:
-            c.textLabel.textColor = UIColor.systemRedColor;
+            c.textLabel.textColor = (row.destructive || [row.title isEqualToString:IVLLoc(@"clear_cache")]) ? UIColor.systemRedColor : UIColor.systemBlueColor;
             c.detailTextLabel.text = row.detail ? row.detail() : nil;
             c.selectionStyle = UITableViewCellSelectionStyleDefault;
             break;
@@ -226,6 +345,7 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
 }
 
 + (NSString *)detailFor:(NSString *)pid {
+    if ([pid isEqualToString:@"spotify"]) return IVLLoc(@"src_spotify");
     if ([pid isEqualToString:@"youtube"]) return IVLLoc(@"src_youtube");
     if ([pid isEqualToString:@"lyricsplus"]) return IVLLoc(@"src_lyricsplus");
     if ([pid isEqualToString:@"unison"]) return IVLLoc(@"src_unison");

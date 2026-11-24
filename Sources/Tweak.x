@@ -13,6 +13,9 @@
 #import "IVLFloatingButton.h"
 #import "IVLLyricsViewController.h"
 #import "IVLSettings.h"
+#import "IVLLockScreen.h"
+#import "IVLDiscord.h"
+#import "IVLSpotify.h"
 
 static const void *kIVLButtonKey = &kIVLButtonKey;
 
@@ -44,8 +47,13 @@ static const void *kIVLButtonKey = &kIVLButtonKey;
 %group NowPlayingInfo
 %hook MPNowPlayingInfoCenter
 - (void)setNowPlayingInfo:(NSDictionary *)info {
-    %orig;
-    if (self == [MPNowPlayingInfoCenter defaultCenter]) [[IVLPlaybackManager shared] nowPlayingInfoDidChange:info];
+    IVLLockScreen *lock = [IVLLockScreen shared];
+    if (self != [MPNowPlayingInfoCenter defaultCenter] || lock.updating) { %orig; return; }
+    // lock screen lyrics: forward the app's dictionary with our artwork while lyrics are shown
+    %orig([lock processAppInfo:info]);
+    [[IVLPlaybackManager shared] nowPlayingInfoDidChange:info];
+    NSDictionary *copy = [info copy];
+    dispatch_async(dispatch_get_main_queue(), ^{ [[IVLDiscord shared] noteMetadata:copy]; });
 }
 %end
 %end
@@ -121,6 +129,11 @@ static UIImage *IVLMenuIcon(void) {
 %ctor {
     @autoreleasepool {
         %init(NowPlayingInfo);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [IVLLockScreen shared];
+            [IVLSpotify shared];
+            [IVLDiscord shared];
+        });
         if (objc_getClass("YTPlayerViewController")) %init(Player);
         if (objc_getClass("YTMNowPlayingViewController")) %init(NowPlaying);
         if (objc_getClass("YTMAvatarAccountView")) %init(AccountMenu);

@@ -3,6 +3,8 @@
 NS_ASSUME_NONNULL_BEGIN
 
 @interface IVLSettingsViewController : UITableViewController
+/// nil = main page, "lock", "spotify", "discord"
+- (instancetype)initWithPage:(nullable NSString *)page;
 @end
 
 /// Reorderable list of lyrics providers with on/off switches.

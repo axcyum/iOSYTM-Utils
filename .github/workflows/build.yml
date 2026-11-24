@@ -58,14 +58,36 @@ jobs:
           git checkout
           mv *.sdk $THEOS/sdks
 
+      # Optional: Discord Rich Presence needs the official Discord Social SDK, which cannot be
+      # redistributed in the repository. Upload it as `discord-sdk.zip` to a release tagged
+      # `build-inputs` in this repository to enable it.
+      - name: Fetch Discord Social SDK (optional)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p sdk
+          if gh release download build-inputs -R "${{ github.repository }}" --pattern discord-sdk.zip --dir sdk 2>/dev/null; then
+            ditto -x -k sdk/discord-sdk.zip sdk/x
+            fw="$(find sdk/x -path '*xcframework/ios-arm64/discord_partner_sdk.framework' -not -path '*__MACOSX*' | head -n 1)"
+            if [ -n "$fw" ]; then
+              echo "DISCORD_SDK=$(cd "$(dirname "$fw")" && pwd)" >> $GITHUB_ENV
+              echo "Discord SDK: $fw"
+            fi
+          else
+            echo "No discord-sdk.zip in release build-inputs: building without Discord Rich Presence"
+          fi
+
       - name: Build dylib
         run: |
           cd main
-          make clean all DEBUG=0 FINALPACKAGE=1
+          make clean all DEBUG=0 FINALPACKAGE=1 ${DISCORD_SDK:+DISCORD_SDK="$DISCORD_SDK"}
           mkdir -p ../out
           cp "$(find .theos/obj -name 'ivLyricsYTM.dylib' -not -path '*/arm64/*' | head -n 1)" ../out/ivLyricsYTM.dylib
           file ../out/ivLyricsYTM.dylib
           otool -L ../out/ivLyricsYTM.dylib
+          if [ -n "$DISCORD_SDK" ]; then
+            cp -R "$DISCORD_SDK/discord_partner_sdk.framework" ../out/
+          fi
 
       - name: Build jailbreak packages
         run: |
@@ -79,7 +101,9 @@ jobs:
         run: |
           pipx install --force https://github.com/asdfzxcvbn/pyzule-rw/archive/main.zip
           wget "${{ inputs.ipa_url }}" --no-verbose -O ytm.ipa
-          cyan -i ytm.ipa -o out/YouTubeMusic_ivLyrics.ipa -uwsf out/ivLyricsYTM.dylib
+          extra=""
+          [ -d out/discord_partner_sdk.framework ] && extra="out/discord_partner_sdk.framework"
+          cyan -i ytm.ipa -o out/YouTubeMusic_ivLyrics.ipa -uwsf out/ivLyricsYTM.dylib $extra
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

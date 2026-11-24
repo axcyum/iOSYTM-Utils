@@ -88,7 +88,7 @@ static double IVLScoreText(NSString *expected, NSString *actual, double weight) 
 }
 
 /// Candidate = @{ id, title, artist, duration(seconds) }  — same scoring idea as ivLyrics' Paxsenix addon.
-static NSDictionary *IVLBestCandidate(NSArray<NSDictionary *> *candidates, IVLTrack *track) {
+NSDictionary *IVLBestCandidate(NSArray<NSDictionary *> *candidates, IVLTrack *track) {
     NSString *title = [IVLLyricsService cleanTitle:track.title];
     NSString *artist = [IVLLyricsService cleanArtist:track.artist];
     NSDictionary *best = nil;

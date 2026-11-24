@@ -19,4 +19,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)youtubeForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)done;
 @end
 
+/// Best match among @{ id, title, artist, duration(seconds) } candidates (nil when nothing is convincing).
+FOUNDATION_EXPORT NSDictionary *_Nullable IVLBestCandidate(NSArray<NSDictionary *> *candidates, IVLTrack *track);
+
 NS_ASSUME_NONNULL_END

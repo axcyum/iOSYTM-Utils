@@ -28,6 +28,12 @@ extern NSString *const IVLKeyAutoResume;         // NSInteger seconds, 0 = never
 extern NSString *const IVLKeyButtonX;            // double 0..1
 extern NSString *const IVLKeyButtonY;            // double 0..1
 extern NSString *const IVLKeySongOffsets;        // NSDictionary videoID -> ms
+extern NSString *const IVLKeyLockEnabled;        // BOOL  lyrics on the lock screen artwork
+extern NSString *const IVLKeyLockAnimation;      // BOOL  slide + fade between lines
+extern NSString *const IVLKeyLockKaraoke;        // BOOL  word fill on the lock screen
+extern NSString *const IVLKeyLockTranslation;    // BOOL  pronunciation / translation under the line
+extern NSString *const IVLKeyLockLead;           // NSInteger ms shown early (lock screen latency)
+extern NSString *const IVLKeyProviderSpotify;    // BOOL
 
 @interface IVLSettings : NSObject
 + (id _Nullable)objectForKey:(NSString *)key;

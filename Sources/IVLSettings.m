@@ -25,6 +25,12 @@ NSString *const IVLKeyAutoResume = @"autoResume";
 NSString *const IVLKeyButtonX = @"buttonX";
 NSString *const IVLKeyButtonY = @"buttonY";
 NSString *const IVLKeySongOffsets = @"songOffsets";
+NSString *const IVLKeyLockEnabled = @"lockEnabled";
+NSString *const IVLKeyLockAnimation = @"lockAnimation";
+NSString *const IVLKeyLockKaraoke = @"lockKaraoke";
+NSString *const IVLKeyLockTranslation = @"lockTranslation";
+NSString *const IVLKeyLockLead = @"lockLead";
+NSString *const IVLKeyProviderSpotify = @"providerSpotify";
 
 static NSString *const kDomain = @"ivLyricsYTM";
 
@@ -58,6 +64,12 @@ static NSString *const kDomain = @"ivLyricsYTM";
             IVLKeyButtonX: @0.9,
             IVLKeyButtonY: @0.2,
             IVLKeySongOffsets: @{},
+            IVLKeyLockEnabled: @YES,
+            IVLKeyLockAnimation: @YES,
+            IVLKeyLockKaraoke: @YES,
+            IVLKeyLockTranslation: @YES,
+            IVLKeyLockLead: @250,
+            IVLKeyProviderSpotify: @YES,
         };
     });
     return d;
@@ -73,7 +85,7 @@ static NSString *const kDomain = @"ivLyricsYTM";
 
 + (NSArray<NSString *> *)knownProviders {
     // word-synced sources first
-    return @[@"youtube", @"lyricsplus", @"unison", @"lyrically", @"lrclib"];
+    return @[@"youtube", @"lyricsplus", @"spotify", @"unison", @"lyrically", @"lrclib"];
 }
 
 + (NSArray<NSString *> *)providerIDs {
@@ -93,12 +105,12 @@ static NSString *const kDomain = @"ivLyricsYTM";
 + (void)setProviderIDs:(NSArray<NSString *> *)ids { [self setObject:[ids copy] forKey:IVLKeyProviderOrder]; }
 
 + (NSString *)enableKeyForProvider:(NSString *)pid {
-    return @{ @"youtube": IVLKeyProviderYouTube, @"lyricsplus": IVLKeyProviderLyricsPlus, @"unison": IVLKeyProviderUnison,
+    return @{ @"spotify": IVLKeyProviderSpotify, @"youtube": IVLKeyProviderYouTube, @"lyricsplus": IVLKeyProviderLyricsPlus, @"unison": IVLKeyProviderUnison,
               @"lyrically": IVLKeyProviderLyrically, @"lrclib": IVLKeyProviderLRCLIB }[pid] ?: @"";
 }
 
 + (NSString *)nameForProvider:(NSString *)pid {
-    return @{ @"youtube": @"YouTube Music", @"lyricsplus": @"LyricsPlus", @"unison": @"Unison", @"lyrically": @"Lyrically", @"lrclib": @"LRCLIB" }[pid] ?: pid;
+    return @{ @"spotify": @"Spotify", @"youtube": @"YouTube Music", @"lyricsplus": @"LyricsPlus", @"unison": @"Unison", @"lyrically": @"Lyrically", @"lrclib": @"LRCLIB" }[pid] ?: pid;
 }
 
 + (NSArray<NSString *> *)enabledProviderIDs {

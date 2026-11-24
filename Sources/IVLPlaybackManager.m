@@ -5,6 +5,7 @@
 #import "YTMHeaders.h"
 #import <QuartzCore/QuartzCore.h>
 #import <MediaPlayer/MediaPlayer.h>
+#import "IVLLockScreen.h"
 #import <CommonCrypto/CommonDigest.h>
 
 NSNotificationName const IVLTrackDidChangeNotification = @"IVLTrackDidChangeNotification";
@@ -52,7 +53,8 @@ NSNotificationName const IVLLyricsDidChangeNotification = @"IVLLyricsDidChangeNo
     if ([key isEqualToString:IVLKeyTranslation] || [key isEqualToString:IVLKeyTranslationLang] || [key isEqualToString:IVLKeyPronunciation]) {
         [self refreshExtras];
     } else if ([key isEqualToString:IVLKeyProviderUnison] || [key isEqualToString:IVLKeyProviderLRCLIB] || [key isEqualToString:IVLKeyProviderOrder]
-               || [key isEqualToString:IVLKeyProviderLyricsPlus] || [key isEqualToString:IVLKeyProviderYouTube] || [key isEqualToString:IVLKeyProviderLyrically]) {
+               || [key isEqualToString:IVLKeyProviderLyricsPlus] || [key isEqualToString:IVLKeyProviderYouTube]
+               || [key isEqualToString:IVLKeyProviderSpotify] || [key isEqualToString:IVLKeyProviderLyrically]) {
         if (self.state == IVLLyricsStateNotFound || self.state == IVLLyricsStateError) [self reloadLyrics];
     }
 }
@@ -124,14 +126,14 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
 
 - (void)refreshNow {
     if (!_npInfo) {
-        NSDictionary *info = [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo;
+        NSDictionary *info = ([IVLLockScreen shared].originalInfo ?: [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo);
         if (info.count) [self nowPlayingInfoDidChange:info];
     }
     if (!self.track) [self scheduleResolve];
 }
 
 - (NSString *)diagnostics {
-    NSDictionary *np = _npInfo ?: [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo;
+    NSDictionary *np = _npInfo ?: ([IVLLockScreen shared].originalInfo ?: [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo);
     return [NSString stringWithFormat:@"player %@ · nowPlaying %@ · act %lu · hb %lu · np %lu",
             self.player ? @"✓" : @"✗", IVLStr(np[MPMediaItemPropertyTitle]).length ? @"✓" : @"✗",
             (unsigned long)_activateCount, (unsigned long)_heartbeatCount, (unsigned long)_npCount];
@@ -184,7 +186,7 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
     } @catch (__unused NSException *e) {}
 
     // --- system now playing side
-    NSDictionary *np = _npInfo ?: [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo;
+    NSDictionary *np = _npInfo ?: ([IVLLockScreen shared].originalInfo ?: [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo);
     NSString *nTitle = IVLStr(np[MPMediaItemPropertyTitle]);
     NSString *nArtist = IVLStr(np[MPMediaItemPropertyArtist]);
     double nDuration = [np[MPMediaItemPropertyPlaybackDuration] doubleValue];
@@ -215,7 +217,7 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
     t.artist = artist;
     t.duration = duration;
     id art = np[MPMediaItemPropertyArtwork];
-    if (nTitle.length && [art isKindOfClass:[MPMediaItemArtwork class]]) {
+    if (nTitle.length && [art isKindOfClass:[MPMediaItemArtwork class]] && ![[IVLLockScreen shared] isRenderedArtwork:art]) {
         @try { t.artworkImage = [(MPMediaItemArtwork *)art imageWithSize:CGSizeMake(600, 600)]; } @catch (__unused NSException *e) {}
     }
     if (vid && pThumb.length) {

@@ -3,6 +3,10 @@
 #   make package                      -> ivLyricsYTM.dylib (sideload / IPA injection, default)
 #   make package JAILBREAK=1          -> .deb tweak for jailbroken devices
 #   make package JAILBREAK=1 ROOTLESS=1
+#
+#   Discord Rich Presence (optional): point DISCORD_SDK at the directory that contains
+#   discord_partner_sdk.framework (the iOS device slice of the official Social SDK):
+#   make package DISCORD_SDK=/path/to/discord_partner_sdk.xcframework/ios-arm64
 
 TARGET := iphone:clang:16.5:15.0
 ARCHS := arm64
@@ -23,9 +27,16 @@ else
 LIBRARY_NAME = ivLyricsYTM
 endif
 
-ivLyricsYTM_FILES = $(wildcard Sources/*.x) $(wildcard Sources/*.m)
+ivLyricsYTM_FILES = $(wildcard Sources/*.x) $(wildcard Sources/*.m) $(wildcard Sources/*.mm)
 ivLyricsYTM_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-unused-function -Wno-format-nonliteral -Wno-format-security -Wno-error -ISources -DIVL_VERSION=\"$(PACKAGE_VERSION)\"
-ivLyricsYTM_FRAMEWORKS = UIKit Foundation QuartzCore CoreText NaturalLanguage MediaPlayer
+ivLyricsYTM_CCFLAGS = -std=c++20
+ivLyricsYTM_FRAMEWORKS = UIKit Foundation QuartzCore CoreText CoreImage NaturalLanguage MediaPlayer WebKit Security
+
+ifneq ($(DISCORD_SDK),)
+# weak link: the dylib still loads when the framework is missing (Discord is then reported as unavailable)
+ivLyricsYTM_CFLAGS += -DIVL_DISCORD=1 -F$(DISCORD_SDK)
+ivLyricsYTM_LDFLAGS += -F$(DISCORD_SDK) -weak_framework discord_partner_sdk -Wl,-rpath,@executable_path/Frameworks -Wl,-rpath,@loader_path
+endif
 # Hooks use the ObjC runtime directly -> the dylib has no CydiaSubstrate/ElleKit dependency
 ivLyricsYTM_LOGOS_DEFAULT_GENERATOR = internal
 
