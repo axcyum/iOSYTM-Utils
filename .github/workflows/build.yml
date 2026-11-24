@@ -83,7 +83,15 @@ jobs:
           if [ -n "$DISCORD_SDK" ]; then
             # same binary as the framework, renamed so it can be dropped next to the tweak
             cp "$DISCORD_SDK/discord_partner_sdk.framework/discord_partner_sdk" ../out/discord_partner_sdk.dylib
-            ldid -S ../out/discord_partner_sdk.dylib || true
+            sdk=../out/discord_partner_sdk.dylib
+            # Hosts like LiveContainer have no /usr/lib/swift rpath: point Swift runtime libraries at the OS copy
+            for lib in $(otool -L "$sdk" | awk '/@rpath\/libswift/ {print $1}'); do
+              install_name_tool -change "$lib" "/usr/lib/swift/${lib#@rpath/}" "$sdk"
+            done
+            install_name_tool -id @rpath/discord_partner_sdk.dylib "$sdk"
+            ldid -S "$sdk"
+            otool -L "$sdk"
+            if otool -L "$sdk" | grep -q '@rpath/libswift'; then echo "::error::Swift libraries still use @rpath"; exit 1; fi
           fi
           if otool -L ../out/ivLyricsYTM.dylib | grep -q discord_partner_sdk; then echo "::error::dylib must not link the Discord SDK"; exit 1; fi
 
