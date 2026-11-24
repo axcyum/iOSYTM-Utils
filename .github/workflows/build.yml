@@ -81,8 +81,11 @@ jobs:
           file ../out/ivLyricsYTM.dylib
           otool -L ../out/ivLyricsYTM.dylib
           if [ -n "$DISCORD_SDK" ]; then
-            cp -R "$DISCORD_SDK/discord_partner_sdk.framework" ../out/
+            # same binary as the framework, renamed so it can be dropped next to the tweak
+            cp "$DISCORD_SDK/discord_partner_sdk.framework/discord_partner_sdk" ../out/discord_partner_sdk.dylib
+            ldid -S ../out/discord_partner_sdk.dylib || true
           fi
+          if otool -L ../out/ivLyricsYTM.dylib | grep -q discord_partner_sdk; then echo "::error::dylib must not link the Discord SDK"; exit 1; fi
 
       - name: Build jailbreak packages
         run: |
@@ -97,7 +100,7 @@ jobs:
           pipx install --force https://github.com/asdfzxcvbn/pyzule-rw/archive/main.zip
           wget "${{ inputs.ipa_url }}" --no-verbose -O ytm.ipa
           extra=""
-          [ -d out/discord_partner_sdk.framework ] && extra="out/discord_partner_sdk.framework"
+          [ -f out/discord_partner_sdk.dylib ] && extra="out/discord_partner_sdk.dylib"
           cyan -i ytm.ipa -o out/YouTubeMusic_ivLyrics.ipa -uwsf out/ivLyricsYTM.dylib $extra
 
       - name: Upload artifacts

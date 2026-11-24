@@ -15,6 +15,10 @@ static NSString *const kTokenScript =
 @"(function(){if(window.__ivlTok)return;window.__ivlTok=1;"
 "var W=['authorization','client-token','spotify-app-version','app-platform'];"
 "function post(o){try{window.webkit.messageHandlers.ivlToken.postMessage(o);}catch(e){}}"
+"function walk(o,out,d){if(!o||d>14||out.length>40||typeof o!=='object')return;if(Array.isArray(o)){for(var i=0;i<o.length;i++)walk(o[i],out,d+1);return;}"
+"if(typeof o.uri==='string'&&o.uri.indexOf('spotify:track:')===0&&typeof o.name==='string'){var a=[];try{((o.artists&&o.artists.items)||[]).forEach(function(x){if(x&&x.profile&&x.profile.name)a.push(x.profile.name);});}catch(e){}"
+"out.push({id:o.uri.split(':')[2],name:o.name,artist:a.join(', '),ms:(o.duration&&o.duration.totalMilliseconds)||0});return;}"
+"for(var k in o){walk(o[k],out,d+1);}}"
 "function scan(h){try{if(!h)return;var o={};"
 "if(typeof Headers!=='undefined'&&h instanceof Headers){W.forEach(function(k){var v=h.get(k);if(v)o[k]=v;});}"
 "else if(Array.isArray(h)){h.forEach(function(p){var k=String(p[0]).toLowerCase();if(W.indexOf(k)>=0)o[k]=String(p[1]);});}"
@@ -22,7 +26,10 @@ static NSString *const kTokenScript =
 "if(Object.keys(o).length)post(o);}catch(e){}}"
 "var f=window.fetch;window.fetch=function(i,o){try{scan(o&&o.headers);if(i&&i.headers)scan(i.headers);}catch(e){}"
 "var p=f.apply(this,arguments);"
-"try{var u=typeof i==='string'?i:((i&&i.url)||'');if(u.indexOf('/api/token')>=0){p.then(function(r){return r.clone().json();}).then(function(j){if(j&&j.accessToken)post({authorization:'Bearer '+j.accessToken});}).catch(function(){});}}catch(e){}"
+"try{var u=typeof i==='string'?i:((i&&i.url)||'');"
+"if(u.indexOf('/api/token')>=0){p.then(function(r){return r.clone().json();}).then(function(j){if(j&&j.accessToken)post({authorization:'Bearer '+j.accessToken});}).catch(function(){});}"
+"if(u.indexOf('pathfinder')>=0){p.then(function(r){return r.clone().json();}).then(function(j){var d=j&&j.data;if(!d||!d.searchV2)return;var out=[];walk(d.searchV2,out,0);if(out.length)post({search:out});}).catch(function(){});}"
+"}catch(e){}"
 "return p;};"
 "var s=XMLHttpRequest.prototype.setRequestHeader;XMLHttpRequest.prototype.setRequestHeader=function(k,v){try{var l=String(k).toLowerCase();if(W.indexOf(l)>=0){var o={};o[l]=String(v);post(o);}}catch(e){}return s.apply(this,arguments);};"
 "})();";
@@ -53,6 +60,9 @@ static NSError *IVLSpotifyError(NSInteger code, NSString *message) {
     NSString *_token;
     NSDate *_tokenExpiry;
     NSMutableDictionary<NSString *, NSString *> *_headers;   // client-token, spotify-app-version, app-platform
+    void (^_searchDone)(NSArray<NSDictionary *> *_Nullable results);
+    NSTimer *_searchTimer;
+    NSUInteger _searchGeneration;
     WKWebView *_tokenWebView;
     NSMutableArray<void (^)(NSString *)> *_waiters;
     NSTimer *_tokenTimeout;
@@ -140,6 +150,7 @@ static NSError *IVLSpotifyError(NSInteger code, NSString *message) {
 - (void)userContentController:(WKUserContentController *)c didReceiveScriptMessage:(WKScriptMessage *)message {
     NSDictionary *h = [message.body isKindOfClass:[NSDictionary class]] ? message.body : nil;
     if (!h) return;
+    if ([h[@"search"] isKindOfClass:[NSArray class]]) { [self deliverSearch:h[@"search"]]; return; }
     for (NSString *k in @[@"client-token", @"spotify-app-version", @"app-platform"]) {
         NSString *v = [h[k] isKindOfClass:[NSString class]] ? h[k] : nil;
         if (v.length) _headers[k] = v;
@@ -164,25 +175,95 @@ static NSError *IVLSpotifyError(NSInteger code, NSString *message) {
     NSArray *w = [_waiters copy];
     [_waiters removeAllObjects];
     for (void (^b)(NSString *) in w) b(token);
-    if (_tokenWebView) {
-        WKWebView *web = _tokenWebView;
-        _tokenWebView = nil;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [web stopLoading];
-            [web removeFromSuperview];
-        });
-    }
+
 }
 
 - (void)withToken:(void (^)(NSString *_Nullable token))done {
     if (!NSThread.isMainThread) { dispatch_async(dispatch_get_main_queue(), ^{ [self withToken:done]; }); return; }
     if (_token && _tokenExpiry.timeIntervalSinceNow > 60) { done(_token); return; }
     [_waiters addObject:[done copy]];
-    if (_tokenWebView) return;
-    _tokenWebView = [[WKWebView alloc] initWithFrame:CGRectMake(0, 0, 400, 400) configuration:[self webConfiguration]];
-    _tokenWebView.customUserAgent = kDesktopUA;
-    [_tokenWebView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://open.spotify.com/"]]];
+    if (_tokenWebView.URL && !_tokenWebView.isLoading) {
+        [_tokenWebView reload];   // a reload makes the player fetch a fresh token
+    } else if (!_tokenWebView) {
+        [self playerWebView];
+    }
     _tokenTimeout = [NSTimer scheduledTimerWithTimeInterval:25 repeats:NO block:^(NSTimer *t) { [self flushWaiters:nil]; }];
+}
+
+/// Hidden open.spotify.com player. It lives off-screen inside the key window so its scripts
+/// and React rendering run as usual (detached web views get throttled).
+- (WKWebView *)playerWebView {
+    if (!_tokenWebView) {
+        _tokenWebView = [[WKWebView alloc] initWithFrame:CGRectMake(-2000, 0, 1024, 768) configuration:[self webConfiguration]];
+        _tokenWebView.customUserAgent = kDesktopUA;
+        _tokenWebView.userInteractionEnabled = NO;
+        _tokenWebView.alpha = 0.01;
+        [_tokenWebView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://open.spotify.com/"]]];
+    }
+    if (!_tokenWebView.window) {
+        for (UIScene *sc in UIApplication.sharedApplication.connectedScenes) {
+            if (![sc isKindOfClass:[UIWindowScene class]]) continue;
+            UIWindow *w = ((UIWindowScene *)sc).windows.firstObject;
+            if (w) { [w insertSubview:_tokenWebView atIndex:0]; break; }
+        }
+    }
+    return _tokenWebView;
+}
+
+#pragma mark - Search (done by the web player itself; api.spotify.com rate-limits web tokens with 429)
+
+- (void)deliverSearch:(NSArray *)raw {
+    if (!_searchDone) return;
+    NSMutableArray *cands = [NSMutableArray array];
+    NSMutableSet *seen = [NSMutableSet set];
+    for (NSDictionary *t in raw) {
+        if (![t isKindOfClass:[NSDictionary class]] || ![t[@"id"] isKindOfClass:[NSString class]] || [seen containsObject:t[@"id"]]) continue;
+        [seen addObject:t[@"id"]];
+        [cands addObject:@{ @"id": t[@"id"], @"title": [t[@"name"] description] ?: @"", @"artist": [t[@"artist"] description] ?: @"",
+                            @"duration": @([t[@"ms"] doubleValue] / 1000.0) }];
+    }
+    if (!cands.count) return;
+    void (^done)(NSArray *) = _searchDone;
+    _searchDone = nil;
+    [_searchTimer invalidate];
+    done(cands);
+}
+
+- (void)webSearch:(NSString *)query completion:(void (^)(NSArray<NSDictionary *> *_Nullable results))completion {
+    if (!NSThread.isMainThread) { dispatch_async(dispatch_get_main_queue(), ^{ [self webSearch:query completion:completion]; }); return; }
+    if (_searchDone) { void (^old)(NSArray *) = _searchDone; _searchDone = nil; old(nil); }
+    _searchDone = [completion copy];
+    NSUInteger gen = ++_searchGeneration;
+    WKWebView *web = [self playerWebView];
+    NSString *path = [@"/search/" stringByAppendingString:[query stringByAddingPercentEncodingWithAllowedCharacters:NSCharacterSet.URLPathAllowedCharacterSet] ?: @""];
+    // SPA navigation first (fast); a full page load if the player did not react
+    [web callAsyncJavaScript:@"history.pushState({},'',p);dispatchEvent(new PopStateEvent('popstate',{state:{}}));"
+                   arguments:@{ @"p": path } inFrame:nil inContentWorld:WKContentWorld.pageWorld completionHandler:nil];
+    [_searchTimer invalidate];
+    _searchTimer = [NSTimer scheduledTimerWithTimeInterval:6 repeats:NO block:^(NSTimer *t) {
+        if (gen != self->_searchGeneration || !self->_searchDone) return;
+        [web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:[@"https://open.spotify.com" stringByAppendingString:path]]]];
+        self->_searchTimer = [NSTimer scheduledTimerWithTimeInterval:14 repeats:NO block:^(NSTimer *t2) {
+            if (gen != self->_searchGeneration || !self->_searchDone) return;
+            void (^done)(NSArray *) = self->_searchDone;
+            self->_searchDone = nil;
+            done(nil);
+        }];
+    }];
+}
+
+/// Lyrics request made from inside the player page (same origin and headers as the player).
+- (void)pageGet:(NSString *)url token:(NSString *)token completion:(void (^)(id json, NSInteger status))completion {
+    WKWebView *web = [self playerWebView];
+    NSString *body = @"const h={'authorization':'Bearer '+auth,'app-platform':'WebPlayer'};if(ct)h['client-token']=ct;"
+                      "const r=await fetch(url,{headers:h});if(!r.ok)return JSON.stringify({status:r.status});"
+                      "return JSON.stringify({status:200,body:await r.json()});";
+    [web callAsyncJavaScript:body arguments:@{ @"url": url, @"auth": token, @"ct": _headers[@"client-token"] ?: @"" }
+                     inFrame:nil inContentWorld:WKContentWorld.pageWorld completionHandler:^(id result, NSError *error) {
+        NSDictionary *d = [result isKindOfClass:[NSString class]]
+            ? [NSJSONSerialization JSONObjectWithData:[result dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil] : nil;
+        completion(d[@"body"], [d[@"status"] integerValue]);
+    }];
 }
 
 #pragma mark - API
@@ -257,25 +338,8 @@ static NSString *IVLEnc(NSString *s) {
         NSString *title = [IVLLyricsService cleanTitle:track.title];
         NSString *artist = [IVLLyricsService cleanArtist:track.artist];
         NSString *q = artist.length ? [NSString stringWithFormat:@"%@ %@", title, artist] : title;
-        NSString *search = [NSString stringWithFormat:@"https://api.spotify.com/v1/search?type=track&limit=20&q=%@", IVLEnc(q)];
-        [self get:search token:token completion:^(id json, NSInteger status) {
-            if (status == 401 && retry) {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    self->_token = nil;
-                    [self lyricsForTrack:track retry:NO completion:completion];
-                });
-                return;
-            }
-            if (status != 200) { completion(nil, IVLSpotifyError(status ?: 503, [NSString stringWithFormat:@"search HTTP %ld", (long)status])); return; }
-            NSArray *items = [json isKindOfClass:[NSDictionary class]] ? json[@"tracks"][@"items"] : nil;
-            NSMutableArray *cands = [NSMutableArray array];
-            for (NSDictionary *it in [items isKindOfClass:[NSArray class]] ? items : @[]) {
-                if (![it isKindOfClass:[NSDictionary class]] || ![it[@"id"] isKindOfClass:[NSString class]]) continue;
-                NSMutableArray *names = [NSMutableArray array];
-                for (NSDictionary *a in it[@"artists"]) if ([a isKindOfClass:[NSDictionary class]] && a[@"name"]) [names addObject:a[@"name"]];
-                [cands addObject:@{ @"id": it[@"id"], @"title": [it[@"name"] description] ?: @"",
-                                    @"artist": [names componentsJoinedByString:@", "], @"duration": @([it[@"duration_ms"] doubleValue] / 1000.0) }];
-            }
+        [self webSearch:q completion:^(NSArray<NSDictionary *> *cands) {
+            if (!cands) { completion(nil, IVLSpotifyError(504, @"search timeout")); return; }
             NSDictionary *best = IVLBestCandidate(cands, track);
             if (!best) {
                 NSString *first = cands.count ? [NSString stringWithFormat:@" (top: %@ / %@)", cands[0][@"title"], cands[0][@"artist"]] : @"";
@@ -283,12 +347,16 @@ static NSString *IVLEnc(NSString *s) {
                 return;
             }
             NSString *url = [NSString stringWithFormat:@"https://spclient.wg.spotify.com/color-lyrics/v2/track/%@?format=json&vocalRemoval=false&market=from_token", best[@"id"]];
-            [self get:url token:token completion:^(id lj, NSInteger ls) {
+            void (^finish)(id, NSInteger) = ^(id lj, NSInteger ls) {
                 IVLLyrics *ly = ls == 200 ? [IVLSpotify parseColorLyrics:lj durationMs:(NSInteger)(track.duration * 1000)] : nil;
                 ly.source = @"Spotify";
                 if (ly) { completion(ly, nil); return; }
                 NSString *why = ls == 404 ? [NSString stringWithFormat:@"no lyrics for %@", best[@"title"]] : [NSString stringWithFormat:@"lyrics HTTP %ld", (long)ls];
                 completion(nil, IVLSpotifyError(ls == 404 ? 404 : (ls ?: 503), why));
+            };
+            [self get:url token:token completion:^(id lj, NSInteger ls) {
+                if (ls == 200 || ls == 404) { finish(lj, ls); return; }
+                dispatch_async(dispatch_get_main_queue(), ^{ [self pageGet:url token:token completion:finish]; });
             }];
         }];
     }];

@@ -9,6 +9,7 @@
 #import <MediaPlayer/MediaPlayer.h>
 #import <Security/Security.h>
 #include <mach-o/dyld.h>
+#include <dlfcn.h>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -25,16 +26,57 @@ static NSString *const kEnabledKey = @"ivLyrics.discord.enabled";
 static NSString *const kCoverKey = @"ivLyrics.discord.cover";
 static NSString *const kTokenService = @"ivLyrics.discord.oauth";
 
-static BOOL IVLDiscordFrameworkLoaded(void) {
+#if IVL_DISCORD
+extern "C" int IVLDiscordBindStubs(void *handle);   // generated: tools/gen_discord_stubs.py
+#endif
+
+static NSString *gDiscordLoadInfo = @"";
+
+/// The SDK is never linked. It is dlopen()ed from wherever it can be found and every
+/// Discord_* stub is bound to it, so it works without framework injection (LiveContainer):
+/// putting `discord_partner_sdk.dylib` next to ivLyricsYTM.dylib is enough.
+static BOOL IVLDiscordLoad(void) {
+#if IVL_DISCORD
     static BOOL loaded;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
+        NSMutableArray<NSString *> *candidates = [NSMutableArray array];
+        // 1. already loaded (injected as a tweak / framework)
         for (uint32_t i = 0; i < _dyld_image_count(); i++) {
             const char *name = _dyld_get_image_name(i);
-            if (name && strstr(name, "discord_partner_sdk")) { loaded = YES; break; }
+            if (name && strstr(name, "discord_partner_sdk")) [candidates addObject:@(name)];
         }
+        // 2. next to this dylib
+        Dl_info info;
+        if (dladdr((const void *)&IVLDiscordLoad, &info) && info.dli_fname) {
+            NSString *dir = [@(info.dli_fname) stringByDeletingLastPathComponent];
+            for (NSString *n in @[@"discord_partner_sdk.dylib", @"libdiscord_partner_sdk.dylib",
+                                  @"discord_partner_sdk.framework/discord_partner_sdk", @"discord_partner_sdk"]) {
+                [candidates addObject:[dir stringByAppendingPathComponent:n]];
+            }
+        }
+        // 3. the app's Frameworks folder
+        NSString *fw = NSBundle.mainBundle.privateFrameworksPath;
+        if (fw) {
+            [candidates addObject:[fw stringByAppendingPathComponent:@"discord_partner_sdk.framework/discord_partner_sdk"]];
+            [candidates addObject:[fw stringByAppendingPathComponent:@"discord_partner_sdk.dylib"]];
+        }
+        NSMutableArray *notes = [NSMutableArray array];
+        for (NSString *path in candidates) {
+            BOOL already = [path hasPrefix:@"/"] && ![NSFileManager.defaultManager fileExistsAtPath:path] ? NO : YES;
+            if (!already) continue;
+            void *h = dlopen(path.fileSystemRepresentation, RTLD_NOW | RTLD_LOCAL);
+            if (!h) { const char *e = dlerror(); [notes addObject:[NSString stringWithFormat:@"%@: %s", path.lastPathComponent, e ?: "dlopen failed"]]; continue; }
+            int missing = IVLDiscordBindStubs(h);
+            if (missing == 0) { loaded = YES; gDiscordLoadInfo = path; return; }
+            [notes addObject:[NSString stringWithFormat:@"%@: %d symbols missing (SDK version mismatch)", path.lastPathComponent, missing]];
+        }
+        gDiscordLoadInfo = notes.count ? [notes componentsJoinedByString:@"\n"] : @"";
     });
     return loaded;
+#else
+    return NO;
+#endif
 }
 
 #if IVL_DISCORD
@@ -130,7 +172,7 @@ static NSString *CoverURL(NSString *title) {
 
 @implementation IVLDiscord
 
-+ (BOOL)available { return IVLDiscordFrameworkLoaded(); }
++ (BOOL)available { return IVLDiscordLoad(); }
 
 + (instancetype)shared {
     static IVLDiscord *s;
@@ -149,10 +191,9 @@ static NSString *CoverURL(NSString *title) {
 - (instancetype)init {
     if ((self = [super init])) {
         if (![IVLDiscord available]) {
-            NSString *fw = [[NSBundle mainBundle].privateFrameworksPath stringByAppendingPathComponent:@"discord_partner_sdk.framework"];
-            _status = [NSFileManager.defaultManager fileExistsAtPath:fw]
-                ? @"SDKの読み込みに失敗（Frameworks/discord_partner_sdk.framework は存在）"
-                : @"discord_partner_sdk.framework が注入されていません";
+            _status = gDiscordLoadInfo.length
+                ? [@"SDKの読み込みに失敗：" stringByAppendingString:gDiscordLoadInfo]
+                : @"discord_partner_sdk.dylib が見つかりません（ivLyricsYTM.dylib と同じ場所に置いてください）";
             return self;
         }
         self.status = @"未連携";

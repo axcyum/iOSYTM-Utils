@@ -4,3 +4,4 @@ packages/
 *.deb
 *.ipa
 .DS_Store
+Sources/IVLDiscordStubs.c

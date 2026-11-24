@@ -59,7 +59,8 @@ UI はスマートフォンで片手操作しやすいように、一から作�
 
 **Spotify の歌詞**
 - 設定 → Spotify から open.spotify.com にログインすると、Spotify アプリと同じ歌詞を「Spotify」ソースとして取得します
-- Web 版プレーヤー自身が取得したアクセストークンを使います。ログイン情報はこの端末の WebKit にだけ保存されます
+- 曲の検索は、画面に表示しない Web 版プレーヤーに検索させ、その結果を使います（`api.spotify.com` は Web 版のトークンだと 429 で拒否されるため）
+- 歌詞の取得には、Web 版プレーヤー自身が取得したアクセストークンと `client-token` を使います。ログイン情報はこの端末の WebKit にだけ保存されます
 - Spotify の非公開 API を使うため、予告なく使えなくなることがあります
 
 **Discord Rich Presence**（YTMusic-iOS-Presence を統合）
@@ -89,8 +90,8 @@ make package JAILBREAK=1 ROOTLESS=1  # 脱獄環境向けの .deb（rootless）
 make package DISCORD_SDK=/path/to/discord_partner_sdk.xcframework/ios-arm64
 ```
 
-- Discord のフレームワークは弱リンクです。`discord_partner_sdk.framework` がアプリ内に無くても dylib は読み込まれ、Discord 機能だけが無効になります
-- Discord を使う場合は、`discord_partner_sdk.framework` も IPA の `Frameworks/` に入れてください
+- Discord SDK はリンクしません。ビルド時にヘッダーから全 API の転送スタブを生成し（`tools/gen_discord_stubs.py`）、起動時に SDK 本体を `dlopen` して割り当てます
+- SDK 本体は `discord_partner_sdk.dylib`（フレームワーク内のバイナリと同じもの。CI の成果物に入っています）として、`ivLyricsYTM.dylib` と同じ場所に置けば読み込まれます。フレームワークの注入は不要なので、LiveContainer でも使えます
 
 - 既定のビルドは `library.mk` を使います。Logos の生成方式は `internal`（ObjC ランタイムを直接使う方式）なので、**CydiaSubstrate / ElleKit に依存しない単体の dylib** になります
 - 生成物は `.theos/obj/ivLyricsYTM.dylib` に出力されます
@@ -105,8 +106,9 @@ Discord Social SDK はリポジトリに含められないため、このリポ�
 ## インストール（サイドロード）
 
 1. 復号済みの YouTube Music IPA を用意します
-2. Sideloadly / Feather / ESign / cyan などで `ivLyricsYTM.dylib`（Discord を使う場合は `discord_partner_sdk.framework` も）を注入します
-   （例：`cyan -i YouTubeMusic.ipa -o out.ipa -f ivLyricsYTM.dylib discord_partner_sdk.framework`）
+2. Sideloadly / Feather / ESign / cyan などで `ivLyricsYTM.dylib`（Discord を使う場合は `discord_partner_sdk.dylib` も）を注入します
+   （例：`cyan -i YouTubeMusic.ipa -o out.ipa -f ivLyricsYTM.dylib discord_partner_sdk.dylib`）
+   - LiveContainer の場合：アプリの Tweak フォルダに `ivLyricsYTM.dylib` と `discord_partner_sdk.dylib` の 2 つを入れるだけです
 
 LockLyrics と YTMusic-iOS-Presence はこの dylib に含まれているので、それらの dylib は一緒に注入しないでください（ロック画面の表示や Discord の送信が二重になります）。
 3. 署名してインストールします
