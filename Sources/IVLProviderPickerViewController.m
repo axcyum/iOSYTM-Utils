@@ -11,6 +11,7 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
     NSArray<NSString *> *_ids;
     NSMutableDictionary<NSString *, IVLLyrics *> *_results;
     NSMutableDictionary<NSString *, NSNumber *> *_states;
+    NSMutableDictionary<NSString *, NSString *> *_reasons;
     IVLTrack *_track;
 }
 
@@ -31,6 +32,7 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
 - (void)probe {
     _results = [NSMutableDictionary dictionary];
     _states = [NSMutableDictionary dictionary];
+    _reasons = [NSMutableDictionary dictionary];
     for (NSString *pid in _ids) _states[pid] = @(IVLProbeLoading);
     [self.tableView reloadData];
     IVLTrack *track = _track;
@@ -39,6 +41,9 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
         [[IVLLyricsService shared] fetchProvider:pid track:track completion:^(IVLLyrics *ly, NSError *err) {
             if (track != self->_track) return;
             if (ly) self->_results[pid] = ly;
+            if (!ly && err.localizedDescription.length) self->_reasons[pid] = err.localizedDescription;
+            BOOL notFound = err.code == 404;
+            if (notFound) err = nil;
             self->_states[pid] = @(ly ? IVLProbeFound : (err ? IVLProbeFailed : IVLProbeEmpty));
             NSUInteger row = [self->_ids indexOfObject:pid];
             if (row != NSNotFound) {
@@ -118,11 +123,11 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
             c.accessoryType = (cur.manual && [cur.source isEqualToString:ly.source]) ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
             break;
         case IVLProbeEmpty:
-            c.detailTextLabel.text = IVLLoc(@"not_found");
+            c.detailTextLabel.text = self->_reasons[pid] ?: IVLLoc(@"not_found");
             c.textLabel.alpha = 0.5;
             break;
         case IVLProbeFailed:
-            c.detailTextLabel.text = IVLLoc(@"provider_error");
+            c.detailTextLabel.text = self->_reasons[pid] ?: IVLLoc(@"provider_error");
             c.textLabel.alpha = 0.5;
             break;
     }

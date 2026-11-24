@@ -9,16 +9,27 @@ NSNotificationName const IVLSpotifyStateDidChangeNotification = @"IVLSpotifyStat
 static NSString *const kDesktopUA = @"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
 static NSString *const kLoginURL = @"https://accounts.spotify.com/login?continue=https%3A%2F%2Fopen.spotify.com%2F";
 
-// Reports the web player's Authorization header back to native code.
+// Reports the web player's own request headers (Authorization, client-token, app version)
+// and /api/token responses back to native code, so native requests match the web player's.
 static NSString *const kTokenScript =
 @"(function(){if(window.__ivlTok)return;window.__ivlTok=1;"
-"function send(v){try{if(v&&/^Bearer\\s+/i.test(v))window.webkit.messageHandlers.ivlToken.postMessage(String(v).replace(/^Bearer\\s+/i,''));}catch(e){}}"
-"function scan(h){try{if(!h)return;if(typeof Headers!=='undefined'&&h instanceof Headers){send(h.get('authorization'));return;}"
-"if(Array.isArray(h)){h.forEach(function(p){if(String(p[0]).toLowerCase()==='authorization')send(p[1]);});return;}"
-"for(var k in h){if(k.toLowerCase()==='authorization')send(h[k]);}}catch(e){}}"
-"var f=window.fetch;window.fetch=function(i,o){try{scan(o&&o.headers);if(i&&i.headers)scan(i.headers);}catch(e){}return f.apply(this,arguments);};"
-"var s=XMLHttpRequest.prototype.setRequestHeader;XMLHttpRequest.prototype.setRequestHeader=function(k,v){try{if(String(k).toLowerCase()==='authorization')send(v);}catch(e){}return s.apply(this,arguments);};"
+"var W=['authorization','client-token','spotify-app-version','app-platform'];"
+"function post(o){try{window.webkit.messageHandlers.ivlToken.postMessage(o);}catch(e){}}"
+"function scan(h){try{if(!h)return;var o={};"
+"if(typeof Headers!=='undefined'&&h instanceof Headers){W.forEach(function(k){var v=h.get(k);if(v)o[k]=v;});}"
+"else if(Array.isArray(h)){h.forEach(function(p){var k=String(p[0]).toLowerCase();if(W.indexOf(k)>=0)o[k]=String(p[1]);});}"
+"else{for(var k in h){var l=k.toLowerCase();if(W.indexOf(l)>=0)o[l]=String(h[k]);}}"
+"if(Object.keys(o).length)post(o);}catch(e){}}"
+"var f=window.fetch;window.fetch=function(i,o){try{scan(o&&o.headers);if(i&&i.headers)scan(i.headers);}catch(e){}"
+"var p=f.apply(this,arguments);"
+"try{var u=typeof i==='string'?i:((i&&i.url)||'');if(u.indexOf('/api/token')>=0){p.then(function(r){return r.clone().json();}).then(function(j){if(j&&j.accessToken)post({authorization:'Bearer '+j.accessToken});}).catch(function(){});}}catch(e){}"
+"return p;};"
+"var s=XMLHttpRequest.prototype.setRequestHeader;XMLHttpRequest.prototype.setRequestHeader=function(k,v){try{var l=String(k).toLowerCase();if(W.indexOf(l)>=0){var o={};o[l]=String(v);post(o);}}catch(e){}return s.apply(this,arguments);};"
 "})();";
+
+static NSError *IVLSpotifyError(NSInteger code, NSString *message) {
+    return [NSError errorWithDomain:@"IVLSpotify" code:code userInfo:@{ NSLocalizedDescriptionKey: [@"Spotify: " stringByAppendingString:message] }];
+}
 
 @interface IVLSpotifyLoginViewController : UIViewController <WKNavigationDelegate>
 @end
@@ -41,6 +52,7 @@ static NSString *const kTokenScript =
 @implementation IVLSpotify {
     NSString *_token;
     NSDate *_tokenExpiry;
+    NSMutableDictionary<NSString *, NSString *> *_headers;   // client-token, spotify-app-version, app-platform
     WKWebView *_tokenWebView;
     NSMutableArray<void (^)(NSString *)> *_waiters;
     NSTimer *_tokenTimeout;
@@ -58,6 +70,7 @@ static NSString *const kTokenScript =
 - (instancetype)init {
     if ((self = [super init])) {
         _waiters = [NSMutableArray array];
+        _headers = [NSMutableDictionary dictionary];
         _pool = [WKProcessPool new];
         NSURLSessionConfiguration *cfg = [NSURLSessionConfiguration defaultSessionConfiguration];
         cfg.timeoutIntervalForRequest = 12;
@@ -125,13 +138,24 @@ static NSString *const kTokenScript =
 #pragma mark - Token (taken from the web player's own requests)
 
 - (void)userContentController:(WKUserContentController *)c didReceiveScriptMessage:(WKScriptMessage *)message {
-    NSString *token = [message.body isKindOfClass:[NSString class]] ? message.body : nil;
+    NSDictionary *h = [message.body isKindOfClass:[NSDictionary class]] ? message.body : nil;
+    if (!h) return;
+    for (NSString *k in @[@"client-token", @"spotify-app-version", @"app-platform"]) {
+        NSString *v = [h[k] isKindOfClass:[NSString class]] ? h[k] : nil;
+        if (v.length) _headers[k] = v;
+    }
+    NSString *auth = [h[@"authorization"] isKindOfClass:[NSString class]] ? h[@"authorization"] : nil;
+    if (![auth.lowercaseString hasPrefix:@"bearer "]) return;
+    NSString *token = [[auth substringFromIndex:7] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
     if (token.length < 20) return;
     BOOL fresh = ![token isEqualToString:_token];
     _token = token;
     _tokenExpiry = [NSDate dateWithTimeIntervalSinceNow:45 * 60];
     if (!fresh && !_waiters.count) return;
-    [self flushWaiters:token];
+    // give the player a moment so the client-token header is usually captured too
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (self->_waiters.count) [self flushWaiters:self->_token];
+    });
 }
 
 - (void)flushWaiters:(NSString *)token {
@@ -158,7 +182,7 @@ static NSString *const kTokenScript =
     _tokenWebView = [[WKWebView alloc] initWithFrame:CGRectMake(0, 0, 400, 400) configuration:[self webConfiguration]];
     _tokenWebView.customUserAgent = kDesktopUA;
     [_tokenWebView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://open.spotify.com/"]]];
-    _tokenTimeout = [NSTimer scheduledTimerWithTimeInterval:20 repeats:NO block:^(NSTimer *t) { [self flushWaiters:nil]; }];
+    _tokenTimeout = [NSTimer scheduledTimerWithTimeInterval:25 repeats:NO block:^(NSTimer *t) { [self flushWaiters:nil]; }];
 }
 
 #pragma mark - API
@@ -167,6 +191,8 @@ static NSString *const kTokenScript =
     NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
     [req setValue:[@"Bearer " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];
     [req setValue:@"WebPlayer" forHTTPHeaderField:@"app-platform"];
+    NSDictionary *extra = [_headers copy];
+    for (NSString *k in extra) [req setValue:extra[k] forHTTPHeaderField:k];
     [req setValue:@"https://open.spotify.com" forHTTPHeaderField:@"Origin"];
     [req setValue:@"https://open.spotify.com/" forHTTPHeaderField:@"Referer"];
     [[_session dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *r, NSError *e) {
@@ -221,17 +247,17 @@ static NSString *IVLEnc(NSString *s) {
 }
 
 - (void)lyricsForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)completion {
-    if (!self.loggedIn) { completion(nil, nil); return; }
+    if (!self.loggedIn) { completion(nil, IVLSpotifyError(401, IVLLoc(@"spotify_logged_out"))); return; }
     [self lyricsForTrack:track retry:YES completion:completion];
 }
 
 - (void)lyricsForTrack:(IVLTrack *)track retry:(BOOL)retry completion:(IVLLyricsCompletion)completion {
     [self withToken:^(NSString *token) {
-        if (!token) { completion(nil, nil); return; }
+        if (!token) { completion(nil, IVLSpotifyError(408, @"token timeout")); return; }
         NSString *title = [IVLLyricsService cleanTitle:track.title];
         NSString *artist = [IVLLyricsService cleanArtist:track.artist];
         NSString *q = artist.length ? [NSString stringWithFormat:@"%@ %@", title, artist] : title;
-        NSString *search = [NSString stringWithFormat:@"https://api.spotify.com/v1/search?type=track&limit=10&market=from_token&q=%@", IVLEnc(q)];
+        NSString *search = [NSString stringWithFormat:@"https://api.spotify.com/v1/search?type=track&limit=20&q=%@", IVLEnc(q)];
         [self get:search token:token completion:^(id json, NSInteger status) {
             if (status == 401 && retry) {
                 dispatch_async(dispatch_get_main_queue(), ^{
@@ -240,6 +266,7 @@ static NSString *IVLEnc(NSString *s) {
                 });
                 return;
             }
+            if (status != 200) { completion(nil, IVLSpotifyError(status ?: 503, [NSString stringWithFormat:@"search HTTP %ld", (long)status])); return; }
             NSArray *items = [json isKindOfClass:[NSDictionary class]] ? json[@"tracks"][@"items"] : nil;
             NSMutableArray *cands = [NSMutableArray array];
             for (NSDictionary *it in [items isKindOfClass:[NSArray class]] ? items : @[]) {
@@ -250,12 +277,18 @@ static NSString *IVLEnc(NSString *s) {
                                     @"artist": [names componentsJoinedByString:@", "], @"duration": @([it[@"duration_ms"] doubleValue] / 1000.0) }];
             }
             NSDictionary *best = IVLBestCandidate(cands, track);
-            if (!best) { completion(nil, nil); return; }
+            if (!best) {
+                NSString *first = cands.count ? [NSString stringWithFormat:@" (top: %@ / %@)", cands[0][@"title"], cands[0][@"artist"]] : @"";
+                completion(nil, IVLSpotifyError(404, [NSString stringWithFormat:@"no matching track in %lu results%@", (unsigned long)cands.count, first]));
+                return;
+            }
             NSString *url = [NSString stringWithFormat:@"https://spclient.wg.spotify.com/color-lyrics/v2/track/%@?format=json&vocalRemoval=false&market=from_token", best[@"id"]];
             [self get:url token:token completion:^(id lj, NSInteger ls) {
                 IVLLyrics *ly = ls == 200 ? [IVLSpotify parseColorLyrics:lj durationMs:(NSInteger)(track.duration * 1000)] : nil;
                 ly.source = @"Spotify";
-                completion(ly, nil);
+                if (ly) { completion(ly, nil); return; }
+                NSString *why = ls == 404 ? [NSString stringWithFormat:@"no lyrics for %@", best[@"title"]] : [NSString stringWithFormat:@"lyrics HTTP %ld", (long)ls];
+                completion(nil, IVLSpotifyError(ls == 404 ? 404 : (ls ?: 503), why));
             }];
         }];
     }];

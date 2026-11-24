@@ -148,7 +148,13 @@ static NSString *CoverURL(NSString *title) {
 
 - (instancetype)init {
     if ((self = [super init])) {
-        if (![IVLDiscord available]) { _status = @"SDK未導入"; return self; }
+        if (![IVLDiscord available]) {
+            NSString *fw = [[NSBundle mainBundle].privateFrameworksPath stringByAppendingPathComponent:@"discord_partner_sdk.framework"];
+            _status = [NSFileManager.defaultManager fileExistsAtPath:fw]
+                ? @"SDKの読み込みに失敗（Frameworks/discord_partner_sdk.framework は存在）"
+                : @"discord_partner_sdk.framework が注入されていません";
+            return self;
+        }
         self.status = @"未連携";
         tokens = TokenRead();
         YTMPRememberSecret(Text(tokens[@"access"])); YTMPRememberSecret(Text(tokens[@"refresh"]));

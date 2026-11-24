@@ -298,7 +298,7 @@ static NSInteger IVLLyricsQuality(IVLLyrics *ly, IVLTrack *track) {
         [self invokeProvider:ids[i] track:track completion:^(IVLLyrics *ly, NSError *err) {
             dispatch_async(q, ^{
                 if (ly) results[i] = ly;
-                if (err) lastError = err;
+                if (err && err.code != 404 && err.code != 401) lastError = err;
                 finished[i] = @YES;
                 if (evaluate) evaluate(NO);
             });
