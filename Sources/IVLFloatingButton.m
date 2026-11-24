@@ -152,11 +152,12 @@ static const CGFloat kEdge = 8;
     UIView *host = self.superview;
     if (!host) return;
     switch (g.state) {
-        case UIGestureRecognizerStateBegan:
+        case UIGestureRecognizerStateBegan: {
             _dragging = YES;
             _dragStartCenter = self.center;
             [UIView animateWithDuration:0.15 animations:^{ self.transform = CGAffineTransformMakeScale(1.08, 1.08); }];
             break;
+        }
         case UIGestureRecognizerStateChanged: {
             CGPoint t = [g translationInView:host];
             self.center = CGPointMake(_dragStartCenter.x + t.x, _dragStartCenter.y + t.y);
