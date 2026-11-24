@@ -29,7 +29,7 @@ endif
 
 ivLyricsYTM_FILES = $(wildcard Sources/*.x) $(wildcard Sources/*.m) $(wildcard Sources/*.mm)
 ivLyricsYTM_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-unused-function -Wno-format-nonliteral -Wno-format-security -Wno-error -ISources -DIVL_VERSION=\"$(PACKAGE_VERSION)\"
-ivLyricsYTM_CCFLAGS = -std=c++20
+ivLyricsYTM_CCFLAGS = -std=c++20 -fno-modules -fno-cxx-modules
 ivLyricsYTM_FRAMEWORKS = UIKit Foundation QuartzCore CoreText CoreImage NaturalLanguage MediaPlayer WebKit Security
 
 ifneq ($(DISCORD_SDK),)
