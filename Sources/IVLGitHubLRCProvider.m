@@ -264,34 +264,92 @@ static NSDictionary *IVLMatchGitHubFile(NSArray<NSDictionary *> *files, IVLTrack
     return best;
 }
 
-- (void)githubLRCForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)done {
-    NSString *raw = [IVLSettings objectForKey:IVLKeyGitHubLRCRepo];
-    NSString *extractedBranch = nil;
-    NSString *ownerRepo = [IVLLyricsService parseGitHubOwnerRepo:raw extractedBranch:&extractedBranch];
-    if (!ownerRepo.length) { done(nil, nil); return; }
+- (void)listGitHubLRCFilesForRepo:(NSString *)ownerRepo
+                           branch:(nullable NSString *)branch
+                      bypassCache:(BOOL)bypass
+                       completion:(void (^)(NSArray<NSDictionary *> *_Nullable files, NSError *_Nullable error))completion {
+    NSString *extracted = nil;
+    NSString *norm = [IVLLyricsService parseGitHubOwnerRepo:ownerRepo extractedBranch:&extracted];
+    if (!norm.length) {
+        dispatch_async(dispatch_get_main_queue(), ^{ completion(nil, nil); });
+        return;
+    }
+    NSString *b = [branch stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (!b.length) b = extracted;
+    [self fetchGitHubRootFilesForRepo:norm branch:b bypassCache:bypass completion:^(NSArray<NSDictionary *> *files, NSError *err) {
+        NSArray<NSDictionary *> *sorted = [files sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *bItem) {
+            return [(NSString *)a[@"name"] localizedCaseInsensitiveCompare:(NSString *)bItem[@"name"]];
+        }];
+        dispatch_async(dispatch_get_main_queue(), ^{ completion(sorted, err); });
+    }];
+}
 
-    NSString *cfgBranch = [[IVLSettings objectForKey:IVLKeyGitHubLRCBranch] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+- (void)downloadGitHubLRCFile:(NSDictionary *)fileEntry
+                         repo:(NSString *)ownerRepo
+                   durationMs:(NSInteger)durMs
+                   completion:(IVLLyricsCompletion)completion {
+    NSURL *dlURL = [NSURL URLWithString:fileEntry[@"url"] ?: @""];
+    if (!dlURL) {
+        dispatch_async(dispatch_get_main_queue(), ^{ completion(nil, nil); });
+        return;
+    }
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:dlURL];
+    [req setValue:@"iOSYTM-Utils" forHTTPHeaderField:@"User-Agent"];
+    req.timeoutInterval = 12.0;
+
+    [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *dlErr) {
+        NSInteger code = [resp isKindOfClass:[NSHTTPURLResponse class]] ? ((NSHTTPURLResponse *)resp).statusCode : 0;
+        if (code != 200 || !data.length) {
+            dispatch_async(dispatch_get_main_queue(), ^{ completion(nil, dlErr); });
+            return;
+        }
+        NSString *fname = fileEntry[@"name"] ?: @"lyrics.lrc";
+        IVLLyrics *ly = [IVLLyricsService parseLyricsData:data fileName:fname durationMs:durMs];
+        if (ly) {
+            NSString *shortRepo = [ownerRepo componentsSeparatedByString:@"/"].lastObject ?: ownerRepo;
+            ly.source = [NSString stringWithFormat:@"GitHub (%@ · %@)", shortRepo, [fname stringByDeletingPathExtension]];
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{ completion(ly, nil); });
+    }] resume];
+}
+
+- (void)githubLRCTryRepos:(NSArray<NSDictionary<NSString *, NSString *> *> *)repos
+                    index:(NSUInteger)idx
+                    track:(IVLTrack *)track
+                lastError:(nullable NSError *)lastErr
+               completion:(IVLLyricsCompletion)done {
+    if (idx >= repos.count) { done(nil, lastErr); return; }
+    NSDictionary *entry = repos[idx];
+    NSString *extractedBranch = nil;
+    NSString *ownerRepo = [IVLLyricsService parseGitHubOwnerRepo:entry[@"repo"] extractedBranch:&extractedBranch];
+    if (!ownerRepo.length) {
+        [self githubLRCTryRepos:repos index:idx + 1 track:track lastError:lastErr completion:done];
+        return;
+    }
+    NSString *cfgBranch = [entry[@"branch"] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     NSString *branch = cfgBranch.length ? cfgBranch : extractedBranch;
 
     [self fetchGitHubRootFilesForRepo:ownerRepo branch:branch bypassCache:NO completion:^(NSArray<NSDictionary *> *files, NSError *err) {
-        if (err || !files.count) { done(nil, err); return; }
-        NSDictionary *match = IVLMatchGitHubFile(files, track);
-        if (!match) { done(nil, nil); return; }
-
-        NSURL *dlURL = [NSURL URLWithString:match[@"url"]];
-        if (!dlURL) { done(nil, nil); return; }
-        NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:dlURL];
-        [req setValue:@"iOSYTM-Utils" forHTTPHeaderField:@"User-Agent"];
-        req.timeoutInterval = 12.0;
-
-        [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *dlErr) {
-            NSInteger code = [resp isKindOfClass:[NSHTTPURLResponse class]] ? ((NSHTTPURLResponse *)resp).statusCode : 0;
-            if (code != 200 || !data.length) { done(nil, dlErr); return; }
-            IVLLyrics *ly = [IVLLyricsService parseLyricsData:data fileName:match[@"name"] durationMs:(NSInteger)(track.duration * 1000)];
-            if (ly) ly.source = [NSString stringWithFormat:@"GitHub (%@)", ownerRepo];
-            done(ly, nil);
-        }] resume];
+        NSDictionary *match = (!err && files.count) ? IVLMatchGitHubFile(files, track) : nil;
+        if (!match) {
+            [self githubLRCTryRepos:repos index:idx + 1 track:track lastError:(err ?: lastErr) completion:done];
+            return;
+        }
+        [self downloadGitHubLRCFile:match repo:ownerRepo durationMs:(NSInteger)(track.duration * 1000) completion:^(IVLLyrics *ly, NSError *dlErr) {
+            if (ly.lines.count) {
+                done(ly, nil);
+            } else {
+                [self githubLRCTryRepos:repos index:idx + 1 track:track lastError:(dlErr ?: lastErr) completion:done];
+            }
+        }];
     }];
+}
+
+- (void)githubLRCForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)done {
+    if (![IVLSettings boolForKey:IVLKeyProviderGitHub]) { done(nil, nil); return; }
+    NSArray<NSDictionary<NSString *, NSString *> *> *repos = [IVLSettings githubLRCRepos];
+    if (!repos.count) { done(nil, nil); return; }
+    [self githubLRCTryRepos:repos index:0 track:track lastError:nil completion:done];
 }
 
 - (void)verifyGitHubLRCRepo:(NSString *)raw

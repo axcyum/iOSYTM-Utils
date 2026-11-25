@@ -12,7 +12,7 @@
 #import "IVLRecognizer.h"
 
 #ifndef IVL_VERSION
-#define IVL_VERSION "1.0.0"
+#define IVL_VERSION "1.1.0"
 #endif
 
 #ifndef IVL_COMMIT
@@ -1202,8 +1202,12 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
         } else {
             c.imageView.image = IVLBadgeImage(@"chevron.left.forwardslash.chevron.right", @"folder.fill", @"24292F");
             c.textLabel.text = IVLLoc(@"github_lrc_repo");
-            NSString *repo = [IVLSettings objectForKey:IVLKeyGitHubLRCRepo];
-            c.detailTextLabel.text = repo.length ? repo : IVLLoc(@"not_configured");
+            if (![IVLSettings boolForKey:IVLKeyProviderGitHub]) {
+                c.detailTextLabel.text = IVLLoc(@"off");
+            } else {
+                NSUInteger cnt = [IVLSettings githubLRCRepos].count;
+                c.detailTextLabel.text = cnt ? [NSString stringWithFormat:IVLLoc(@"github_lrc_repo_count_fmt"), (unsigned long)cnt] : IVLLoc(@"not_configured");
+            }
         }
         return c;
     }
@@ -1211,17 +1215,25 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
     UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
     c.selectionStyle = UITableViewCellSelectionStyleNone;
     NSString *pid = _ids[indexPath.row];
+    BOOL isGitHubOff = [pid isEqualToString:@"github"] && ![IVLSettings boolForKey:IVLKeyProviderGitHub];
     c.textLabel.text = [NSString stringWithFormat:@"%ld. %@", (long)indexPath.row + 1, [IVLSettings nameForProvider:pid]];
     c.textLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
     c.detailTextLabel.text = [IVLProvidersViewController detailFor:pid];
     c.detailTextLabel.textColor = UIColor.secondaryLabelColor;
     c.detailTextLabel.numberOfLines = 0;
+    if (isGitHubOff) {
+        c.textLabel.textColor = UIColor.secondaryLabelColor;
+        c.backgroundColor = [UIColor colorWithWhite:1 alpha:0.04];
+        c.contentView.alpha = 0.5;
+    }
     c.showsReorderControl = YES;
     UISwitch *sw = [UISwitch new];
     NSString *key = [IVLSettings enableKeyForProvider:pid];
     sw.on = [IVLSettings boolForKey:key];
+    __weak UITableView *weakTable = tableView;
     [sw addAction:[UIAction actionWithHandler:^(UIAction *a) {
         [IVLSettings setBool:((UISwitch *)a.sender).on forKey:key];
+        [weakTable reloadData];
     }] forControlEvents:UIControlEventValueChanged];
     c.editingAccessoryView = sw;
     return c;
@@ -1258,8 +1270,178 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
         picker.settingsKey = IVLKeyCaptionLang;
         [self.navigationController pushViewController:picker animated:YES];
     } else {
-        [self.navigationController pushViewController:[[IVLSettingsViewController alloc] initWithPage:@"github_lrc"] animated:YES];
+        [self.navigationController pushViewController:[IVLGitHubLRCReposViewController new] animated:YES];
     }
+}
+
+@end
+
+#pragma mark - GitHub LRC Repositories Manager
+
+@implementation IVLGitHubLRCReposViewController {
+    NSMutableArray<NSDictionary<NSString *, NSString *> *> *_repos;
+}
+
+- (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = IVLLoc(@"github_lrc_repo");
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAdd target:self action:@selector(promptAddRepo)];
+    _repos = [[IVLSettings githubLRCRepos] mutableCopy];
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    _repos = [[IVLSettings githubLRCRepos] mutableCopy];
+    [self.tableView reloadData];
+}
+
+- (void)saveRepos {
+    [IVLSettings setGitHubLRCRepos:_repos];
+    [[IVLLyricsService shared] invalidateGitHubLRCCache];
+    [self.tableView reloadData];
+}
+
+- (void)promptAddRepo {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:IVLLoc(@"github_lrc_add")
+                                                               message:IVLLoc(@"github_lrc_add_msg")
+                                                        preferredStyle:UIAlertControllerStyleAlert];
+    [a addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.placeholder = @"owner/repo";
+        tf.keyboardType = UIKeyboardTypeURL;
+        tf.autocorrectionType = UITextAutocorrectionTypeNo;
+        tf.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    }];
+    [a addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.placeholder = IVLLoc(@"github_lrc_branch_placeholder");
+        tf.keyboardType = UIKeyboardTypeASCIICapable;
+        tf.autocorrectionType = UITextAutocorrectionTypeNo;
+        tf.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    }];
+    [a addAction:[UIAlertAction actionWithTitle:IVLLoc(@"cancel") style:UIAlertActionStyleCancel handler:nil]];
+    __weak typeof(self) weakSelf = self;
+    [a addAction:[UIAlertAction actionWithTitle:IVLLoc(@"github_lrc_add_btn") style:UIAlertActionStyleDefault handler:^(UIAlertAction *act) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) return;
+        NSString *raw = a.textFields[0].text ?: @"";
+        NSString *br = [a.textFields[1].text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] ?: @"";
+        NSString *extracted = nil;
+        NSString *norm = [IVLLyricsService parseGitHubOwnerRepo:raw extractedBranch:&extracted];
+        if (!norm.length) {
+            UIAlertController *err = [UIAlertController alertControllerWithTitle:IVLLoc(@"github_lrc_test_fail")
+                                                                         message:IVLLoc(@"github_lrc_add_msg")
+                                                                  preferredStyle:UIAlertControllerStyleAlert];
+            [err addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+            [strongSelf presentViewController:err animated:YES completion:nil];
+            return;
+        }
+        NSString *finalBranch = br.length ? br : (extracted ?: @"");
+        BOOL exists = NO;
+        for (NSDictionary *d in strongSelf->_repos) {
+            if ([d[@"repo"].lowercaseString isEqualToString:norm.lowercaseString] &&
+                [(d[@"branch"] ?: @"").lowercaseString isEqualToString:finalBranch.lowercaseString]) {
+                exists = YES;
+                break;
+            }
+        }
+        if (!exists) {
+            [strongSelf->_repos addObject:@{ @"repo": norm, @"branch": finalBranch }];
+            [strongSelf saveRepos];
+        }
+        [[IVLLyricsService shared] verifyGitHubLRCRepo:norm branch:finalBranch completion:^(BOOL ok, NSUInteger count, NSString *n, NSString *errMsg) {
+            __strong typeof(weakSelf) s2 = weakSelf;
+            if (!s2) return;
+            NSString *title = ok ? IVLLoc(@"github_lrc_test_ok") : IVLLoc(@"github_lrc_test_fail");
+            NSString *msg = ok ? [NSString stringWithFormat:IVLLoc(@"github_lrc_test_ok_fmt"), n ?: norm, (unsigned long)count] : (errMsg ?: @"Error");
+            UIAlertController *res = [UIAlertController alertControllerWithTitle:title message:msg preferredStyle:UIAlertControllerStyleAlert];
+            [res addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+            [s2 presentViewController:res animated:YES completion:nil];
+        }];
+    }]];
+    [self presentViewController:a animated:YES completion:nil];
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return 2; }
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    if (section == 0) return 1;
+    return _repos.count + 1;
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    return section == 1 ? IVLLoc(@"github_lrc_repos_header") : nil;
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
+    return section == 1 ? IVLLoc(@"footer_github_lrc") : nil;
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    if (indexPath.section == 0) {
+        UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+        c.selectionStyle = UITableViewCellSelectionStyleNone;
+        c.textLabel.text = IVLLoc(@"github_lrc_use");
+        UISwitch *sw = [UISwitch new];
+        sw.on = [IVLSettings boolForKey:IVLKeyProviderGitHub];
+        [sw addAction:[UIAction actionWithHandler:^(UIAction *a) {
+            [IVLSettings setBool:((UISwitch *)a.sender).on forKey:IVLKeyProviderGitHub];
+        }] forControlEvents:UIControlEventValueChanged];
+        c.accessoryView = sw;
+        return c;
+    }
+
+    if (indexPath.row == (NSInteger)_repos.count) {
+        UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+        c.textLabel.text = IVLLoc(@"github_lrc_add");
+        c.textLabel.textColor = self.view.tintColor;
+        c.imageView.image = [UIImage systemImageNamed:@"plus.circle.fill"];
+        c.imageView.tintColor = self.view.tintColor;
+        return c;
+    }
+
+    NSDictionary *d = _repos[indexPath.row];
+    UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
+    c.textLabel.text = d[@"repo"];
+    c.textLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    NSString *br = d[@"branch"];
+    c.detailTextLabel.text = br.length ? [NSString stringWithFormat:@"branch: %@", br] : IVLLoc(@"github_lrc_branch_placeholder");
+    c.detailTextLabel.textColor = UIColor.secondaryLabelColor;
+    c.imageView.image = [UIImage systemImageNamed:@"folder.fill"];
+    return c;
+}
+
+- (BOOL)tableView:(UITableView *)tableView canEditRowAtIndexPath:(NSIndexPath *)indexPath {
+    return indexPath.section == 1 && indexPath.row < (NSInteger)_repos.count;
+}
+
+- (void)tableView:(UITableView *)tableView commitEditingStyle:(UITableViewCellEditingStyle)editingStyle forRowAtIndexPath:(NSIndexPath *)indexPath {
+    if (editingStyle == UITableViewCellEditingStyleDelete && indexPath.section == 1 && indexPath.row < (NSInteger)_repos.count) {
+        [_repos removeObjectAtIndex:indexPath.row];
+        [self saveRepos];
+    }
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (indexPath.section != 1) return;
+    if (indexPath.row == (NSInteger)_repos.count) {
+        [self promptAddRepo];
+        return;
+    }
+    NSDictionary *d = _repos[indexPath.row];
+    NSString *repo = d[@"repo"] ?: @"";
+    NSString *branch = d[@"branch"] ?: @"";
+    __weak typeof(self) weakSelf = self;
+    [[IVLLyricsService shared] verifyGitHubLRCRepo:repo branch:branch completion:^(BOOL ok, NSUInteger count, NSString *norm, NSString *errMsg) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) return;
+        NSString *title = ok ? IVLLoc(@"github_lrc_test_ok") : IVLLoc(@"github_lrc_test_fail");
+        NSString *msg = ok ? [NSString stringWithFormat:IVLLoc(@"github_lrc_test_ok_fmt"), norm ?: repo, (unsigned long)count] : (errMsg ?: @"Error");
+        UIAlertController *a = [UIAlertController alertControllerWithTitle:title message:msg preferredStyle:UIAlertControllerStyleAlert];
+        [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [strongSelf presentViewController:a animated:YES completion:nil];
+    }];
 }
 
 @end

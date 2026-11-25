@@ -11,6 +11,10 @@ NS_ASSUME_NONNULL_BEGIN
 @interface IVLProvidersViewController : UITableViewController
 @end
 
+/// Multi-repository manager & toggle for GitHub LRC source.
+@interface IVLGitHubLRCReposViewController : UITableViewController
+@end
+
 @interface IVLLanguagePickerViewController : UITableViewController
 /// Default: translation target. Pass IVLKeyCaptionLang for the subtitle language (adds "Automatic").
 @property (nonatomic, copy) NSString *settingsKey;

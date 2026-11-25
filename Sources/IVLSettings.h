@@ -22,9 +22,10 @@ extern NSString *const IVLKeyProviderLRCLIB;     // BOOL
 extern NSString *const IVLKeyProviderYouTube;    // BOOL
 extern NSString *const IVLKeyProviderLyricsPlus; // BOOL
 extern NSString *const IVLKeyProviderLyrically;  // BOOL
-extern NSString *const IVLKeyProviderGitHub;     // BOOL
-extern NSString *const IVLKeyGitHubLRCRepo;      // NSString ("owner/repo" or GitHub URL)
-extern NSString *const IVLKeyGitHubLRCBranch;    // NSString (optional branch, "" = default)
+extern NSString *const IVLKeyProviderGitHub;     // BOOL (default NO)
+extern NSString *const IVLKeyGitHubLRCRepo;      // NSString (legacy single repo, auto-migrated)
+extern NSString *const IVLKeyGitHubLRCBranch;    // NSString (legacy single branch, auto-migrated)
+extern NSString *const IVLKeyGitHubLRCRepos;     // NSArray<NSDictionary *> (@{@"repo": @"owner/repo", @"branch": @""})
 extern NSString *const IVLKeyProviderOrder;      // NSArray of provider ids, highest priority first
 extern NSString *const IVLKeyGlobalOffset;       // NSInteger ms (positive = lyrics earlier)
 extern NSString *const IVLKeyAutoResume;         // NSInteger seconds, 0 = never
@@ -74,6 +75,9 @@ extern NSString *const IVLKeyCaptionLang;        // NSString, "" = automatic (so
 
 + (nullable NSString *)pinnedProviderForKeys:(NSArray<NSString *> *)keys;
 + (void)setPinnedProvider:(nullable NSString *)providerID forKeys:(NSArray<NSString *> *)keys;
+
++ (NSArray<NSDictionary<NSString *, NSString *> *> *)githubLRCRepos;
++ (void)setGitHubLRCRepos:(NSArray<NSDictionary<NSString *, NSString *> *> *)repos;
 
 + (NSString *)defaultTranslationLanguage;
 

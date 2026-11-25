@@ -22,6 +22,7 @@ NSString *const IVLKeyProviderLyrically = @"providerLyrically";
 NSString *const IVLKeyProviderGitHub = @"providerGitHub";
 NSString *const IVLKeyGitHubLRCRepo = @"githubLRCRepo";
 NSString *const IVLKeyGitHubLRCBranch = @"githubLRCBranch";
+NSString *const IVLKeyGitHubLRCRepos = @"githubLRCRepos";
 NSString *const IVLKeyProviderOrder = @"providerOrderList";
 NSString *const IVLKeyGlobalOffset = @"globalOffset";
 NSString *const IVLKeyAutoResume = @"autoResume";
@@ -91,9 +92,10 @@ static NSString *IVLLocCaptionsName(void) {
             IVLKeyProviderYouTube: @YES,
             IVLKeyProviderLyricsPlus: @YES,
             IVLKeyProviderLyrically: @YES,
-            IVLKeyProviderGitHub: @YES,
+            IVLKeyProviderGitHub: @NO,
             IVLKeyGitHubLRCRepo: @"",
             IVLKeyGitHubLRCBranch: @"",
+            IVLKeyGitHubLRCRepos: @[],
             IVLKeyProviderOrder: [self knownProviders],
             IVLKeyGlobalOffset: @0,
             IVLKeyAutoResume: @3,
@@ -142,8 +144,8 @@ static NSString *IVLLocCaptionsName(void) {
 }
 
 + (NSArray<NSString *> *)knownProviders {
-    // user GitHub LRC repo first (instant no-op when unconfigured), then synced sources
-    return @[@"github", @"youtube", @"lyricsplus", @"spotify", @"captions", @"unison", @"lyrically", @"lrclib"];
+    // synced built-in sources first, optional GitHub LRC repo at the bottom (OFF by default)
+    return @[@"youtube", @"lyricsplus", @"spotify", @"captions", @"unison", @"lyrically", @"lrclib", @"github"];
 }
 
 + (NSArray<NSString *> *)providerIDs {
@@ -233,6 +235,40 @@ static NSString *IVLLocCaptionsName(void) {
         else [m removeObjectForKey:k];
     }
     [self setObject:m forKey:IVLKeySongProviders];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
++ (NSArray<NSDictionary<NSString *, NSString *> *> *)githubLRCRepos {
+    NSMutableArray<NSDictionary<NSString *, NSString *> *> *out = [NSMutableArray array];
+    id arr = [self objectForKey:IVLKeyGitHubLRCRepos];
+    if ([arr isKindOfClass:[NSArray class]]) {
+        for (id item in (NSArray *)arr) {
+            if (![item isKindOfClass:[NSDictionary class]]) continue;
+            NSString *r = [item[@"repo"] isKindOfClass:[NSString class]] ? item[@"repo"] : @"";
+            NSString *b = [item[@"branch"] isKindOfClass:[NSString class]] ? item[@"branch"] : @"";
+            if (r.length) [out addObject:@{ @"repo": r, @"branch": b ?: @"" }];
+        }
+    }
+    if (!out.count) {
+        NSString *legacy = [self objectForKey:IVLKeyGitHubLRCRepo];
+        if ([legacy isKindOfClass:[NSString class]] && legacy.length) {
+            NSString *lb = [self objectForKey:IVLKeyGitHubLRCBranch];
+            [out addObject:@{ @"repo": legacy, @"branch": ([lb isKindOfClass:[NSString class]] ? lb : @"") ?: @"" }];
+        }
+    }
+    return out;
+}
+
++ (void)setGitHubLRCRepos:(NSArray<NSDictionary<NSString *, NSString *> *> *)repos {
+    NSMutableArray *clean = [NSMutableArray array];
+    for (NSDictionary *d in repos) {
+        NSString *r = [d[@"repo"] isKindOfClass:[NSString class]] ? d[@"repo"] : @"";
+        NSString *b = [d[@"branch"] isKindOfClass:[NSString class]] ? d[@"branch"] : @"";
+        if (r.length) [clean addObject:@{ @"repo": r, @"branch": b ?: @"" }];
+    }
+    [self setObject:clean forKey:IVLKeyGitHubLRCRepos];
+    [self setObject:@"" forKey:IVLKeyGitHubLRCRepo];
+    [self setObject:@"" forKey:IVLKeyGitHubLRCBranch];
     [[NSUserDefaults standardUserDefaults] synchronize];
 }
 

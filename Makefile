@@ -12,7 +12,7 @@
 TARGET := iphone:clang:latest:18.0
 ARCHS := arm64
 INSTALL_TARGET_PROCESSES = YouTubeMusic
-PACKAGE_VERSION = 1.0.0
+PACKAGE_VERSION = 1.1.0
 GIT_COMMIT := $(shell git rev-parse --short=7 HEAD 2>/dev/null || echo dev)
 
 ifeq ($(ROOTLESS),1)

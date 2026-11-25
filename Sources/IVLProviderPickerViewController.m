@@ -13,6 +13,18 @@
 @property (nonatomic, strong) IVLTrack *track;
 @end
 
+/// Repository picker when multiple GitHub LRC repositories are configured.
+@interface IVLGitHubLRCRepoPickerViewController : UITableViewController
+@property (nonatomic, strong) IVLTrack *track;
+@end
+
+/// Searchable list of root-level LRC/TTML files in a chosen GitHub repository.
+@interface IVLGitHubLRCFilesViewController : UITableViewController <UISearchResultsUpdating>
+@property (nonatomic, strong) IVLTrack *track;
+@property (nonatomic, copy) NSString *repo;
+@property (nonatomic, copy) NSString *branch;
+@end
+
 typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLProbeEmpty, IVLProbeFailed };
 
 @interface IVLProviderPickerViewController () <UIDocumentPickerDelegate>
@@ -33,7 +45,10 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
     self.title = IVLLoc(@"choose_provider");
     self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemClose target:self action:@selector(close)];
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"arrow.clockwise"] style:UIBarButtonItemStylePlain target:self action:@selector(probe)];
-    _ids = [IVLSettings providerIDs];   // every provider, also disabled ones
+    BOOL ghOn = [IVLSettings boolForKey:IVLKeyProviderGitHub];
+    NSMutableArray<NSString *> *list = [[IVLSettings providerIDs] mutableCopy];
+    if (!ghOn) [list removeObject:@"github"];   // hide GitHub LRC completely when OFF in settings
+    _ids = list;
     _track = [IVLPlaybackManager shared].track;
     [self probe];
 }
@@ -70,7 +85,7 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     if (section == 1) return _ids.count;
-    if (section == 2) return 2;
+    if (section == 2) return [IVLSettings boolForKey:IVLKeyProviderGitHub] ? 3 : 2;
     return 1;
 }
 
@@ -113,6 +128,7 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
         return c;
     }
     if (indexPath.section == 2) {
+        BOOL ghOn = [IVLSettings boolForKey:IVLKeyProviderGitHub];
         if (indexPath.row == 0) {
             c.textLabel.text = IVLLoc(@"search_lyrics");
             if ([pinned isEqualToString:@"lrclib_manual"]) {
@@ -123,6 +139,17 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
                 c.detailTextLabel.text = IVLLoc(@"search_lrclib_hint");
             }
             c.imageView.image = [UIImage systemImageNamed:@"magnifyingglass"];
+            c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        } else if (ghOn && indexPath.row == 1) {
+            c.textLabel.text = IVLLoc(@"browse_github_lrc");
+            if ([pinned isEqualToString:@"github_manual"]) {
+                NSString *savedSrc = cur.source.length ? cur.source : @"GitHub LRC";
+                c.detailTextLabel.text = [NSString stringWithFormat:@"✓ %@", savedSrc];
+                c.detailTextLabel.textColor = UIColor.systemGreenColor;
+            } else {
+                c.detailTextLabel.text = IVLLoc(@"browse_github_lrc_hint");
+            }
+            c.imageView.image = [UIImage systemImageNamed:@"folder.badge.magnifyingglass"] ?: [UIImage systemImageNamed:@"folder"];
             c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         } else {
             c.textLabel.text = IVLLoc(@"import_lrc_file");
@@ -179,12 +206,31 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
         c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;   // choose the subtitle language for this song
         c.selectionStyle = UITableViewCellSelectionStyleDefault;
     }
-    if ([pid isEqualToString:@"github"] && st != IVLProbeLoading && ![[IVLSettings objectForKey:IVLKeyGitHubLRCRepo] length]) {
+    if ([pid isEqualToString:@"github"] && st != IVLProbeLoading && ![IVLSettings githubLRCRepos].count) {
         c.detailTextLabel.text = IVLLoc(@"github_lrc_tap_to_setup");
         c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         c.selectionStyle = UITableViewCellSelectionStyleDefault;
     }
     return c;
+}
+
+- (void)openGitHubLRCBrowser {
+    NSArray<NSDictionary<NSString *, NSString *> *> *repos = [IVLSettings githubLRCRepos];
+    if (!repos.count) {
+        [self.navigationController pushViewController:[IVLGitHubLRCReposViewController new] animated:YES];
+        return;
+    }
+    if (repos.count == 1) {
+        IVLGitHubLRCFilesViewController *vc = [IVLGitHubLRCFilesViewController new];
+        vc.track = _track;
+        vc.repo = repos[0][@"repo"];
+        vc.branch = repos[0][@"branch"];
+        [self.navigationController pushViewController:vc animated:YES];
+        return;
+    }
+    IVLGitHubLRCRepoPickerViewController *vc = [IVLGitHubLRCRepoPickerViewController new];
+    vc.track = _track;
+    [self.navigationController pushViewController:vc animated:YES];
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
@@ -195,8 +241,11 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
         return;
     }
     if (indexPath.section == 2) {
+        BOOL ghOn = [IVLSettings boolForKey:IVLKeyProviderGitHub];
         if (indexPath.row == 0) {
             [self.navigationController pushViewController:[IVLSearchViewController new] animated:YES];
+        } else if (ghOn && indexPath.row == 1) {
+            [self openGitHubLRCBrowser];
         } else {
             UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeItem] asCopy:YES];
             picker.delegate = self;
@@ -212,8 +261,8 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
         [self.navigationController pushViewController:list animated:YES];
         return;
     }
-    if ([pid isEqualToString:@"github"] && ![[IVLSettings objectForKey:IVLKeyGitHubLRCRepo] length]) {
-        [self.navigationController pushViewController:[[IVLSettingsViewController alloc] initWithPage:@"github_lrc"] animated:YES];
+    if ([pid isEqualToString:@"github"] && ![IVLSettings githubLRCRepos].count) {
+        [self.navigationController pushViewController:[IVLGitHubLRCReposViewController new] animated:YES];
         return;
     }
     IVLLyrics *ly = _results[pid];
@@ -331,6 +380,187 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
             [[UINotificationFeedbackGenerator new] notificationOccurred:UINotificationFeedbackTypeSuccess];
             [self dismissViewControllerAnimated:YES completion:nil];
         });
+    }];
+}
+
+@end
+
+#pragma mark - GitHub LRC Repository Picker & File Browser
+
+@implementation IVLGitHubLRCRepoPickerViewController {
+    NSArray<NSDictionary<NSString *, NSString *> *> *_repos;
+}
+
+- (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = IVLLoc(@"github_lrc_pick_repo");
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"gearshape"] style:UIBarButtonItemStylePlain target:self action:@selector(openManage)];
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    _repos = [IVLSettings githubLRCRepos];
+    [self.tableView reloadData];
+}
+
+- (void)openManage {
+    [self.navigationController pushViewController:[IVLGitHubLRCReposViewController new] animated:YES];
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return _repos.count; }
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
+    NSDictionary *d = _repos[indexPath.row];
+    c.textLabel.text = d[@"repo"];
+    c.textLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    NSString *br = d[@"branch"];
+    c.detailTextLabel.text = br.length ? [NSString stringWithFormat:@"branch: %@", br] : IVLLoc(@"github_lrc_branch_placeholder");
+    c.detailTextLabel.textColor = UIColor.secondaryLabelColor;
+    c.imageView.image = [UIImage systemImageNamed:@"folder.fill"];
+    c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    return c;
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    NSDictionary *d = _repos[indexPath.row];
+    IVLGitHubLRCFilesViewController *vc = [IVLGitHubLRCFilesViewController new];
+    vc.track = self.track;
+    vc.repo = d[@"repo"];
+    vc.branch = d[@"branch"];
+    [self.navigationController pushViewController:vc animated:YES];
+}
+
+@end
+
+@implementation IVLGitHubLRCFilesViewController {
+    UISearchController *_search;
+    NSArray<NSDictionary *> *_allFiles;
+    NSArray<NSDictionary *> *_filtered;
+    BOOL _loading;
+    NSString *_errorMsg;
+    NSInteger _busyRow;
+}
+
+- (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = [self.repo componentsSeparatedByString:@"/"].lastObject ?: self.repo;
+    _busyRow = -1;
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"arrow.clockwise"] style:UIBarButtonItemStylePlain target:self action:@selector(reloadFromGitHub)];
+
+    _search = [[UISearchController alloc] initWithSearchResultsController:nil];
+    _search.obscuresBackgroundDuringPresentation = NO;
+    _search.searchResultsUpdater = self;
+    _search.searchBar.placeholder = IVLLoc(@"github_lrc_search_placeholder");
+    self.navigationItem.searchController = _search;
+    self.navigationItem.hidesSearchBarWhenScrolling = NO;
+    self.definesPresentationContext = YES;
+
+    [self loadBypassCache:NO];
+}
+
+- (void)reloadFromGitHub { [self loadBypassCache:YES]; }
+
+- (void)loadBypassCache:(BOOL)bypass {
+    _loading = YES;
+    _errorMsg = nil;
+    [self.tableView reloadData];
+    __weak typeof(self) weakSelf = self;
+    [[IVLLyricsService shared] listGitHubLRCFilesForRepo:self.repo branch:self.branch bypassCache:bypass completion:^(NSArray<NSDictionary *> *files, NSError *err) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf->_loading = NO;
+        strongSelf->_allFiles = files ?: @[];
+        strongSelf->_errorMsg = err.localizedDescription;
+        [strongSelf applyFilter];
+    }];
+}
+
+- (void)applyFilter {
+    NSString *q = [_search.searchBar.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (!q.length) {
+        _filtered = _allFiles ?: @[];
+    } else {
+        NSString *lq = q.lowercaseString;
+        NSMutableArray *m = [NSMutableArray array];
+        for (NSDictionary *f in _allFiles) {
+            NSString *name = f[@"name"] ?: @"";
+            if ([name.lowercaseString containsString:lq]) [m addObject:f];
+        }
+        _filtered = m;
+    }
+    [self.tableView reloadData];
+}
+
+- (void)updateSearchResultsForSearchController:(UISearchController *)searchController {
+    [self applyFilter];
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    if (_loading) return 1;
+    return MAX(1, (NSInteger)_filtered.count);
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
+    return IVLLoc(@"search_footer");
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
+    c.detailTextLabel.textColor = UIColor.secondaryLabelColor;
+    if (_loading || !_filtered.count) {
+        c.textLabel.text = _loading ? IVLLoc(@"loading") : (_errorMsg ?: IVLLoc(@"github_lrc_empty"));
+        c.textLabel.numberOfLines = 0;
+        c.selectionStyle = UITableViewCellSelectionStyleNone;
+        if (_loading) {
+            UIActivityIndicatorView *sp = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
+            [sp startAnimating];
+            c.accessoryView = sp;
+        }
+        return c;
+    }
+    NSDictionary *f = _filtered[indexPath.row];
+    NSString *name = f[@"name"] ?: @"";
+    c.textLabel.text = [name stringByDeletingPathExtension];
+    c.textLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    c.detailTextLabel.text = name;
+    c.imageView.image = [UIImage systemImageNamed:@"doc.text"];
+    if (indexPath.row == _busyRow) {
+        UIActivityIndicatorView *sp = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
+        [sp startAnimating];
+        c.accessoryView = sp;
+    }
+    return c;
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (_loading || indexPath.row >= (NSInteger)_filtered.count || _busyRow >= 0) return;
+    _busyRow = indexPath.row;
+    [tableView reloadData];
+    NSDictionary *f = _filtered[indexPath.row];
+    __weak typeof(self) weakSelf = self;
+    [[IVLLyricsService shared] downloadGitHubLRCFile:f repo:self.repo durationMs:(NSInteger)(self.track.duration * 1000) completion:^(IVLLyrics *ly, NSError *err) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf->_busyRow = -1;
+        [strongSelf.tableView reloadData];
+        if (!ly.lines.count) {
+            UIAlertController *a = [UIAlertController alertControllerWithTitle:IVLLoc(@"import_lrc_failed")
+                                                                       message:(err.localizedDescription ?: f[@"name"])
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+            [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
+            [strongSelf presentViewController:a animated:YES completion:nil];
+            return;
+        }
+        [[IVLPlaybackManager shared] useManualLyrics:ly providerID:@"github_manual"];
+        [[UINotificationFeedbackGenerator new] notificationOccurred:UINotificationFeedbackTypeSuccess];
+        [strongSelf dismissViewControllerAnimated:YES completion:nil];
     }];
 }
 

@@ -368,7 +368,7 @@ static NSInteger IVLLyricsQuality(IVLLyrics *ly, IVLTrack *track) {
         NSString *pinned = [IVLSettings pinnedProviderForKeys:keys];
         BOOL isRealProvider = pinned.length > 0 && ![pinned isEqualToString:@"manual"] &&
                               ![pinned isEqualToString:@"lrclib_manual"] && ![pinned isEqualToString:@"captions_manual"] &&
-                              ![pinned isEqualToString:@"lrc_file"];
+                              ![pinned isEqualToString:@"lrc_file"] && ![pinned isEqualToString:@"github_manual"];
         if (isRealProvider) {
             [self invokeProvider:pinned track:track completion:^(IVLLyrics *ly, NSError *err) {
                 if (ly && ly.lines.count) {
@@ -463,7 +463,7 @@ static NSInteger IVLLyricsQuality(IVLLyrics *ly, IVLTrack *track) {
     NSArray<NSString *> *keys = [IVLLyricsService storageKeysForTrack:track];
     NSString *pinned = [IVLSettings pinnedProviderForKeys:keys];
     BOOL keepSavedSnapshot = [pinned isEqualToString:@"lrclib_manual"] || [pinned isEqualToString:@"captions_manual"] ||
-                             [pinned isEqualToString:@"lrc_file"] || [pinned isEqualToString:@"manual"];
+                             [pinned isEqualToString:@"lrc_file"] || [pinned isEqualToString:@"github_manual"] || [pinned isEqualToString:@"manual"];
     for (NSString *k in keys) [_memory removeObjectForKey:k];
     dispatch_sync(_io, ^{
         for (NSString *k in keys) {

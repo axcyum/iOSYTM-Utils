@@ -31,12 +31,20 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)youtubeSquareCoverForTrack:(IVLTrack *)track completion:(void (^)(NSString *_Nullable coverURL, NSString *_Nullable vid))completion;
 @end
 
-/// Root-level LRC/TTML files hosted in a user-specified GitHub repository
+/// Root-level LRC/TTML files hosted in user-specified GitHub repositories
 @interface IVLLyricsService (GitHubLRC)
 + (nullable NSString *)parseGitHubOwnerRepo:(NSString *)raw extractedBranch:(NSString *_Nullable *_Nullable)outBranch;
 + (nullable IVLLyrics *)parseLyricsData:(NSData *)data fileName:(NSString *)fileName durationMs:(NSInteger)durMs;
 - (void)invalidateGitHubLRCCache;
 - (void)githubLRCForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)done;
+- (void)listGitHubLRCFilesForRepo:(NSString *)ownerRepo
+                           branch:(nullable NSString *)branch
+                      bypassCache:(BOOL)bypass
+                       completion:(void (^)(NSArray<NSDictionary *> *_Nullable files, NSError *_Nullable error))completion;
+- (void)downloadGitHubLRCFile:(NSDictionary *)fileEntry
+                         repo:(NSString *)ownerRepo
+                   durationMs:(NSInteger)durMs
+                   completion:(IVLLyricsCompletion)completion;
 - (void)verifyGitHubLRCRepo:(NSString *)raw
                      branch:(nullable NSString *)branch
                  completion:(void (^)(BOOL ok, NSUInteger fileCount, NSString *_Nullable normalizedRepo, NSString *_Nullable errorMsg))completion;
