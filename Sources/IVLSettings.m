@@ -33,6 +33,11 @@ NSString *const IVLKeyLockLead = @"lockLead";
 NSString *const IVLKeyProviderSpotify = @"providerSpotify";
 NSString *const IVLKeyProviderCaptions = @"providerCaptions";
 NSString *const IVLKeyCaptionLang = @"captionLang";
+NSString *const IVLKeyLastfmEnabled = @"lastfmEnabled";
+NSString *const IVLKeyLastfmKey = @"lastfmKey";
+NSString *const IVLKeyLastfmUser = @"lastfmUser";
+NSString *const IVLKeyListenBrainzEnabled = @"listenbrainzEnabled";
+NSString *const IVLKeyOpenPlayer = @"openPlayer";
 NSString *const IVLKeyWNPEnabled = @"wnpEnabled";
 NSString *const IVLKeyWNPHost = @"wnpHost";
 NSString *const IVLKeyWNPPort = @"wnpPort";
@@ -88,6 +93,10 @@ static NSString *IVLLocCaptionsName(void) {
             IVLKeyProviderSpotify: @YES,
             IVLKeyProviderCaptions: @YES,
             IVLKeyCaptionLang: @"",
+            IVLKeyLastfmEnabled: @YES,
+            IVLKeyLastfmKey: @"",
+            IVLKeyListenBrainzEnabled: @YES,
+            IVLKeyOpenPlayer: @NO,
             IVLKeyWNPEnabled: @NO,
             IVLKeyWNPHost: @"",
             IVLKeyWNPPort: @8974,

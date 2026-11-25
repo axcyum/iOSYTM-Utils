@@ -7,6 +7,8 @@
 #import "IVLDiscord.h"
 #import "IVLWebNowPlaying.h"
 #import "IVLExtras.h"
+#import "IVLScrobbler.h"
+#import "IVLRecognizer.h"
 
 #ifndef IVL_VERSION
 #define IVL_VERSION "1.0.0"
@@ -30,6 +32,8 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
 @property (nonatomic, copy) NSString *symbol;                 // SF Symbol for link rows
 @property (nonatomic, copy) NSString *placeholder;            // text rows
 @property (nonatomic) UIKeyboardType keyboard;
+@property (nonatomic) BOOL secure;                            // text rows stored in the keychain, never shown again
+@property (nonatomic, copy) void (^onText)(NSString *text);   // text rows without a settings key
 @end
 @implementation IVLRow
 + (instancetype)type:(IVLRowType)t key:(NSString *)k title:(NSString *)title {
@@ -64,7 +68,7 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
     self.title = [_page isEqualToString:@"lock"] ? IVLLoc(@"sec_lock") : [_page isEqualToString:@"spotify"] ? @"Spotify"
                : [_page isEqualToString:@"discord"] ? @"Discord Rich Presence" : [_page isEqualToString:@"wnp"] ? @"WebNowPlaying"
                : [_page isEqualToString:@"extras"] ? IVLLoc(@"sec_extras") : [_page isEqualToString:@"accent"] ? IVLLoc(@"accent_color")
-               : [_page isEqualToString:@"bgcolor"] ? IVLLoc(@"bg_color") : @"ivLyrics";
+               : [_page isEqualToString:@"bgcolor"] ? IVLLoc(@"bg_color") : [_page isEqualToString:@"scrobble"] ? IVLLoc(@"scrobble") : @"ivLyrics";
     self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
     if (!_page) self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(done)];
     [self buildSections];
@@ -73,6 +77,7 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
     [nc addObserver:self selector:@selector(rebuild) name:IVLDiscordStatusDidChangeNotification object:nil];
     [nc addObserver:self selector:@selector(rebuild) name:IVLWebNowPlayingStatusDidChangeNotification object:nil];
     [nc addObserver:self selector:@selector(rebuild) name:IVLSleepTimerDidChangeNotification object:nil];
+    [nc addObserver:self selector:@selector(rebuild) name:IVLScrobblerDidChangeNotification object:nil];
 }
 
 - (void)rebuild {
@@ -81,6 +86,63 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
 }
 
 - (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
+
+extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
+
+- (NSArray<IVLSection *> *)scrobbleSections {
+    IVLScrobbler *sc = [IVLScrobbler shared];
+    IVLRow *(^sw)(NSString *, NSString *) = ^(NSString *k, NSString *t) { return [IVLRow type:IVLRowSwitch key:k title:t]; };
+    IVLRow *lfState = [IVLRow type:IVLRowInfo key:@"" title:IVLLoc(@"status")];
+    lfState.detail = ^NSString *{ return [IVLScrobbler shared].lastfmStatus; };
+    IVLRow *key = [IVLRow type:IVLRowText key:IVLKeyLastfmKey title:IVLLoc(@"lastfm_key")];
+    key.placeholder = @"API key";
+    key.keyboard = UIKeyboardTypeASCIICapable;
+    IVLRow *secret = [IVLRow type:IVLRowText key:@"" title:IVLLoc(@"lastfm_secret")];
+    secret.placeholder = IVLLoc(@"secret_placeholder");
+    secret.secure = YES;
+    secret.onText = ^(NSString *t) { if (t.length) IVLScrobblerSetSecret(@"lastfm-secret", t); };
+    __block NSString *user = nil, *pass = nil;
+    IVLRow *u = [IVLRow type:IVLRowText key:@"" title:IVLLoc(@"lastfm_user")];
+    u.placeholder = [IVLSettings objectForKey:IVLKeyLastfmUser] ?: @"";
+    u.keyboard = UIKeyboardTypeASCIICapable;
+    u.onText = ^(NSString *t) { user = t; };
+    IVLRow *pw = [IVLRow type:IVLRowText key:@"" title:IVLLoc(@"lastfm_password")];
+    pw.placeholder = @"••••••";
+    pw.secure = YES;
+    pw.onText = ^(NSString *t) { pass = t; };
+    IVLRow *login = [IVLRow type:IVLRowAction key:@"" title:sc.lastfmLoggedIn ? IVLLoc(@"lastfm_relogin") : IVLLoc(@"lastfm_login")];
+    login.action = ^(UIViewController *vc) {
+        [vc.view endEditing:YES];
+        [[IVLScrobbler shared] lastfmLoginWithUser:user ?: @"" password:pass ?: @"" completion:^(BOOL ok, NSString *msg) {
+            UIAlertController *a = [UIAlertController alertControllerWithTitle:ok ? @"Last.fm" : IVLLoc(@"lastfm_login_failed") message:msg preferredStyle:UIAlertControllerStyleAlert];
+            [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
+            [vc presentViewController:a animated:YES completion:nil];
+        }];
+    };
+    IVLRow *logout = [IVLRow type:IVLRowAction key:@"" title:IVLLoc(@"spotify_logout")];
+    logout.destructive = YES;
+    logout.action = ^(UIViewController *vc) { [[IVLScrobbler shared] lastfmLogout]; };
+    NSMutableArray *lfRows = [NSMutableArray arrayWithObjects:sw(IVLKeyLastfmEnabled, IVLLoc(@"lastfm_enabled")), lfState, key, secret, u, pw, login, nil];
+    if (sc.lastfmLoggedIn) [lfRows addObject:logout];
+
+    IVLRow *lbState = [IVLRow type:IVLRowInfo key:@"" title:IVLLoc(@"status")];
+    lbState.detail = ^NSString *{ return [IVLScrobbler shared].listenbrainzStatus; };
+    IVLRow *token = [IVLRow type:IVLRowText key:@"" title:IVLLoc(@"lb_token")];
+    token.placeholder = IVLLoc(@"secret_placeholder");
+    token.secure = YES;
+    token.onText = ^(NSString *t) {
+        if (!t.length) return;
+        IVLScrobblerSetSecret(@"listenbrainz", t);
+        [[IVLScrobbler shared] verifyListenBrainz:^(BOOL ok, NSString *m) {}];
+    };
+    IVLRow *pending = [IVLRow type:IVLRowInfo key:@"" title:IVLLoc(@"scrobble_pending")];
+    pending.detail = ^NSString *{ return @([IVLScrobbler shared].pending).stringValue; };
+    return @[
+        [IVLSection title:@"Last.fm" footer:IVLLoc(@"footer_lastfm") rows:lfRows],
+        [IVLSection title:@"ListenBrainz" footer:IVLLoc(@"footer_listenbrainz") rows:@[sw(IVLKeyListenBrainzEnabled, IVLLoc(@"lb_enabled")), lbState, token]],
+        [IVLSection title:nil footer:IVLLoc(@"footer_scrobble") rows:@[pending]],
+    ];
+}
 
 - (NSArray<IVLSection *> *)wnpSections {
     IVLRow *(^sw)(NSString *, NSString *) = ^(NSString *k, NSString *t) { return [IVLRow type:IVLRowSwitch key:k title:t]; };
@@ -138,7 +200,21 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
     IVLRow *stats = [IVLRow type:IVLRowLink key:@"" title:IVLLoc(@"stats")];
     stats.symbol = @"chart.bar.xaxis";
     stats.action = ^(UIViewController *vc) { [vc.navigationController pushViewController:[IVLStatsViewController new] animated:YES]; };
+    IVLRow *recognize = [IVLRow type:IVLRowLink key:@"" title:IVLLoc(@"recognize")];
+    recognize.symbol = @"shazam.logo";
+    recognize.action = ^(UIViewController *vc) {
+        UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:[IVLRecognizerViewController new]];
+        [vc presentViewController:nav animated:YES completion:nil];
+    };
+    IVLRow *scrobble = [IVLRow type:IVLRowLink key:@"" title:IVLLoc(@"scrobble")];
+    scrobble.symbol = @"dot.radiowaves.left.and.right";
+    scrobble.detail = ^NSString *{ return [IVLScrobbler shared].lastfmLoggedIn ? @"Last.fm" : @""; };
+    scrobble.action = ^(UIViewController *vc) { [vc.navigationController pushViewController:[[IVLSettingsViewController alloc] initWithPage:@"scrobble"] animated:YES]; };
+    IVLRow *openPlayer = [IVLRow type:IVLRowSwitch key:IVLKeyOpenPlayer title:IVLLoc(@"open_player")];
     return @[
+        [IVLSection title:IVLLoc(@"player_style") footer:IVLLoc(@"footer_player_style") rows:@[openPlayer]],
+        [IVLSection title:nil footer:IVLLoc(@"footer_recognize") rows:@[recognize]],
+        [IVLSection title:nil footer:IVLLoc(@"footer_scrobble_link") rows:@[scrobble]],
         [IVLSection title:IVLLoc(@"theme") footer:IVLLoc(@"footer_theme") rows:@[theme, accent, bg]],
         [IVLSection title:nil footer:IVLLoc(@"footer_sleep") rows:@[sleep]],
         [IVLSection title:IVLLoc(@"stats") footer:IVLLoc(@"footer_stats") rows:@[statsOn, stats]],
@@ -231,6 +307,7 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
     if ([_page isEqualToString:@"spotify"]) { _sections = [self spotifySections]; return; }
     if ([_page isEqualToString:@"discord"]) { _sections = [self discordSections]; return; }
     if ([_page isEqualToString:@"wnp"]) { _sections = [self wnpSections]; return; }
+    if ([_page isEqualToString:@"scrobble"]) { _sections = [self scrobbleSections]; return; }
     if ([_page isEqualToString:@"extras"]) { _sections = [self extrasSections]; return; }
     if ([_page isEqualToString:@"accent"]) { _sections = [self colorSectionsForKey:IVLKeyAccentColor includeDefault:IVLLoc(@"color_default")]; return; }
     if ([_page isEqualToString:@"bgcolor"]) { _sections = [self colorSectionsForKey:IVLKeyBackgroundColor includeDefault:IVLLoc(@"color_default")]; return; }
@@ -414,12 +491,15 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
             f.autocorrectionType = UITextAutocorrectionTypeNo;
             f.autocapitalizationType = UITextAutocapitalizationTypeNone;
             f.clearButtonMode = UITextFieldViewModeWhileEditing;
-            id v = [IVLSettings objectForKey:row.key];
+            f.secureTextEntry = row.secure;
+            id v = row.key.length ? [IVLSettings objectForKey:row.key] : nil;
             f.text = [v isKindOfClass:[NSNumber class]] ? [v stringValue] : ([v length] ? v : nil);
             NSString *key = row.key;
             BOOL numeric = row.keyboard == UIKeyboardTypeNumberPad;
+            void (^onText)(NSString *) = row.onText;
             [f addAction:[UIAction actionWithHandler:^(UIAction *a) {
                 NSString *t = [((UITextField *)a.sender).text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet] ?: @"";
+                if (onText) { onText(t); return; }
                 if ([t hasPrefix:@"#"]) t = [t substringFromIndex:1];
                 [IVLSettings setObject:(numeric ? @(t.integerValue ?: 8974) : t) forKey:key];
             }] forControlEvents:UIControlEventEditingDidEnd];

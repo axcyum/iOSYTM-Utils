@@ -19,6 +19,7 @@
 #import "IVLRemoteControl.h"
 #import "IVLWebNowPlaying.h"
 #import "IVLExtras.h"
+#import "IVLScrobbler.h"
 
 static const void *kIVLButtonKey = &kIVLButtonKey;
 
@@ -156,6 +157,7 @@ static UIImage *IVLMenuIcon(void) {
             [IVLWebNowPlaying shared];
             [[IVLStats shared] start];
             [IVLSleepTimer shared];
+            [[IVLScrobbler shared] start];
         });
         if (objc_getClass("YTPlayerViewController")) %init(Player);
         if (objc_getClass("YTMNowPlayingViewController")) %init(NowPlaying);

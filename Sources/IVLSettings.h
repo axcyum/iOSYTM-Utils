@@ -42,6 +42,11 @@ extern NSString *const IVLKeyWNPControl;         // BOOL  accept play/pause/skip
 extern NSString *const IVLKeyStatsEnabled;       // BOOL  on-device listening statistics
 extern NSString *const IVLKeyAccentColor;        // NSString hex, "" = white
 extern NSString *const IVLKeyBackgroundColor;    // NSString hex for the solid background
+extern NSString *const IVLKeyLastfmEnabled;      // BOOL
+extern NSString *const IVLKeyLastfmKey;          // NSString API key (the shared secret lives in the keychain)
+extern NSString *const IVLKeyLastfmUser;         // NSString user name after login
+extern NSString *const IVLKeyListenBrainzEnabled;// BOOL
+extern NSString *const IVLKeyOpenPlayer;         // BOOL  lyrics screen opens on the player page
 extern NSString *const IVLKeyCaptionLang;        // NSString, "" = automatic (song language)
 
 @interface IVLSettings : NSObject

@@ -5,6 +5,8 @@
 #import "IVLLocalization.h"
 #import "IVLSearchViewController.h"
 #import "IVLExtras.h"
+#import "IVLPlayerPanel.h"
+#import "IVLRecognizer.h"
 #import "IVLProviderPickerViewController.h"
 #import "IVLSettingsViewController.h"
 
@@ -116,6 +118,8 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     BOOL _prevIdleDisabled;
     CGFloat _pinchBase;
     CAGradientLayer *_gradient;
+    IVLPlayerPanel *_panel;
+    BOOL _showPlayer;
     __weak IVLLyrics *_shownLyrics;
 }
 
@@ -144,6 +148,7 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     [self buildTable];
     [self buildStateView];
     [self buildOverlays];
+    [self buildPlayerPanel];
 
     NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
     [nc addObserver:self selector:@selector(trackChanged) name:IVLTrackDidChangeNotification object:nil];
@@ -321,6 +326,8 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     [_header addGestureRecognizer:pan];
     UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(followNow)];
     [texts addGestureRecognizer:tap];
+    _artwork.userInteractionEnabled = YES;
+    [_artwork addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(toggleShowPlayer)]];
 }
 
 - (void)buildToolbar {
@@ -390,6 +397,48 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
 
     UIPinchGestureRecognizer *pinch = [[UIPinchGestureRecognizer alloc] initWithTarget:self action:@selector(pinch:)];
     [_table addGestureRecognizer:pinch];
+}
+
+- (void)buildPlayerPanel {
+    _panel = [IVLPlayerPanel new];
+    _panel.translatesAutoresizingMaskIntoConstraints = NO;
+    _panel.alpha = 0;
+    _panel.hidden = YES;
+    __weak typeof(self) ws = self;
+    _panel.onShowLyrics = ^{ [ws setShowPlayer:NO animated:YES]; };
+    [self.view insertSubview:_panel belowSubview:_header];
+    [NSLayoutConstraint activateConstraints:@[
+        [_panel.topAnchor constraintEqualToAnchor:_header.bottomAnchor],
+        [_panel.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [_panel.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [_panel.bottomAnchor constraintEqualToAnchor:_toolbar.topAnchor constant:-4],
+    ]];
+    if ([IVLSettings boolForKey:IVLKeyOpenPlayer]) [self setShowPlayer:YES animated:NO];
+}
+
+/// Switch between the lyrics list and the Apple Music-style player page (tap the header artwork).
+- (void)setShowPlayer:(BOOL)show animated:(BOOL)animated {
+    _showPlayer = show;
+    [_panel setArtwork:_artwork.image];
+    if (show) { _panel.hidden = NO; [_panel refresh]; }
+    void (^changes)(void) = ^{
+        self->_panel.alpha = show ? 1 : 0;
+        self->_tableHost.alpha = show ? 0 : 1;
+        self->_stateView.alpha = show ? 0 : 1;
+        self->_followPill.alpha = 0;
+    };
+    void (^done)(BOOL) = ^(BOOL f) { if (!self->_showPlayer) self->_panel.hidden = YES; };
+    if (animated) [UIView animateWithDuration:0.3 animations:changes completion:done];
+    else { changes(); done(YES); }
+    [self refreshMoreMenu];
+}
+
+- (void)toggleShowPlayer { [self setShowPlayer:!_showPlayer animated:YES]; }
+
+- (void)openRecognizer {
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:[IVLRecognizerViewController new]];
+    nav.modalPresentationStyle = UIModalPresentationPageSheet;
+    [self presentViewController:nav animated:YES completion:nil];
 }
 
 - (void)buildStateView {
@@ -512,12 +561,14 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     _artistLabel.text = t.artist;
     _artwork.image = t.artworkImage;
     _bgImage.image = t.artworkImage;
+    [_panel setArtwork:t.artworkImage];
     NSString *url = t.artworkURL;
     IVLLoadImage(url, ^(UIImage *img) {
         if (!img || ![[IVLPlaybackManager shared].track.artworkURL isEqualToString:url]) return;
         [UIView transitionWithView:self.view duration:0.4 options:UIViewAnimationOptionTransitionCrossDissolve | UIViewAnimationOptionAllowUserInteraction animations:^{
             self->_artwork.image = img;
             self->_bgImage.image = img;
+            [self->_panel setArtwork:img];
         } completion:nil];
         if ([IVLTheme style] == 2) [self applyBackgroundStyle];
     });
@@ -541,6 +592,8 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     BOOL hasLines = lines.count > 0;
     _table.hidden = !hasLines;
     _stateView.hidden = hasLines;
+    _tableHost.alpha = _showPlayer ? 0 : 1;
+    _stateView.alpha = _showPlayer ? 0 : 1;
     if (!hasLines) {
         IVLLyricsState s = m.track ? m.state : IVLLyricsStateIdle;
         BOOL loading = s == IVLLyricsStateLoading;
@@ -675,6 +728,8 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
             [ws showToast:IVLLoc(@"copied")];
         }]];
     }
+    [items addObject:[UIAction actionWithTitle:(_showPlayer ? IVLLoc(@"show_lyrics") : IVLLoc(@"show_player")) image:[UIImage systemImageNamed:_showPlayer ? @"quote.bubble" : @"play.square"] identifier:nil handler:^(UIAction *a) { [ws toggleShowPlayer]; }]];
+    [items addObject:[UIAction actionWithTitle:IVLLoc(@"recognize") image:[UIImage systemImageNamed:@"shazam.logo"] identifier:nil handler:^(UIAction *a) { [ws openRecognizer]; }]];
     NSString *sleep = [IVLSleepTimer shared].active ? [NSString stringWithFormat:@"%@（%@）", IVLLoc(@"sleep_timer"), [[IVLSleepTimer shared] statusText]] : IVLLoc(@"sleep_timer");
     [items addObject:[UIAction actionWithTitle:sleep image:[UIImage systemImageNamed:@"moon.zzz"] identifier:nil handler:^(UIAction *a) { [ws openSleepTimer]; }]];
     [items addObject:[UIAction actionWithTitle:IVLLoc(@"settings") image:[UIImage systemImageNamed:@"gearshape"] identifier:nil handler:^(UIAction *a) { [ws openSettings]; }]];
@@ -700,6 +755,7 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
 }
 
 - (void)tick {
+    if (_showPlayer) [_panel refresh];
     if (!_synced || !_lines.count || _table.hidden) return;
     NSInteger t = [[IVLPlaybackManager shared] currentTimeMs];
     NSInteger idx = [self indexForTime:t];
