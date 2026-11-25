@@ -86,4 +86,13 @@ static const void *kIVLHandlersKey = &kIVLHandlersKey;
 + (BOOL)next { return [self invoke:[self center].nextTrackCommand]; }
 + (BOOL)previous { return [self invoke:[self center].previousTrackCommand]; }
 
++ (BOOL)canLike {
+    MPFeedbackCommand *c = [self center].likeCommand;
+    NSArray *entries;
+    @synchronized (c) { entries = [[self entriesFor:c] copy]; }
+    return c.enabled && entries.count > 0;
+}
+
++ (BOOL)like { return [self invoke:[self center].likeCommand]; }
+
 @end

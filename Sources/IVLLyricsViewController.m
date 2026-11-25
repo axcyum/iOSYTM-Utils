@@ -406,12 +406,16 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     _panel.hidden = YES;
     __weak typeof(self) ws = self;
     _panel.onShowLyrics = ^{ [ws setShowPlayer:NO animated:YES]; };
-    [self.view insertSubview:_panel belowSubview:_header];
+    _panel.onClose = ^{ [ws dismissViewControllerAnimated:NO completion:nil]; };
+    // the queue lives in YouTube Music's own player: hand the screen back to it
+    _panel.onQueue = ^{ [ws close]; };
+    // a full-screen sheet of its own, above the lyrics header and toolbar
+    [self.view addSubview:_panel];
     [NSLayoutConstraint activateConstraints:@[
-        [_panel.topAnchor constraintEqualToAnchor:_header.bottomAnchor],
+        [_panel.topAnchor constraintEqualToAnchor:self.view.topAnchor],
         [_panel.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
         [_panel.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
-        [_panel.bottomAnchor constraintEqualToAnchor:_toolbar.topAnchor constant:-4],
+        [_panel.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
     ]];
     if ([IVLSettings boolForKey:IVLKeyOpenPlayer]) [self setShowPlayer:YES animated:NO];
 }
@@ -421,10 +425,9 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     _showPlayer = show;
     [_panel setArtwork:_artwork.image];
     if (show) { _panel.hidden = NO; [_panel refresh]; }
+    if (show) [self.view bringSubviewToFront:_panel];
     void (^changes)(void) = ^{
         self->_panel.alpha = show ? 1 : 0;
-        self->_tableHost.alpha = show ? 0 : 1;
-        self->_stateView.alpha = show ? 0 : 1;
         self->_followPill.alpha = 0;
     };
     void (^done)(BOOL) = ^(BOOL f) { if (!self->_showPlayer) self->_panel.hidden = YES; };
@@ -592,8 +595,7 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     BOOL hasLines = lines.count > 0;
     _table.hidden = !hasLines;
     _stateView.hidden = hasLines;
-    _tableHost.alpha = _showPlayer ? 0 : 1;
-    _stateView.alpha = _showPlayer ? 0 : 1;
+
     if (!hasLines) {
         IVLLyricsState s = m.track ? m.state : IVLLyricsStateIdle;
         BOOL loading = s == IVLLyricsStateLoading;
@@ -741,6 +743,7 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
         [items addObject:[UIMenu menuWithTitle:@"" image:nil identifier:nil options:UIMenuOptionsDisplayInline children:@[src]]];
     }
     _moreButton.menu = [UIMenu menuWithTitle:@"" children:items];
+    _panel.moreMenu = _moreButton.menu;
 }
 
 #pragma mark Sync loop

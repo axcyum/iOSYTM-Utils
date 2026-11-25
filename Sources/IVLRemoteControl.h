@@ -15,6 +15,9 @@ NS_ASSUME_NONNULL_BEGIN
 + (BOOL)next;
 + (BOOL)previous;
 + (BOOL)isPlaying;
+/// The app's "like" (thumbs up) command, when it registered one for the lock screen.
++ (BOOL)canLike;
++ (BOOL)like;
 @end
 
 NS_ASSUME_NONNULL_END
