@@ -65,7 +65,7 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
                : [_page isEqualToString:@"discord"] ? @"Discord Rich Presence" : [_page isEqualToString:@"wnp"] ? @"WebNowPlaying"
                : [_page isEqualToString:@"extras"] ? IVLLoc(@"sec_extras") : [_page isEqualToString:@"accent"] ? IVLLoc(@"accent_color")
                : [_page isEqualToString:@"bgcolor"] ? IVLLoc(@"bg_color") : @"ivLyrics";
-    self.tableView.keyboardDismissMode = UITableViewKeyboardDismissModeOnDrag;
+    self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
     if (!_page) self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(done)];
     [self buildSections];
     NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
