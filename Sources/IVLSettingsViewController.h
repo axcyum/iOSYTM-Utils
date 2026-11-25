@@ -12,6 +12,8 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 @interface IVLLanguagePickerViewController : UITableViewController
+/// Default: translation target. Pass IVLKeyCaptionLang for the subtitle language (adds "Automatic").
+@property (nonatomic, copy) NSString *settingsKey;
 + (NSArray<NSArray<NSString *> *> *)languages;   // @[code, native name]
 + (NSString *)nameForCode:(NSString *)code;
 @end

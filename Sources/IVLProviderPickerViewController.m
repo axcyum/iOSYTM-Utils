@@ -4,6 +4,13 @@
 #import "IVLPlaybackManager.h"
 #import "IVLSettings.h"
 #import "IVLLocalization.h"
+#import "IVLLyricsService+Private.h"
+#import "IVLSettingsViewController.h"
+
+/// All subtitle tracks of the video; picking one pins it to this song.
+@interface IVLCaptionTrackListViewController : UITableViewController
+@property (nonatomic, strong) IVLTrack *track;
+@end
 
 typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLProbeEmpty, IVLProbeFailed };
 
@@ -135,6 +142,10 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
         c.detailTextLabel.text = [NSString stringWithFormat:@"%@ (%@)", c.detailTextLabel.text ?: @"", IVLLoc(@"disabled_in_settings")];
     }
     c.selectionStyle = st == IVLProbeFound ? UITableViewCellSelectionStyleDefault : UITableViewCellSelectionStyleNone;
+    if ([pid isEqualToString:@"captions"] && st != IVLProbeLoading) {
+        c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;   // choose the subtitle language for this song
+        c.selectionStyle = UITableViewCellSelectionStyleDefault;
+    }
     return c;
 }
 
@@ -149,11 +160,103 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
         [self.navigationController pushViewController:[IVLSearchViewController new] animated:YES];
         return;
     }
+    if ([_ids[indexPath.row] isEqualToString:@"captions"]) {
+        IVLCaptionTrackListViewController *list = [IVLCaptionTrackListViewController new];
+        list.track = _track;
+        [self.navigationController pushViewController:list animated:YES];
+        return;
+    }
     IVLLyrics *ly = _results[_ids[indexPath.row]];
     if (!ly) return;
     [[IVLPlaybackManager shared] useManualLyrics:ly];
     [[UINotificationFeedbackGenerator new] notificationOccurred:UINotificationFeedbackTypeSuccess];
     [self close];
+}
+
+@end
+
+@implementation IVLCaptionTrackListViewController {
+    NSArray<NSDictionary *> *_tracks;
+    NSString *_label, *_failure;
+    BOOL _loading;
+    NSInteger _busyRow;
+}
+
+- (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = IVLLoc(@"caption_tracks");
+    _loading = YES;
+    _busyRow = -1;
+    UIBarButtonItem *lang = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"globe"] style:UIBarButtonItemStylePlain target:self action:@selector(openDefault)];
+    self.navigationItem.rightBarButtonItem = lang;
+    [[IVLLyricsService shared] captionTrackListForTrack:self.track completion:^(NSArray *tracks, NSString *label, NSString *failure) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSMutableArray *manual = [NSMutableArray array];
+            for (NSDictionary *t in tracks) if (![t[@"asr"] boolValue]) [manual addObject:t];
+            self->_tracks = manual;
+            self->_label = label ?: @"字幕";
+            self->_failure = failure;
+            self->_loading = NO;
+            [self.tableView reloadData];
+        });
+    }];
+}
+
+- (void)openDefault {
+    IVLLanguagePickerViewController *p = [IVLLanguagePickerViewController new];
+    p.settingsKey = IVLKeyCaptionLang;
+    [self.navigationController pushViewController:p animated:YES];
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return _loading ? 1 : MAX(1, (NSInteger)_tracks.count); }
+
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section { return IVLLoc(@"footer_caption_tracks"); }
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
+    c.detailTextLabel.textColor = UIColor.secondaryLabelColor;
+    if (_loading || !_tracks.count) {
+        c.textLabel.text = _loading ? IVLLoc(@"loading") : (_failure ?: IVLLoc(@"not_found"));
+        c.textLabel.numberOfLines = 0;
+        c.selectionStyle = UITableViewCellSelectionStyleNone;
+        return c;
+    }
+    NSDictionary *t = _tracks[indexPath.row];
+    c.textLabel.text = [t[@"name"] length] ? t[@"name"] : t[@"lang"];
+    c.detailTextLabel.text = t[@"lang"];
+    NSDictionary *autoPick = IVLPickCaptionTrack(_tracks, self.track);
+    if ([autoPick[@"url"] isEqual:t[@"url"]]) c.detailTextLabel.text = [NSString stringWithFormat:@"%@ · %@", t[@"lang"], IVLLoc(@"caption_auto_pick")];
+    if (indexPath.row == _busyRow) {
+        UIActivityIndicatorView *sp = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
+        [sp startAnimating];
+        c.accessoryView = sp;
+    }
+    return c;
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (_loading || indexPath.row >= (NSInteger)_tracks.count || _busyRow >= 0) return;
+    _busyRow = indexPath.row;
+    [tableView reloadData];
+    NSDictionary *t = _tracks[indexPath.row];
+    [[IVLLyricsService shared] fetchCaptionTrack:t durationMs:(NSInteger)(self.track.duration * 1000) label:_label completion:^(IVLLyrics *ly, NSError *err) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self->_busyRow = -1;
+            [self.tableView reloadData];
+            if (!ly) {
+                UIAlertController *a = [UIAlertController alertControllerWithTitle:IVLLoc(@"not_found") message:err.localizedDescription preferredStyle:UIAlertControllerStyleAlert];
+                [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
+                [self presentViewController:a animated:YES completion:nil];
+                return;
+            }
+            [[IVLPlaybackManager shared] useManualLyrics:ly];
+            [[UINotificationFeedbackGenerator new] notificationOccurred:UINotificationFeedbackTypeSuccess];
+            [self dismissViewControllerAnimated:YES completion:nil];
+        });
+    }];
 }
 
 @end

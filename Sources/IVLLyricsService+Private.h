@@ -17,12 +17,17 @@ NS_ASSUME_NONNULL_BEGIN
 /// Subtitles of the (music) video used as lyrics
 @interface IVLLyricsService (Captions)
 - (void)captionsForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)done;
+/// All caption tracks [{url, lang, name, asr}] that could be used, plus a label ("字幕"/"動画字幕") or a failure note.
+- (void)captionTrackListForTrack:(IVLTrack *)track completion:(void (^)(NSArray<NSDictionary *> *tracks, NSString *_Nullable label, NSString *_Nullable failure))completion;
+- (void)fetchCaptionTrack:(NSDictionary *)captionTrack durationMs:(NSInteger)durMs label:(NSString *)label completion:(IVLLyricsCompletion)done;
 @end
 
 /// YouTube Music's own lyrics tab (InnerTube)
 @interface IVLLyricsService (YouTube)
 - (void)youtubeForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)done;
 @end
+
+FOUNDATION_EXPORT NSDictionary *_Nullable IVLPickCaptionTrack(NSArray<NSDictionary *> *tracks, IVLTrack *track);
 
 /// Best match among @{ id, title, artist, duration(seconds) } candidates (nil when nothing is convincing).
 FOUNDATION_EXPORT NSDictionary *_Nullable IVLBestCandidate(NSArray<NSDictionary *> *candidates, IVLTrack *track);

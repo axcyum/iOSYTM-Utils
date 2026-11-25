@@ -7,6 +7,7 @@
 #import "IVLLyricsService+Private.h"
 #import "IVLLyricsParser.h"
 #import "IVLPlaybackManager.h"
+#import "IVLSettings.h"
 #import <objc/message.h>
 #import <objc/runtime.h>
 #include <string.h>
@@ -73,14 +74,44 @@ static NSArray<NSDictionary *> *IVLCaptionTracksFromJSON(NSDictionary *player) {
     return out;
 }
 
-/// Manual subtitles only (auto-generated ones are useless for songs); prefer the lyrics' language.
-static NSDictionary *IVLPickCaptionTrack(NSArray<NSDictionary *> *tracks) {
+/// Language the song is most likely sung in, from the title/artist script.
+static NSString *IVLGuessSongLanguage(IVLTrack *track) {
+    NSString *s = [NSString stringWithFormat:@"%@ %@", track.title ?: @"", track.artist ?: @""];
+    if ([s rangeOfString:@"[\\u3040-\\u30ff]" options:NSRegularExpressionSearch].location != NSNotFound) return @"ja";
+    if ([s rangeOfString:@"[\\uac00-\\ud7af]" options:NSRegularExpressionSearch].location != NSNotFound) return @"ko";
+    if ([s rangeOfString:@"[\\u4e00-\\u9fff]" options:NSRegularExpressionSearch].location != NSNotFound) return @"ja";   // kanji-only titles are mostly Japanese here
+    return nil;
+}
+
+static BOOL IVLLangMatches(NSString *trackLang, NSString *want) {
+    if (!want.length || !trackLang.length) return NO;
+    NSString *a = trackLang.lowercaseString, *b = want.lowercaseString;
+    if ([a isEqualToString:b]) return YES;
+    // "zh-Hant"/"zh-TW", "zh-Hans"/"zh-CN": only match the same script family
+    if ([b hasPrefix:@"zh"]) {
+        BOOL wantT = [b containsString:@"tw"] || [b containsString:@"hant"] || [b containsString:@"hk"];
+        BOOL isT = [a containsString:@"tw"] || [a containsString:@"hant"] || [a containsString:@"hk"];
+        return [a hasPrefix:@"zh"] && wantT == isT;
+    }
+    return [[a componentsSeparatedByString:@"-"].firstObject isEqualToString:[b componentsSeparatedByString:@"-"].firstObject];
+}
+
+/// Manual subtitles only (auto-generated ones are useless for songs).
+/// Order: language chosen in settings > language of the song > device language > first manual track.
+NSDictionary *IVLPickCaptionTrack(NSArray<NSDictionary *> *tracks, IVLTrack *track) {
     NSMutableArray *manual = [NSMutableArray array];
     for (NSDictionary *t in tracks) if (![t[@"asr"] boolValue]) [manual addObject:t];
     if (!manual.count) return nil;
-    NSString *ui = [[NSLocale preferredLanguages].firstObject componentsSeparatedByString:@"-"].firstObject ?: @"";
-    // Original-language tracks usually come first; a track in the UI language is a translation, so keep it last.
-    for (NSDictionary *t in manual) if (![t[@"lang"] hasPrefix:ui]) return t;
+    NSString *pref = [IVLSettings objectForKey:IVLKeyCaptionLang];
+    NSString *ui = [[NSLocale preferredLanguages].firstObject componentsSeparatedByString:@"-"].firstObject;
+    NSMutableArray *order = [NSMutableArray array];
+    if ([pref isKindOfClass:[NSString class]] && pref.length) [order addObject:pref];
+    NSString *song = IVLGuessSongLanguage(track);
+    if (song) [order addObject:song];
+    if (ui) [order addObject:ui];
+    for (NSString *want in order) {
+        for (NSDictionary *t in manual) if (IVLLangMatches(t[@"lang"], want)) return t;
+    }
     return manual.firstObject;
 }
 
@@ -125,8 +156,9 @@ static NSError *IVLCapError(NSString *message) {
     return [NSError errorWithDomain:@"IVLCaptions" code:404 userInfo:@{ NSLocalizedDescriptionKey: message }];
 }
 
-- (void)captionsForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)done {
-    NSInteger durMs = (NSInteger)(track.duration * 1000);
+/// Finds the caption tracks to use for `track`: the playing video (app, then player API),
+/// then the music video version of an audio-only song (same length only).
+- (void)captionTrackListForTrack:(IVLTrack *)track completion:(void (^)(NSArray<NSDictionary *> *tracks, NSString *label, NSString *failure))completion {
     __block NSArray *inApp = nil;
     __block NSString *playing = nil;
     void (^readApp)(void) = ^{
@@ -137,33 +169,36 @@ static NSError *IVLCapError(NSString *message) {
     if (NSThread.isMainThread) readApp(); else dispatch_sync(dispatch_get_main_queue(), readApp);
     NSString *vid = playing ?: track.youtubeVideoID;
 
-    NSDictionary *pick = IVLPickCaptionTrack(inApp ?: @[]);
-    if (pick) { [self fetchCaptionTrack:pick durationMs:durMs label:@"字幕" completion:done]; return; }
-    if (!vid.length) { done(nil, IVLCapError(@"再生中の動画を特定できません")); return; }
-
+    if (IVLPickCaptionTrack(inApp ?: @[], track)) { completion(inApp, @"字幕", nil); return; }
+    if (!vid.length) { completion(@[], nil, @"再生中の動画を特定できません"); return; }
     NSString *appNote = [NSString stringWithFormat:@"アプリ内 %lu件", (unsigned long)inApp.count];
-    // 1. caption list of the playing video straight from the player API
     [self innerTubePlayer:vid completion:^(NSDictionary *player) {
         NSArray *tracks = IVLCaptionTracksFromJSON(player ?: @{});
-        NSDictionary *t = IVLPickCaptionTrack(tracks);
-        if (t) { [self fetchCaptionTrack:t durationMs:durMs label:@"字幕" completion:done]; return; }
+        if (IVLPickCaptionTrack(tracks, track)) { completion(tracks, @"字幕", nil); return; }
         NSString *status = [player[@"playabilityStatus"][@"status"] description] ?: (player ? @"?" : @"通信失敗");
         NSString *apiNote = [NSString stringWithFormat:@"API %@ %lu件", status, (unsigned long)tracks.count];
-
-        // 2. audio-only song: the music video version
         [self musicVideoCounterpartFor:vid completion:^(NSString *mv) {
-            if (!mv.length) { done(nil, IVLCapError([NSString stringWithFormat:@"字幕なし（%@ / %@ / 動画版なし）", appNote, apiNote])); return; }
+            if (!mv.length) { completion(@[], nil, [NSString stringWithFormat:@"字幕なし（%@ / %@ / 動画版なし）", appNote, apiNote]); return; }
             [self innerTubePlayer:mv completion:^(NSDictionary *mp) {
                 double len = [mp[@"videoDetails"][@"lengthSeconds"] doubleValue];
                 if (track.duration > 0 && len > 0 && fabs(len - track.duration) > 2.0) {
-                    done(nil, IVLCapError([NSString stringWithFormat:@"動画版の長さが曲と違うため使えません（%.0f秒 / %.0f秒）", len, track.duration]));
+                    completion(@[], nil, [NSString stringWithFormat:@"動画版の長さが曲と違うため使えません（%.0f秒 / %.0f秒）", len, track.duration]);
                     return;
                 }
-                NSDictionary *mt = IVLPickCaptionTrack(IVLCaptionTracksFromJSON(mp ?: @{}));
-                if (!mt) { done(nil, IVLCapError([NSString stringWithFormat:@"字幕なし（%@ / %@ / 動画版にも字幕なし）", appNote, apiNote])); return; }
-                [self fetchCaptionTrack:mt durationMs:durMs label:@"動画字幕" completion:done];
+                NSArray *mt = IVLCaptionTracksFromJSON(mp ?: @{});
+                if (!IVLPickCaptionTrack(mt, track)) { completion(@[], nil, [NSString stringWithFormat:@"字幕なし（%@ / %@ / 動画版にも字幕なし）", appNote, apiNote]); return; }
+                completion(mt, @"動画字幕", nil);
             }];
         }];
+    }];
+}
+
+- (void)captionsForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)done {
+    NSInteger durMs = (NSInteger)(track.duration * 1000);
+    [self captionTrackListForTrack:track completion:^(NSArray *tracks, NSString *label, NSString *failure) {
+        NSDictionary *pick = IVLPickCaptionTrack(tracks, track);
+        if (!pick) { done(nil, IVLCapError(failure ?: @"字幕なし")); return; }
+        [self fetchCaptionTrack:pick durationMs:durMs label:label completion:done];
     }];
 }
 

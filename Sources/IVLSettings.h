@@ -35,6 +35,7 @@ extern NSString *const IVLKeyLockTranslation;    // BOOL  pronunciation / transl
 extern NSString *const IVLKeyLockLead;           // NSInteger ms shown early (lock screen latency)
 extern NSString *const IVLKeyProviderSpotify;    // BOOL
 extern NSString *const IVLKeyProviderCaptions;   // BOOL
+extern NSString *const IVLKeyCaptionLang;        // NSString, "" = automatic (song language)
 
 @interface IVLSettings : NSObject
 + (id _Nullable)objectForKey:(NSString *)key;

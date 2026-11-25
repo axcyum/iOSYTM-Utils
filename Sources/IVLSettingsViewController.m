@@ -192,6 +192,17 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
     };
     sources.action = ^(UIViewController *vc) { [vc.navigationController pushViewController:[IVLProvidersViewController new] animated:YES]; };
 
+    IVLRow *captionLang = [IVLRow type:IVLRowLink key:IVLKeyCaptionLang title:IVLLoc(@"caption_lang")];
+    captionLang.detail = ^NSString *{
+        NSString *c = [IVLSettings objectForKey:IVLKeyCaptionLang];
+        return [c length] ? [IVLLanguagePickerViewController nameForCode:c] : IVLLoc(@"caption_auto");
+    };
+    captionLang.action = ^(UIViewController *vc) {
+        IVLLanguagePickerViewController *picker = [IVLLanguagePickerViewController new];
+        picker.settingsKey = IVLKeyCaptionLang;
+        [vc.navigationController pushViewController:picker animated:YES];
+    };
+
     IVLRow *offset = [IVLRow type:IVLRowStepper key:IVLKeyGlobalOffset title:IVLLoc(@"global_offset")];
     offset.min = -3000; offset.max = 3000; offset.step = 50;
     offset.format = ^NSString *(double v) { return [NSString stringWithFormat:@"%+.2fs", v / 1000.0]; };
@@ -232,7 +243,7 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
             lang,
             seg(IVLKeyPronunciation, IVLLoc(@"pronunciation"), @[IVLLoc(@"off"), IVLLoc(@"romaji"), IVLLoc(@"kana")]),
         ]],
-        [IVLSection title:IVLLoc(@"sec_sources") footer:IVLLoc(@"footer_sources") rows:@[sources]],
+        [IVLSection title:IVLLoc(@"sec_sources") footer:IVLLoc(@"footer_sources") rows:@[sources, captionLang]],
         [IVLSection title:IVLLoc(@"sec_sync") footer:IVLLoc(@"footer_sync") rows:@[offset, resume]],
         [IVLSection title:IVLLoc(@"sec_data") footer:nil rows:@[clear]],
         [IVLSection title:IVLLoc(@"sec_about") footer:IVLLoc(@"footer_about") rows:@[version]],
@@ -407,11 +418,16 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
     return code ?: @"";
 }
 
-- (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
+- (instancetype)init {
+    if ((self = [super initWithStyle:UITableViewStyleInsetGrouped])) _settingsKey = IVLKeyTranslationLang;
+    return self;
+}
+
+- (BOOL)isCaption { return [_settingsKey isEqualToString:IVLKeyCaptionLang]; }
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = IVLLoc(@"translation_lang");
+    self.title = [self isCaption] ? IVLLoc(@"caption_lang") : IVLLoc(@"translation_lang");
     if (self.navigationController.viewControllers.firstObject == self) {
         self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(done)];
     }
@@ -419,20 +435,30 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
 
 - (void)done { [self dismissViewControllerAnimated:YES completion:nil]; }
 
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return [IVLLanguagePickerViewController languages].count; }
+- (NSArray<NSArray<NSString *> *> *)rows {
+    NSArray *langs = [IVLLanguagePickerViewController languages];
+    return [self isCaption] ? [@[@[@"", IVLLoc(@"caption_auto")]] arrayByAddingObjectsFromArray:langs] : langs;
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return [self rows].count; }
+
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
+    return [self isCaption] ? IVLLoc(@"footer_caption_lang") : nil;
+}
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *c = [tableView dequeueReusableCellWithIdentifier:@"l"] ?: [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:@"l"];
-    NSArray *l = [IVLLanguagePickerViewController languages][indexPath.row];
+    NSArray *l = [self rows][indexPath.row];
     c.textLabel.text = l[1];
     c.detailTextLabel.text = l[0];
-    c.accessoryType = [l[0] isEqualToString:[IVLSettings objectForKey:IVLKeyTranslationLang]] ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
+    NSString *cur = [IVLSettings objectForKey:_settingsKey] ?: @"";
+    c.accessoryType = [l[0] isEqualToString:cur] ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
     return c;
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
-    NSArray *l = [IVLLanguagePickerViewController languages][indexPath.row];
-    [IVLSettings setObject:l[0] forKey:IVLKeyTranslationLang];
+    NSArray *l = [self rows][indexPath.row];
+    [IVLSettings setObject:l[0] forKey:_settingsKey];
     [tableView reloadData];
     if (self.navigationController.viewControllers.firstObject == self) [self done];
     else [self.navigationController popViewControllerAnimated:YES];

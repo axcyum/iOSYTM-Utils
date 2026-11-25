@@ -2,6 +2,12 @@
 
 static NSDictionary<NSString *, NSString *> *IVLStringsJA(void) {
     return @{
+        @"caption_lang": @"字幕の言語",
+        @"caption_auto": @"自動（曲の言語）",
+        @"caption_tracks": @"字幕を選択",
+        @"caption_auto_pick": @"自動で選ばれる字幕",
+        @"footer_caption_lang": @"「自動」では、曲名やアーティスト名の文字から曲の言語を推定して、その言語の字幕を選びます。見つからなければ端末の言語、それもなければ最初の字幕を使います。",
+        @"footer_caption_tracks": @"タップした字幕をこの曲の歌詞として固定します。右上の地球儀から、全曲で使う字幕の言語を変更できます。自動生成字幕は表示しません。",
         @"src_captions": @"行同期。再生中の動画（曲のときは動画版）に付いている字幕。自動生成字幕は使いません",
         @"sec_integrations": @"連携と拡張",
         @"sec_lock": @"ロック画面の歌詞",
@@ -129,6 +135,12 @@ static NSDictionary<NSString *, NSString *> *IVLStringsJA(void) {
 
 static NSDictionary<NSString *, NSString *> *IVLStringsEN(void) {
     return @{
+        @"caption_lang": @"Subtitle language",
+        @"caption_auto": @"Automatic (song language)",
+        @"caption_tracks": @"Choose Subtitles",
+        @"caption_auto_pick": @"automatic choice",
+        @"footer_caption_lang": @"Automatic guesses the song language from the title and artist and picks subtitles in that language, then the device language, then the first track.",
+        @"footer_caption_tracks": @"The subtitles you tap are pinned to this song as its lyrics. Use the globe to change the language used for all songs. Auto-generated subtitles are not listed.",
         @"src_captions": @"Line sync. Subtitles of the playing video (the music video when a song plays). Auto-generated captions are ignored",
         @"sec_integrations": @"Integrations",
         @"sec_lock": @"Lock Screen Lyrics",

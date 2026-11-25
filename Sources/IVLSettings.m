@@ -32,6 +32,7 @@ NSString *const IVLKeyLockTranslation = @"lockTranslation";
 NSString *const IVLKeyLockLead = @"lockLead";
 NSString *const IVLKeyProviderSpotify = @"providerSpotify";
 NSString *const IVLKeyProviderCaptions = @"providerCaptions";
+NSString *const IVLKeyCaptionLang = @"captionLang";
 
 static NSString *const kDomain = @"ivLyricsYTM";
 
@@ -79,6 +80,7 @@ static NSString *IVLLocCaptionsName(void) {
             IVLKeyLockLead: @250,
             IVLKeyProviderSpotify: @YES,
             IVLKeyProviderCaptions: @YES,
+            IVLKeyCaptionLang: @"",
         };
     });
     return d;

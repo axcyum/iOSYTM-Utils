@@ -54,7 +54,8 @@ NSNotificationName const IVLLyricsDidChangeNotification = @"IVLLyricsDidChangeNo
         [self refreshExtras];
     } else if ([key isEqualToString:IVLKeyProviderUnison] || [key isEqualToString:IVLKeyProviderLRCLIB] || [key isEqualToString:IVLKeyProviderOrder]
                || [key isEqualToString:IVLKeyProviderLyricsPlus] || [key isEqualToString:IVLKeyProviderYouTube]
-               || [key isEqualToString:IVLKeyProviderSpotify] || [key isEqualToString:IVLKeyProviderCaptions] || [key isEqualToString:IVLKeyProviderLyrically]) {
+               || [key isEqualToString:IVLKeyProviderSpotify] || [key isEqualToString:IVLKeyProviderCaptions]
+               || [key isEqualToString:IVLKeyCaptionLang] || [key isEqualToString:IVLKeyProviderLyrically]) {
         if (self.state == IVLLyricsStateNotFound || self.state == IVLLyricsStateError) [self reloadLyrics];
     }
 }
