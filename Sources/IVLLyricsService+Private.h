@@ -14,6 +14,11 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)lyricallyForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)done;
 @end
 
+/// Subtitles of the (music) video used as lyrics
+@interface IVLLyricsService (Captions)
+- (void)captionsForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)done;
+@end
+
 /// YouTube Music's own lyrics tab (InnerTube)
 @interface IVLLyricsService (YouTube)
 - (void)youtubeForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)done;

@@ -49,4 +49,9 @@ typedef NS_ENUM(NSInteger, IVLLyricsState) {
 - (nullable NSString *)currentLineText;
 @end
 
+@interface IVLPlaybackManager (Captions)
+/// Caption tracks of the video loaded in the player: [{url, lang, name, asr}] (main thread).
+- (NSArray<NSDictionary *> *)currentCaptionTracks;
+@end
+
 NS_ASSUME_NONNULL_END

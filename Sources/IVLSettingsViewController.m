@@ -345,6 +345,7 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
 }
 
 + (NSString *)detailFor:(NSString *)pid {
+    if ([pid isEqualToString:@"captions"]) return IVLLoc(@"src_captions");
     if ([pid isEqualToString:@"spotify"]) return IVLLoc(@"src_spotify");
     if ([pid isEqualToString:@"youtube"]) return IVLLoc(@"src_youtube");
     if ([pid isEqualToString:@"lyricsplus"]) return IVLLoc(@"src_lyricsplus");

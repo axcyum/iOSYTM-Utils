@@ -2,6 +2,7 @@
 
 static NSDictionary<NSString *, NSString *> *IVLStringsJA(void) {
     return @{
+        @"src_captions": @"行同期。再生中の動画（曲のときは動画版）に付いている字幕。自動生成字幕は使いません",
         @"sec_integrations": @"連携と拡張",
         @"sec_lock": @"ロック画面の歌詞",
         @"on": @"オン",
@@ -128,6 +129,7 @@ static NSDictionary<NSString *, NSString *> *IVLStringsJA(void) {
 
 static NSDictionary<NSString *, NSString *> *IVLStringsEN(void) {
     return @{
+        @"src_captions": @"Line sync. Subtitles of the playing video (the music video when a song plays). Auto-generated captions are ignored",
         @"sec_integrations": @"Integrations",
         @"sec_lock": @"Lock Screen Lyrics",
         @"on": @"On",

@@ -226,7 +226,8 @@ static NSURL *IVLURL(NSString *base, NSString *path, NSDictionary<NSString *, NS
 }
 
 - (void)invokeProvider:(NSString *)pid track:(IVLTrack *)track completion:(IVLLyricsCompletion)done {
-    if ([pid isEqualToString:@"spotify"]) [[IVLSpotify shared] lyricsForTrack:track completion:done];
+    if ([pid isEqualToString:@"captions"]) [self captionsForTrack:track completion:done];
+    else if ([pid isEqualToString:@"spotify"]) [[IVLSpotify shared] lyricsForTrack:track completion:done];
     else if ([pid isEqualToString:@"youtube"]) [self youtubeForTrack:track completion:done];
     else if ([pid isEqualToString:@"lyricsplus"]) [self lyricsPlusForTrack:track completion:done];
     else if ([pid isEqualToString:@"unison"]) [self unisonForTrack:track completion:done];
