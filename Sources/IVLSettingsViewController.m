@@ -298,13 +298,10 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
     name.placeholder = @"YouTube Music iOS";
     IVLRow *songButton = [IVLRow type:IVLRowSwitch key:IVLKeyDiscordSongButton title:IVLLoc(@"discord_song_button")];
     IVLRow *githubButton = [IVLRow type:IVLRowSwitch key:IVLKeyDiscordGitHubButton title:IVLLoc(@"discord_github_button")];
-    IVLRow *githubURL = [IVLRow type:IVLRowText key:IVLKeyDiscordGitHubURL title:IVLLoc(@"discord_github_url")];
-    githubURL.placeholder = @"https://github.com/…";
-    githubURL.keyboard = UIKeyboardTypeURL;
     return @[
         [IVLSection title:nil footer:IVLLoc(@"footer_discord") rows:account],
         [IVLSection title:nil footer:nil rows:@[share, cover]],
-        [IVLSection title:IVLLoc(@"discord_display") footer:IVLLoc(@"footer_discord_display") rows:@[name, songButton, githubButton, githubURL]],
+        [IVLSection title:IVLLoc(@"discord_display") footer:IVLLoc(@"footer_discord_display") rows:@[name, songButton, githubButton]],
         [IVLSection title:IVLLoc(@"discord_interval") footer:IVLLoc(@"footer_discord_interval") rows:@[interval]],
         [IVLSection title:nil footer:nil rows:@[logs]],
     ];

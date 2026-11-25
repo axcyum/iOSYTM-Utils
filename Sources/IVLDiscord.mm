@@ -441,11 +441,12 @@ static NSString *CurrentVideoID(IVLTrack *t) {
     NSString *songURL = vid ? [NSString stringWithFormat:@"https://music.youtube.com/watch?v=%@", vid] : nil;
     NSString *name = [[IVLSettings objectForKey:IVLKeyDiscordName] description];
     if (!name.length) name = @"YouTube Music iOS";
-    // tooltip of the cover image: tweak version and iOS version, e.g. "v1.0.0 iOS 26.0.1"
+    // Listening activities print the large image text as the album line, so the version goes on the
+    // small YouTube Music badge instead, where it only shows on hover: "v1.0.0 iOS 26.0.1"
     NSString *tooltip = [NSString stringWithFormat:@"v%s iOS %@", IVL_VERSION, UIDevice.currentDevice.systemVersion];
     BOOL songButton = [IVLSettings boolForKey:IVLKeyDiscordSongButton] && songURL;
-    NSString *github = [[IVLSettings objectForKey:IVLKeyDiscordGitHubURL] description];
-    BOOL githubButton = [IVLSettings boolForKey:IVLKeyDiscordGitHubButton] && [github hasPrefix:@"https://"];
+    NSString *github = @"https://github.com/axcyum/ivLyricsYTM";
+    BOOL githubButton = [IVLSettings boolForKey:IVLKeyDiscordGitHubButton];
     // everything that is shown is part of the fingerprint: changes (cover found later, settings) trigger a resend
     fingerprint = [fingerprint stringByAppendingFormat:@"\n%@\n%@\n%@\n%d%d%@", image ?: @"", name, songURL ?: @"", songButton, githubButton, github ?: @""];
     if (published && [fingerprint isEqual:lastFingerprint]) return;
@@ -460,8 +461,10 @@ static NSString *CurrentVideoID(IVLTrack *t) {
     if (image.length) {
         discordpp::ActivityAssets assets{};
         assets.SetLargeImage(UTF8(image));
-        assets.SetLargeText(UTF8(PresenceText(tooltip)));
+        if (album.length) assets.SetLargeText(UTF8(PresenceText(album)));
         if (songURL) assets.SetLargeUrl(UTF8(songURL));
+        assets.SetSmallImage("https://music.youtube.com/img/favicon_144.png");
+        assets.SetSmallText(UTF8(PresenceText(tooltip)));
         activity.SetAssets(assets);
     }
     // up to two buttons (labels max 32 characters); others see them, the sender usually does not

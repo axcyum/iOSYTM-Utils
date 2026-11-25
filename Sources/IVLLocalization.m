@@ -11,7 +11,7 @@ static NSDictionary<NSString *, NSString *> *IVLStringsJA(void) {
         @"discord_song_button": @"曲のリンクボタン",
         @"discord_github_button": @"GitHub ボタン",
         @"discord_github_url": @"GitHub の URL",
-        @"footer_discord_display": @"表示名は「Listening to 〇〇」の〇〇です（Discord が受け付けない場合はアプリ名のまま表示されます）。ジャケットにマウスを乗せると「v1.0.0 iOS 26.0.1」のようにバージョンを表示し、クリックで曲を開きます。ボタンは他の人から見たときだけ表示されます（自分の画面には出ないことがあります）。",
+        @"footer_discord_display": @"表示名は「Listening to 〇〇」の〇〇です（Discord が受け付けない場合はアプリ名のまま表示されます）。ジャケット右下の YouTube Music アイコンにマウスを乗せると「v1.0.0 iOS 26.0.1」のようにバージョンを表示します。ジャケットや曲名のクリックで曲を開きます。ボタンは他の人から見たときだけ表示されます（自分の画面には出ないことがあります）。",
         @"recognize": @"周りの曲を認識",
         @"recognize_listening": @"聞き取っています…\n曲が流れている方に iPhone を向けてください",
         @"recognize_found": @"見つかりました",
