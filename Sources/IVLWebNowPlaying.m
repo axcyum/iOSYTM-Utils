@@ -112,7 +112,7 @@ static const int kPlayerID = 1;
     nw_connection_set_state_changed_handler(c, ^(nw_connection_state_t state, nw_error_t error) {
         if (gen != self->_generation) return;
         switch (state) {
-            case nw_connection_state_ready:
+            case nw_connection_state_ready: {
                 self->_attempt = 0;
                 [self setStatusText:@"接続済み（アダプターの応答待ち）"];
                 [self receiveOn:c generation:gen];
@@ -124,6 +124,7 @@ static const int kPlayerID = 1;
                     }
                 });
                 break;
+            }
             case nw_connection_state_waiting:
             case nw_connection_state_failed: {
                 int code = error ? nw_error_get_error_code(error) : 0;
