@@ -1,4 +1,4 @@
-# ivLyrics for YouTube Music (iOS)
+# iOS YTMusic Utilities
 
 [ivLyrics](https://github.com/ivLis-Studio/ivLyrics)（Spicetify 用の歌詞拡張）を、iOS 版 YouTube Music 向けに移植した dylib です。
 UI はスマートフォンで片手操作しやすいように、一から作り直しました。
