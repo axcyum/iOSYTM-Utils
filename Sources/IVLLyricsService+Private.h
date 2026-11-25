@@ -25,6 +25,8 @@ NS_ASSUME_NONNULL_BEGIN
 /// YouTube Music's own lyrics tab (InnerTube)
 @interface IVLLyricsService (YouTube)
 - (void)youtubeForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)done;
+/// YouTube Music song search (title verified); used when the player's video id is unknown.
+- (void)youtubeVideoIDForTrack:(IVLTrack *)track completion:(void (^)(NSString *_Nullable vid))completion;
 @end
 
 FOUNDATION_EXPORT NSDictionary *_Nullable IVLPickCaptionTrack(NSArray<NSDictionary *> *tracks, IVLTrack *track);

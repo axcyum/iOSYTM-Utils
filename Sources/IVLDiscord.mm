@@ -6,6 +6,7 @@
 #import "IVLDiscordLog.h"
 #import "IVLPlaybackManager.h"
 #import "IVLLockScreen.h"
+#import "IVLLyricsService+Private.h"
 #import <MediaPlayer/MediaPlayer.h>
 #import <Security/Security.h>
 #include <mach-o/dyld.h>
@@ -142,13 +143,18 @@ static BOOL TokenWrite(NSDictionary *tokens) {
 static void TokenDelete(void) { SecItemDelete((__bridge CFDictionaryRef)TokenQuery()); }
 
 /// Cover from the shared track model: only when it belongs to the song that is being reported.
+static NSString *gCoverReason = @"";
+static NSMutableDictionary<NSString *, NSString *> *gSearchedIDs;   // "title
+artist" -> video id ("" = none)
+
 /// Short, stable cover URL for Discord. Discord limits image URLs to 256 characters and
-/// fetches them through its media proxy, so signed / resized thumbnail URLs from the player
-/// (long query strings) end up as a "?" image.
+/// fetches them through its media proxy, so signed thumbnail URLs are avoided.
+/// When the playing video id is unknown, a YouTube Music search fills it in (cached, async).
 static NSString *CoverURL(NSString *title) {
     IVLPlaybackManager *m = [IVLPlaybackManager shared];
     IVLTrack *t = m.track;
-    if (!t || ![t.title isEqualToString:title]) return nil;
+    if (!t) { gCoverReason = @"no track"; return nil; }
+    if (![t.title isEqualToString:title]) { gCoverReason = [NSString stringWithFormat:@"title mismatch (%@)", t.title ?: @""]; return nil; }
 
     // 1. album art on googleusercontent: drop the size/crop suffix, ask for a square 512px image
     NSURLComponents *art = [NSURLComponents componentsWithString:t.artworkURL ?: @""];
@@ -158,12 +164,27 @@ static NSString *CoverURL(NSString *title) {
         NSRange eq = [path rangeOfString:@"=" options:NSBackwardsSearch];
         if (eq.location != NSNotFound) path = [path substringToIndex:eq.location];
         NSString *url = [NSString stringWithFormat:@"https://%@%@=w512-h512-l90-rj", art.host, path];
-        if (url.length <= 256) return url;
+        if (url.length <= 256) { gCoverReason = @"album art"; return url; }
     }
     // 2. the video's standard thumbnail (always exists, short, no signature)
     NSString *vid = t.youtubeVideoID;
     if (vid.length != 11) vid = [m captionVideoIDForTrack:t];
-    if (vid.length == 11) return [NSString stringWithFormat:@"https://i.ytimg.com/vi/%@/hqdefault.jpg", vid];
+    if (vid.length != 11) {
+        if (!gSearchedIDs) gSearchedIDs = [NSMutableDictionary dictionary];
+        NSString *key = [NSString stringWithFormat:@"%@
+%@", t.title ?: @"", t.artist ?: @""];
+        NSString *cached = gSearchedIDs[key];
+        if (cached.length == 11) vid = cached;
+        else if (!cached) {
+            gSearchedIDs[key] = @"";   // in flight / not found
+            [[IVLLyricsService shared] youtubeVideoIDForTrack:t completion:^(NSString *found) {
+                dispatch_async(dispatch_get_main_queue(), ^{ if (found.length == 11) gSearchedIDs[key] = found; });
+            }];
+        }
+    }
+    if (vid.length == 11) { gCoverReason = @"video thumbnail"; return [NSString stringWithFormat:@"https://i.ytimg.com/vi/%@/hqdefault.jpg", vid]; }
+    gCoverReason = gSearchedIDs[[NSString stringWithFormat:@"%@
+%@", t.title ?: @"", t.artist ?: @""]] ? @"no video id (searching or not found)" : @"no video id";
     return nil;
 }
 
@@ -402,6 +423,7 @@ static NSString *CoverURL(NSString *title) {
     if (inFlight || blockedPayload || now < nextAttempt || now - lastSend < 15) return;
 
     NSString *image = ([self coverEnabled] && !omitArtwork) ? CoverURL(title) : nil;
+    // the image is part of the fingerprint: a cover found later (search) triggers a resend
     fingerprint = [fingerprint stringByAppendingFormat:@"\n%@", image ?: @""];
     if (published && [fingerprint isEqual:lastFingerprint]) return;
 
@@ -425,7 +447,7 @@ static NSString *CoverURL(NSString *title) {
     auto epoch = generation;
     auto revision = metadataRevision;
     YTMPLog(@"presence_send", @{ @"mode": @(payloadMode), @"details": PresenceText(title), @"state": PresenceText(artist),
-                                 @"duration": @(duration), @"elapsed": @(elapsed), @"timestamps": @(withTimes), @"image": image ?: @"" });
+                                 @"duration": @(duration), @"elapsed": @(elapsed), @"timestamps": @(withTimes), @"image": image ?: @"", @"image_source": gCoverReason ?: @"" });
     inFlight = YES; lastSend = now;
     client->UpdateRichPresence(activity, [self, epoch, revision, fingerprint, image](auto result) {
         LogResult(@"presence_result", result);
