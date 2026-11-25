@@ -1,4 +1,5 @@
 #import "IVLLyricCell.h"
+#import "IVLExtras.h"
 
 #pragma mark - Karaoke label
 
@@ -231,8 +232,15 @@
     if (_line.instrumental && !active) alpha = 0.25;
 
     BOOL karaoke = active && _label.words.count > 0;
+    UIColor *accent = [IVLTheme accentColor];
+    _label.brightColor = accent;
+    if (_label.attributedText.length) {
+        NSMutableAttributedString *as = [_label.attributedText mutableCopy];
+        [as addAttribute:NSForegroundColorAttributeName value:(active && _style.synced) ? accent : UIColor.whiteColor range:NSMakeRange(0, as.length)];
+        _label.attributedText = as;
+    }
     _label.karaokeActive = karaoke;
-    _label.layer.shadowColor = UIColor.whiteColor.CGColor;
+    _label.layer.shadowColor = accent.CGColor;
     _label.layer.shadowRadius = 10;
     _label.layer.shadowOffset = CGSizeZero;
     _label.layer.shadowOpacity = (active && !karaoke && _style.synced) ? 0.35 : 0;

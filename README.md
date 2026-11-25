@@ -69,6 +69,20 @@ UI はスマートフォンで片手操作しやすいように、一から作�
 - 連携・共有の停止／再開・サムネイル・診断ログ・連携解除は、iOS のポップアップではなく設定画面から操作します
 - 公式の Discord Social SDK が必要です（下記「ビルド」を参照）。SDK なしでビルドした場合、この機能は「非対応ビルド」と表示されます
 
+**WebNowPlaying**
+- [WebNowPlaying](https://github.com/keifufu/WebNowPlaying) 対応アダプター（[WebNowPlaying-Rainmeter](https://github.com/keifufu/WebNowPlaying-Rainmeter) など）に、同じ LAN 内で再生中の曲名・アーティスト・ジャケット・再生位置を送ります（ブラウザ拡張と同じプロトコル。adapter revision legacy / 1 / 2 / 3 に対応）
+- 設定 → WebNowPlaying で PC の IP アドレスとポート（Rainmeter は 8974）を指定します
+- 「PC からの操作を許可」をオンにすると、アダプターからの再生／一時停止・前の曲・次の曲・シークを実行します（ロック画面のボタンと同じ処理を呼びます）
+- アダプターが 127.0.0.1 でしか待ち受けていない場合は、PC で次を実行してポートを LAN に公開し、ファイアウォールで 8974 を許可してください：
+  `netsh interface portproxy add v4tov4 listenport=8974 listenaddress=0.0.0.0 connectport=8974 connectaddress=127.0.0.1`
+
+**便利機能（[SimpMusic](https://github.com/maxrave-dev/SimpMusic) から）** ― 設定 → 便利機能
+- テーマ：歌詞画面の背景（アートワークぼかし / 単色 / アートワークの色のグラデーション / 黒）、アクセント色、単色背景の色
+- スリープタイマー：指定した分数後、または今の曲の終わりで一時停止（歌詞画面の「…」からも設定可能）
+- 再生統計：30 秒以上聴いた曲を端末内にだけ記録し、再生時間・回数・よく聴いた曲／アーティスト・時間帯を表示
+- 歌詞を画像で共有：歌詞の行を長押し →「画像で共有」
+- 広告ブロック、SponsorBlock、ダウンロード、Premium 関連の機能は入れていません
+
 **翻訳・発音**
 - 翻訳：Google 翻訳の非公式ウェブエンドポイント（ivLyrics の `Addon_AI_GoogleTranslate` と同じもの。API キーは不要）
 - 発音表記は**端末上で生成**し、通信はしません

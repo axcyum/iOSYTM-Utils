@@ -33,6 +33,13 @@ NSString *const IVLKeyLockLead = @"lockLead";
 NSString *const IVLKeyProviderSpotify = @"providerSpotify";
 NSString *const IVLKeyProviderCaptions = @"providerCaptions";
 NSString *const IVLKeyCaptionLang = @"captionLang";
+NSString *const IVLKeyWNPEnabled = @"wnpEnabled";
+NSString *const IVLKeyWNPHost = @"wnpHost";
+NSString *const IVLKeyWNPPort = @"wnpPort";
+NSString *const IVLKeyWNPControl = @"wnpControl";
+NSString *const IVLKeyStatsEnabled = @"statsEnabled";
+NSString *const IVLKeyAccentColor = @"accentColor";
+NSString *const IVLKeyBackgroundColor = @"backgroundColor";
 
 static NSString *const kDomain = @"ivLyricsYTM";
 
@@ -81,6 +88,13 @@ static NSString *IVLLocCaptionsName(void) {
             IVLKeyProviderSpotify: @YES,
             IVLKeyProviderCaptions: @YES,
             IVLKeyCaptionLang: @"",
+            IVLKeyWNPEnabled: @NO,
+            IVLKeyWNPHost: @"",
+            IVLKeyWNPPort: @8974,
+            IVLKeyWNPControl: @YES,
+            IVLKeyStatsEnabled: @YES,
+            IVLKeyAccentColor: @"",
+            IVLKeyBackgroundColor: @"",
         };
     });
     return d;

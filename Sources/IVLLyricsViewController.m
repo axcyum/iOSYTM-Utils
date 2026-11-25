@@ -4,6 +4,7 @@
 #import "IVLSettings.h"
 #import "IVLLocalization.h"
 #import "IVLSearchViewController.h"
+#import "IVLExtras.h"
 #import "IVLProviderPickerViewController.h"
 #import "IVLSettingsViewController.h"
 
@@ -114,6 +115,7 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     CADisplayLink *_link;
     BOOL _prevIdleDisabled;
     CGFloat _pinchBase;
+    CAGradientLayer *_gradient;
     __weak IVLLyrics *_shownLyrics;
 }
 
@@ -180,6 +182,7 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
 
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
+    _gradient.frame = _dim.bounds;
     _fadeMask.frame = _tableHost.bounds;
     CGFloat h = MAX(1, _tableHost.bounds.size.height);
     CGFloat edge = MIN(0.12, 48.0 / h);
@@ -212,11 +215,35 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     [self applyBackgroundStyle];
 }
 
+/// Themes (SimpMusic-style): 0 artwork blur, 1 solid colour, 2 artwork colour gradient, 3 AMOLED black
 - (void)applyBackgroundStyle {
-    BOOL solid = [IVLSettings integerForKey:IVLKeyBackground] == 1;
-    _bgImage.hidden = solid;
-    _blur.hidden = solid;
-    _dim.backgroundColor = solid ? [UIColor colorWithRed:0.07 green:0.07 blue:0.08 alpha:1] : [UIColor colorWithWhite:0 alpha:0.25];
+    NSInteger style = [IVLTheme style];
+    BOOL blur = style == 0;
+    _bgImage.hidden = !blur;
+    _blur.hidden = !blur;
+    [_gradient removeFromSuperlayer];
+    _gradient = nil;
+    if (style == 1) _dim.backgroundColor = [IVLTheme customBackgroundColor];
+    else if (style == 3) _dim.backgroundColor = UIColor.blackColor;
+    else if (style == 2) {
+        _dim.backgroundColor = [UIColor colorWithRed:0.08 green:0.08 blue:0.1 alpha:1];
+        _gradient = [CAGradientLayer layer];
+        _gradient.frame = _dim.bounds;
+        _gradient.colors = @[(id)[UIColor colorWithRed:0.2 green:0.2 blue:0.25 alpha:1].CGColor, (id)UIColor.blackColor.CGColor];
+        [_dim.layer addSublayer:_gradient];
+        UIImage *art = _artwork.image;
+        if (art) {
+            __weak typeof(self) ws = self;
+            [IVLTheme dominantColorsOfImage:art completion:^(UIColor *top, UIColor *bottom) {
+                typeof(self) ss = ws;
+                if (!ss || !ss->_gradient) return;
+                [CATransaction begin];
+                [CATransaction setAnimationDuration:0.5];
+                ss->_gradient.colors = @[(id)top.CGColor, (id)bottom.CGColor];
+                [CATransaction commit];
+            }];
+        }
+    } else _dim.backgroundColor = [UIColor colorWithWhite:0 alpha:0.25];
 }
 
 - (void)buildHeader {
@@ -492,7 +519,9 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
             self->_artwork.image = img;
             self->_bgImage.image = img;
         } completion:nil];
+        if ([IVLTheme style] == 2) [self applyBackgroundStyle];
     });
+    if ([IVLTheme style] == 2) [self applyBackgroundStyle];
     [self refreshOffsetLabel];
     [self lyricsChanged];
 }
@@ -581,7 +610,8 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
 - (void)settingsChanged:(NSNotification *)n {
     NSString *key = n.object;
     if ([key isEqualToString:IVLKeySongOffsets] || [key isEqualToString:IVLKeyGlobalOffset]) { [self refreshOffsetLabel]; return; }
-    if ([key isEqualToString:IVLKeyBackground]) { [self applyBackgroundStyle]; return; }
+    if ([key isEqualToString:IVLKeyBackground] || [key isEqualToString:IVLKeyBackgroundColor]) { [self applyBackgroundStyle]; return; }
+    if ([key isEqualToString:IVLKeyAccentColor]) { [_table reloadData]; return; }
     if ([key isEqualToString:IVLKeyFontSize] || [key isEqualToString:IVLKeyAlignment] || [key isEqualToString:IVLKeyKaraoke]) {
         [self updateStyle];
         [_table reloadData];
@@ -645,6 +675,8 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
             [ws showToast:IVLLoc(@"copied")];
         }]];
     }
+    NSString *sleep = [IVLSleepTimer shared].active ? [NSString stringWithFormat:@"%@（%@）", IVLLoc(@"sleep_timer"), [[IVLSleepTimer shared] statusText]] : IVLLoc(@"sleep_timer");
+    [items addObject:[UIAction actionWithTitle:sleep image:[UIImage systemImageNamed:@"moon.zzz"] identifier:nil handler:^(UIAction *a) { [ws openSleepTimer]; }]];
     [items addObject:[UIAction actionWithTitle:IVLLoc(@"settings") image:[UIImage systemImageNamed:@"gearshape"] identifier:nil handler:^(UIAction *a) { [ws openSettings]; }]];
     if (m.lyrics.source.length) {
         NSString *info = [NSString stringWithFormat:IVLLoc(@"source_fmt"), m.lyrics.source,
@@ -776,6 +808,9 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
                 [ws followNow];
             }]];
         }
+        [a addObject:[UIAction actionWithTitle:IVLLoc(@"share_image") image:[UIImage systemImageNamed:@"square.and.arrow.up"] identifier:nil handler:^(UIAction *x) {
+            [ws shareLine:l];
+        }]];
         [a addObject:[UIAction actionWithTitle:IVLLoc(@"copy_line") image:[UIImage systemImageNamed:@"doc.on.doc"] identifier:nil handler:^(UIAction *x) {
             NSMutableArray *parts = [NSMutableArray arrayWithObject:l.text];
             if (l.pronunciation.length) [parts addObject:l.pronunciation];
@@ -788,6 +823,29 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
 }
 
 #pragma mark Actions
+
+/// SimpMusic-style "share lyrics as image": the line (and its neighbours) over the blurred artwork.
+- (void)shareLine:(IVLLyricLine *)line {
+    NSUInteger idx = [_lines indexOfObject:line];
+    NSMutableArray *texts = [NSMutableArray array];
+    for (NSInteger i = (NSInteger)idx; i >= 0 && i < (NSInteger)_lines.count && texts.count < 3; i++) {
+        if (!_lines[i].instrumental && _lines[i].text.length) [texts addObject:_lines[i].text];
+    }
+    if (!texts.count) [texts addObject:line.text ?: @""];
+    IVLTrack *t = [IVLPlaybackManager shared].track;
+    UIImage *img = IVLLyricsShareImage(texts, line.translation, t.title ?: @"", t.artist ?: @"", _artwork.image);
+    UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[img] applicationActivities:nil];
+    share.popoverPresentationController.sourceView = self.view;
+    [self presentViewController:share animated:YES completion:nil];
+}
+
+- (void)openSleepTimer {
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:[IVLSleepTimerViewController new]];
+    nav.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    nav.modalPresentationStyle = UIModalPresentationPageSheet;
+    if (@available(iOS 15.0, *)) nav.sheetPresentationController.detents = @[UISheetPresentationControllerDetent.mediumDetent];
+    [self presentViewController:nav animated:YES completion:nil];
+}
 
 - (void)close { [self dismissViewControllerAnimated:YES completion:nil]; }
 - (void)reload {

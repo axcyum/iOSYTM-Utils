@@ -5,12 +5,14 @@
 #import "IVLTranslator.h"
 #import "IVLSpotify.h"
 #import "IVLDiscord.h"
+#import "IVLWebNowPlaying.h"
+#import "IVLExtras.h"
 
 #ifndef IVL_VERSION
 #define IVL_VERSION "1.0.0"
 #endif
 
-typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStepper, IVLRowLink, IVLRowAction, IVLRowInfo };
+typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStepper, IVLRowLink, IVLRowAction, IVLRowInfo, IVLRowText, IVLRowColor };
 
 @interface IVLRow : NSObject
 @property (nonatomic) IVLRowType type;
@@ -26,6 +28,8 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
 @property (nonatomic, copy) void (^setBool)(BOOL on);
 @property (nonatomic, assign) BOOL destructive;
 @property (nonatomic, copy) NSString *symbol;                 // SF Symbol for link rows
+@property (nonatomic, copy) NSString *placeholder;            // text rows
+@property (nonatomic) UIKeyboardType keyboard;
 @end
 @implementation IVLRow
 + (instancetype)type:(IVLRowType)t key:(NSString *)k title:(NSString *)title {
@@ -58,12 +62,17 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = [_page isEqualToString:@"lock"] ? IVLLoc(@"sec_lock") : [_page isEqualToString:@"spotify"] ? @"Spotify"
-               : [_page isEqualToString:@"discord"] ? @"Discord Rich Presence" : @"ivLyrics";
+               : [_page isEqualToString:@"discord"] ? @"Discord Rich Presence" : [_page isEqualToString:@"wnp"] ? @"WebNowPlaying"
+               : [_page isEqualToString:@"extras"] ? IVLLoc(@"sec_extras") : [_page isEqualToString:@"accent"] ? IVLLoc(@"accent_color")
+               : [_page isEqualToString:@"bgcolor"] ? IVLLoc(@"bg_color") : @"ivLyrics";
+    self.tableView.keyboardDismissMode = UITableViewKeyboardDismissModeOnDrag;
     if (!_page) self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(done)];
     [self buildSections];
     NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
     [nc addObserver:self selector:@selector(rebuild) name:IVLSpotifyStateDidChangeNotification object:nil];
     [nc addObserver:self selector:@selector(rebuild) name:IVLDiscordStatusDidChangeNotification object:nil];
+    [nc addObserver:self selector:@selector(rebuild) name:IVLWebNowPlayingStatusDidChangeNotification object:nil];
+    [nc addObserver:self selector:@selector(rebuild) name:IVLSleepTimerDidChangeNotification object:nil];
 }
 
 - (void)rebuild {
@@ -72,6 +81,69 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
 }
 
 - (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
+
+- (NSArray<IVLSection *> *)wnpSections {
+    IVLRow *(^sw)(NSString *, NSString *) = ^(NSString *k, NSString *t) { return [IVLRow type:IVLRowSwitch key:k title:t]; };
+    IVLRow *state = [IVLRow type:IVLRowInfo key:@"" title:IVLLoc(@"status")];
+    state.detail = ^NSString *{ return [IVLWebNowPlaying shared].status; };
+    IVLRow *host = [IVLRow type:IVLRowText key:IVLKeyWNPHost title:IVLLoc(@"wnp_host")];
+    host.placeholder = @"192.168.1.10";
+    host.keyboard = UIKeyboardTypeURL;
+    IVLRow *port = [IVLRow type:IVLRowText key:IVLKeyWNPPort title:IVLLoc(@"wnp_port")];
+    port.placeholder = @"8974";
+    port.keyboard = UIKeyboardTypeNumberPad;
+    IVLRow *retry = [IVLRow type:IVLRowAction key:@"" title:IVLLoc(@"wnp_reconnect")];
+    retry.action = ^(UIViewController *vc) { [[IVLWebNowPlaying shared] reconnect]; };
+    return @[
+        [IVLSection title:nil footer:IVLLoc(@"footer_wnp") rows:@[sw(IVLKeyWNPEnabled, IVLLoc(@"wnp_enabled")), state]],
+        [IVLSection title:IVLLoc(@"wnp_adapter") footer:IVLLoc(@"footer_wnp_adapter") rows:@[host, port, retry]],
+        [IVLSection title:IVLLoc(@"wnp_control_title") footer:IVLLoc(@"footer_wnp_control") rows:@[sw(IVLKeyWNPControl, IVLLoc(@"wnp_control"))]],
+    ];
+}
+
+- (NSArray<IVLSection *> *)colorSectionsForKey:(NSString *)key includeDefault:(NSString *)defaultTitle {
+    NSMutableArray *rows = [NSMutableArray array];
+    IVLRow *def = [IVLRow type:IVLRowColor key:key title:defaultTitle];
+    def.placeholder = @"";
+    [rows addObject:def];
+    for (NSArray *c in [IVLTheme presetColors]) {
+        IVLRow *r = [IVLRow type:IVLRowColor key:key title:c[0]];
+        r.placeholder = c[1];
+        [rows addObject:r];
+    }
+    IVLRow *custom = [IVLRow type:IVLRowText key:key title:IVLLoc(@"color_hex")];
+    custom.placeholder = @"FF7EB6";
+    custom.keyboard = UIKeyboardTypeASCIICapable;
+    return @[[IVLSection title:nil footer:nil rows:rows], [IVLSection title:nil footer:IVLLoc(@"footer_color_hex") rows:@[custom]]];
+}
+
+- (NSArray<IVLSection *> *)extrasSections {
+    IVLRow *(^seg)(NSString *, NSString *, NSArray *) = ^(NSString *k, NSString *t, NSArray *o) {
+        IVLRow *r = [IVLRow type:IVLRowSegment key:k title:t]; r.options = o; return r;
+    };
+    IVLRow *(^page)(NSString *, NSString *, NSString *(^)(void)) = ^(NSString *pageID, NSString *title, NSString *(^detail)(void)) {
+        IVLRow *r = [IVLRow type:IVLRowLink key:@"" title:title];
+        r.detail = detail;
+        r.action = ^(UIViewController *vc) { [vc.navigationController pushViewController:[[IVLSettingsViewController alloc] initWithPage:pageID] animated:YES]; };
+        return r;
+    };
+    IVLRow *theme = seg(IVLKeyBackground, IVLLoc(@"theme"), @[IVLLoc(@"bg_artwork"), IVLLoc(@"bg_solid"), IVLLoc(@"bg_dynamic"), IVLLoc(@"bg_black")]);
+    IVLRow *accent = page(@"accent", IVLLoc(@"accent_color"), ^NSString *{ return [[IVLSettings objectForKey:IVLKeyAccentColor] length] ? [@"#" stringByAppendingString:[IVLSettings objectForKey:IVLKeyAccentColor]] : IVLLoc(@"color_default"); });
+    IVLRow *bg = page(@"bgcolor", IVLLoc(@"bg_color"), ^NSString *{ return [[IVLSettings objectForKey:IVLKeyBackgroundColor] length] ? [@"#" stringByAppendingString:[IVLSettings objectForKey:IVLKeyBackgroundColor]] : IVLLoc(@"color_default"); });
+    IVLRow *sleep = [IVLRow type:IVLRowLink key:@"" title:IVLLoc(@"sleep_timer")];
+    sleep.symbol = @"moon.zzz";
+    sleep.detail = ^NSString *{ return [[IVLSleepTimer shared] statusText]; };
+    sleep.action = ^(UIViewController *vc) { [vc.navigationController pushViewController:[IVLSleepTimerViewController new] animated:YES]; };
+    IVLRow *statsOn = [IVLRow type:IVLRowSwitch key:IVLKeyStatsEnabled title:IVLLoc(@"stats_record")];
+    IVLRow *stats = [IVLRow type:IVLRowLink key:@"" title:IVLLoc(@"stats")];
+    stats.symbol = @"chart.bar.xaxis";
+    stats.action = ^(UIViewController *vc) { [vc.navigationController pushViewController:[IVLStatsViewController new] animated:YES]; };
+    return @[
+        [IVLSection title:IVLLoc(@"theme") footer:IVLLoc(@"footer_theme") rows:@[theme, accent, bg]],
+        [IVLSection title:nil footer:IVLLoc(@"footer_sleep") rows:@[sleep]],
+        [IVLSection title:IVLLoc(@"stats") footer:IVLLoc(@"footer_stats") rows:@[statsOn, stats]],
+    ];
+}
 
 - (NSArray<IVLSection *> *)lockSections {
     IVLRow *(^sw)(NSString *, NSString *) = ^(NSString *k, NSString *t) { return [IVLRow type:IVLRowSwitch key:k title:t]; };
@@ -158,6 +230,10 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
     if ([_page isEqualToString:@"lock"]) { _sections = [self lockSections]; return; }
     if ([_page isEqualToString:@"spotify"]) { _sections = [self spotifySections]; return; }
     if ([_page isEqualToString:@"discord"]) { _sections = [self discordSections]; return; }
+    if ([_page isEqualToString:@"wnp"]) { _sections = [self wnpSections]; return; }
+    if ([_page isEqualToString:@"extras"]) { _sections = [self extrasSections]; return; }
+    if ([_page isEqualToString:@"accent"]) { _sections = [self colorSectionsForKey:IVLKeyAccentColor includeDefault:IVLLoc(@"color_default")]; return; }
+    if ([_page isEqualToString:@"bgcolor"]) { _sections = [self colorSectionsForKey:IVLKeyBackgroundColor includeDefault:IVLLoc(@"color_default")]; return; }
     IVLRow *(^page)(NSString *, NSString *, NSString *, NSString *(^)(void)) = ^(NSString *pageID, NSString *title, NSString *symbol, NSString *(^detail)(void)) {
         IVLRow *r = [IVLRow type:IVLRowLink key:@"" title:title];
         r.symbol = symbol;
@@ -171,6 +247,8 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
         return [IVLDiscord available] ? ([[IVLDiscord shared] enabled] ? IVLLoc(@"on") : IVLLoc(@"off")) : IVLLoc(@"discord_na_short");
     });
 
+    IVLRow *wnpPage = page(@"wnp", @"WebNowPlaying", @"desktopcomputer", ^NSString *{ return IVLLoc([IVLSettings boolForKey:IVLKeyWNPEnabled] ? @"on" : @"off"); });
+    IVLRow *extrasPage = page(@"extras", IVLLoc(@"sec_extras"), @"sparkles", ^NSString *{ return [IVLSleepTimer shared].active ? [[IVLSleepTimer shared] statusText] : @""; });
     IVLRow *(^sw)(NSString *, NSString *) = ^(NSString *k, NSString *t) { return [IVLRow type:IVLRowSwitch key:k title:t]; };
     IVLRow *(^seg)(NSString *, NSString *, NSArray *) = ^(NSString *k, NSString *t, NSArray *o) {
         IVLRow *r = [IVLRow type:IVLRowSegment key:k title:t]; r.options = o; return r;
@@ -230,13 +308,13 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
             sw(IVLKeyMiniLyric, IVLLoc(@"mini_lyric")),
             sw(IVLKeyKeepAwake, IVLLoc(@"keep_awake")),
         ]],
-        [IVLSection title:IVLLoc(@"sec_integrations") footer:nil rows:@[lockPage, spotifyPage, discordPage]],
+        [IVLSection title:IVLLoc(@"sec_integrations") footer:nil rows:@[lockPage, spotifyPage, discordPage, wnpPage]],
+        [IVLSection title:IVLLoc(@"sec_extras") footer:IVLLoc(@"footer_extras") rows:@[extrasPage]],
         [IVLSection title:IVLLoc(@"sec_display") footer:IVLLoc(@"footer_display") rows:@[
             size,
             seg(IVLKeyAlignment, IVLLoc(@"alignment"), @[IVLLoc(@"align_left"), IVLLoc(@"align_center")]),
             sw(IVLKeyKaraoke, IVLLoc(@"karaoke")),
             sw(IVLKeyShowBreaks, IVLLoc(@"show_breaks")),
-            seg(IVLKeyBackground, IVLLoc(@"background"), @[IVLLoc(@"bg_artwork"), IVLLoc(@"bg_solid")]),
         ]],
         [IVLSection title:IVLLoc(@"sec_translation") footer:IVLLoc(@"footer_translation") rows:@[
             sw(IVLKeyTranslation, IVLLoc(@"translation")),
@@ -326,7 +404,42 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
             break;
         case IVLRowInfo:
             c.detailTextLabel.text = row.detail ? row.detail() : nil;
+            c.detailTextLabel.numberOfLines = 0;
             break;
+        case IVLRowText: {
+            UITextField *f = [[UITextField alloc] initWithFrame:CGRectMake(0, 0, 170, 32)];
+            f.textAlignment = NSTextAlignmentRight;
+            f.placeholder = row.placeholder;
+            f.keyboardType = row.keyboard;
+            f.autocorrectionType = UITextAutocorrectionTypeNo;
+            f.autocapitalizationType = UITextAutocapitalizationTypeNone;
+            f.clearButtonMode = UITextFieldViewModeWhileEditing;
+            id v = [IVLSettings objectForKey:row.key];
+            f.text = [v isKindOfClass:[NSNumber class]] ? [v stringValue] : ([v length] ? v : nil);
+            NSString *key = row.key;
+            BOOL numeric = row.keyboard == UIKeyboardTypeNumberPad;
+            [f addAction:[UIAction actionWithHandler:^(UIAction *a) {
+                NSString *t = [((UITextField *)a.sender).text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet] ?: @"";
+                if ([t hasPrefix:@"#"]) t = [t substringFromIndex:1];
+                [IVLSettings setObject:(numeric ? @(t.integerValue ?: 8974) : t) forKey:key];
+            }] forControlEvents:UIControlEventEditingDidEnd];
+            [f addAction:[UIAction actionWithHandler:^(UIAction *a) { [(UITextField *)a.sender resignFirstResponder]; }] forControlEvents:UIControlEventEditingDidEndOnExit];
+            c.accessoryView = f;
+            break;
+        }
+        case IVLRowColor: {
+            NSString *hex = row.placeholder ?: @"";
+            UIView *sw = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 26, 26)];
+            sw.layer.cornerRadius = 13;
+            sw.layer.borderWidth = 1;
+            sw.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.3].CGColor;
+            sw.backgroundColor = hex.length ? [IVLTheme colorFromHex:hex] : UIColor.clearColor;
+            c.accessoryView = sw;
+            NSString *cur = [IVLSettings objectForKey:row.key] ?: @"";
+            if ([cur.uppercaseString isEqualToString:hex.uppercaseString]) c.textLabel.text = [@"✓ " stringByAppendingString:row.title];
+            c.selectionStyle = UITableViewCellSelectionStyleDefault;
+            break;
+        }
     }
     return c;
 }
@@ -334,6 +447,7 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     IVLRow *row = _sections[indexPath.section].rows[indexPath.row];
+    if (row.type == IVLRowColor) { [IVLSettings setObject:row.placeholder ?: @"" forKey:row.key]; [self rebuild]; return; }
     if (row.action) row.action(self);
 }
 

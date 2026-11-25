@@ -16,6 +16,9 @@
 #import "IVLLockScreen.h"
 #import "IVLDiscord.h"
 #import "IVLSpotify.h"
+#import "IVLRemoteControl.h"
+#import "IVLWebNowPlaying.h"
+#import "IVLExtras.h"
 
 static const void *kIVLButtonKey = &kIVLButtonKey;
 
@@ -54,6 +57,22 @@ static const void *kIVLButtonKey = &kIVLButtonKey;
     [[IVLPlaybackManager shared] nowPlayingInfoDidChange:info];
     NSDictionary *copy = [info copy];
     dispatch_async(dispatch_get_main_queue(), ^{ [[IVLDiscord shared] noteMetadata:copy]; });
+}
+%end
+%end
+
+#pragma mark - Remote commands (record the app's handlers so WebNowPlaying / sleep timer can use them)
+
+%group RemoteCommands
+%hook MPRemoteCommand
+- (id)addTargetWithHandler:(MPRemoteCommandHandlerStatus (^)(MPRemoteCommandEvent *))handler {
+    id token = %orig;
+    [IVLRemoteControl recordHandler:handler forCommand:self];
+    return token;
+}
+- (void)addTarget:(id)target action:(SEL)action {
+    %orig;
+    [IVLRemoteControl recordTarget:target action:action forCommand:self];
 }
 %end
 %end
@@ -129,10 +148,14 @@ static UIImage *IVLMenuIcon(void) {
 %ctor {
     @autoreleasepool {
         %init(NowPlayingInfo);
+        %init(RemoteCommands);
         dispatch_async(dispatch_get_main_queue(), ^{
             [IVLLockScreen shared];
             [IVLSpotify shared];
             [IVLDiscord shared];
+            [IVLWebNowPlaying shared];
+            [[IVLStats shared] start];
+            [IVLSleepTimer shared];
         });
         if (objc_getClass("YTPlayerViewController")) %init(Player);
         if (objc_getClass("YTMNowPlayingViewController")) %init(NowPlaying);

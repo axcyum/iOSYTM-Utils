@@ -35,6 +35,13 @@ extern NSString *const IVLKeyLockTranslation;    // BOOL  pronunciation / transl
 extern NSString *const IVLKeyLockLead;           // NSInteger ms shown early (lock screen latency)
 extern NSString *const IVLKeyProviderSpotify;    // BOOL
 extern NSString *const IVLKeyProviderCaptions;   // BOOL
+extern NSString *const IVLKeyWNPEnabled;         // BOOL  WebNowPlaying client
+extern NSString *const IVLKeyWNPHost;            // NSString  PC address
+extern NSString *const IVLKeyWNPPort;            // NSInteger (8974)
+extern NSString *const IVLKeyWNPControl;         // BOOL  accept play/pause/skip/seek from the adapter
+extern NSString *const IVLKeyStatsEnabled;       // BOOL  on-device listening statistics
+extern NSString *const IVLKeyAccentColor;        // NSString hex, "" = white
+extern NSString *const IVLKeyBackgroundColor;    // NSString hex for the solid background
 extern NSString *const IVLKeyCaptionLang;        // NSString, "" = automatic (song language)
 
 @interface IVLSettings : NSObject
