@@ -2,6 +2,16 @@
 
 static NSDictionary<NSString *, NSString *> *IVLStringsJA(void) {
     return @{
+        @"discord_interval": @"更新間隔",
+        @"discord_interval_fmt": @"%.0f 秒",
+        @"discord_interval_danger_fmt": @"%.0f 秒（デンジャー）",
+        @"footer_discord_interval": @"標準は 15 秒です。15 秒未満はデンジャーモードで、Discord のレート制限（429）に当たって一時的に更新が止まることがあります。最短 3 秒。",
+        @"discord_display": @"表示",
+        @"discord_name": @"表示名",
+        @"discord_song_button": @"曲のリンクボタン",
+        @"discord_github_button": @"GitHub ボタン",
+        @"discord_github_url": @"GitHub の URL",
+        @"footer_discord_display": @"表示名は「Listening to 〇〇」の〇〇です（Discord が受け付けない場合はアプリ名のまま表示されます）。ジャケットにマウスを乗せると「v1.0.0 iOS 26.0.1」のようにバージョンを表示し、クリックで曲を開きます。ボタンは他の人から見たときだけ表示されます（自分の画面には出ないことがあります）。",
         @"recognize": @"周りの曲を認識",
         @"recognize_listening": @"聞き取っています…\n曲が流れている方に iPhone を向けてください",
         @"recognize_found": @"見つかりました",
@@ -212,6 +222,16 @@ static NSDictionary<NSString *, NSString *> *IVLStringsJA(void) {
 
 static NSDictionary<NSString *, NSString *> *IVLStringsEN(void) {
     return @{
+        @"discord_interval": @"Update interval",
+        @"discord_interval_fmt": @"%.0f s",
+        @"discord_interval_danger_fmt": @"%.0f s (danger)",
+        @"footer_discord_interval": @"Default 15 seconds. Below 15 is the danger zone: Discord may rate-limit (429) and pause updates for a while. Minimum 3 seconds.",
+        @"discord_display": @"Display",
+        @"discord_name": @"Activity name",
+        @"discord_song_button": @"Song link button",
+        @"discord_github_button": @"GitHub button",
+        @"discord_github_url": @"GitHub URL",
+        @"footer_discord_display": @"The activity name is the \"Listening to …\" part (Discord falls back to the application name if it does not accept it). Hovering the cover shows the version like \"v1.0.0 iOS 26.0.1\" and clicking it opens the song. Buttons are visible to other people; your own client may not show them.",
         @"recognize": @"Recognize Song",
         @"recognize_listening": @"Listening…\nPoint your iPhone at the music",
         @"recognize_found": @"Found it",

@@ -7,6 +7,7 @@
 #import "IVLPlaybackManager.h"
 #import "IVLLockScreen.h"
 #import "IVLLyricsService+Private.h"
+#import "IVLSettings.h"
 #import <MediaPlayer/MediaPlayer.h>
 #import <Security/Security.h>
 #include <mach-o/dyld.h>
@@ -17,6 +18,10 @@
 #include <string>
 
 NSNotificationName const IVLDiscordStatusDidChangeNotification = @"IVLDiscordStatusDidChangeNotification";
+
+#ifndef IVL_VERSION
+#define IVL_VERSION "1.0.0"
+#endif
 
 #ifndef IVL_DISCORD_APP_ID
 #define IVL_DISCORD_APP_ID 1559887091171852310ULL
@@ -146,6 +151,7 @@ static void TokenDelete(void) { SecItemDelete((__bridge CFDictionaryRef)TokenQue
 static NSString *gCoverReason = @"";
 static NSMutableDictionary<NSString *, NSString *> *gSearchedIDs;   // "title|artist" -> video id ("" = none)
 
+static NSString *CurrentVideoID(IVLTrack *t);
 static NSString *CoverKey(IVLTrack *t) { return [NSString stringWithFormat:@"%@|%@", t.title ?: @"", t.artist ?: @""]; }
 
 /// Short, stable cover URL for Discord. Discord limits image URLs to 256 characters and
@@ -168,6 +174,15 @@ static NSString *CoverURL(NSString *title) {
         if (url.length <= 256) { gCoverReason = @"album art"; return url; }
     }
     // 2. the video's standard thumbnail (always exists, short, no signature)
+    NSString *vid = CurrentVideoID(t);
+    if (vid.length == 11) { gCoverReason = @"video thumbnail"; return [NSString stringWithFormat:@"https://i.ytimg.com/vi/%@/hqdefault.jpg", vid]; }
+    gCoverReason = gSearchedIDs[CoverKey(t)] ? @"no video id (searching or not found)" : @"no video id";
+    return nil;
+}
+
+/// Video id of the track: player, length-matched player video, or a cached YouTube Music search.
+static NSString *CurrentVideoID(IVLTrack *t) {
+    IVLPlaybackManager *m = [IVLPlaybackManager shared];
     NSString *vid = t.youtubeVideoID;
     if (vid.length != 11) vid = [m captionVideoIDForTrack:t];
     if (vid.length != 11) {
@@ -182,9 +197,7 @@ static NSString *CoverURL(NSString *title) {
             }];
         }
     }
-    if (vid.length == 11) { gCoverReason = @"video thumbnail"; return [NSString stringWithFormat:@"https://i.ytimg.com/vi/%@/hqdefault.jpg", vid]; }
-    gCoverReason = gSearchedIDs[CoverKey(t)] ? @"no video id (searching or not found)" : @"no video id";
-    return nil;
+    return vid.length == 11 ? vid : nil;
 }
 
 @interface IVLDiscord () {
@@ -419,22 +432,52 @@ static NSString *CoverURL(NSString *title) {
     NSString *fingerprint = [NSString stringWithFormat:@"%@\n%@\n%@\n%.1f\n%.2f", title, artist, album, duration, rate];
     if (![fingerprint isEqual:sampleFingerprint]) { sampleStart = now - elapsed / MAX(0.01, rate); sampleFingerprint = fingerprint; }
     double start = sampleStart;
-    if (inFlight || blockedPayload || now < nextAttempt || now - lastSend < 15) return;
+    NSInteger interval = MAX(3, MIN(60, [IVLSettings integerForKey:IVLKeyDiscordInterval]));
+    if (inFlight || blockedPayload || now < nextAttempt || now - lastSend < interval) return;
 
     NSString *image = ([self coverEnabled] && !omitArtwork) ? CoverURL(title) : nil;
-    // the image is part of the fingerprint: a cover found later (search) triggers a resend
-    fingerprint = [fingerprint stringByAppendingFormat:@"\n%@", image ?: @""];
+    IVLTrack *track = [IVLPlaybackManager shared].track;
+    NSString *vid = [track.title isEqualToString:title] ? CurrentVideoID(track) : nil;
+    NSString *songURL = vid ? [NSString stringWithFormat:@"https://music.youtube.com/watch?v=%@", vid] : nil;
+    NSString *name = [[IVLSettings objectForKey:IVLKeyDiscordName] description];
+    if (!name.length) name = @"YouTube Music iOS";
+    // tooltip of the cover image: tweak version and iOS version, e.g. "v1.0.0 iOS 26.0.1"
+    NSString *tooltip = [NSString stringWithFormat:@"v%s iOS %@", IVL_VERSION, UIDevice.currentDevice.systemVersion];
+    BOOL songButton = [IVLSettings boolForKey:IVLKeyDiscordSongButton] && songURL;
+    NSString *github = [[IVLSettings objectForKey:IVLKeyDiscordGitHubURL] description];
+    BOOL githubButton = [IVLSettings boolForKey:IVLKeyDiscordGitHubButton] && [github hasPrefix:@"https://"];
+    // everything that is shown is part of the fingerprint: changes (cover found later, settings) trigger a resend
+    fingerprint = [fingerprint stringByAppendingFormat:@"\n%@\n%@\n%@\n%d%d%@", image ?: @"", name, songURL ?: @"", songButton, githubButton, github ?: @""];
     if (published && [fingerprint isEqual:lastFingerprint]) return;
 
     discordpp::Activity activity{};
     activity.SetType(payloadMode < 2 ? discordpp::ActivityTypes::Listening : discordpp::ActivityTypes::Playing);
+    // "Listening to <name>" (Discord shows the application name when the name is not accepted)
+    activity.SetName(UTF8(PresenceText(name)));
     activity.SetDetails(UTF8(PresenceText(title)));
+    if (songURL && payloadMode == 0) activity.SetDetailsUrl(UTF8(songURL));
     if (PresenceText(artist).length) activity.SetState(UTF8(PresenceText(artist)));
     if (image.length) {
         discordpp::ActivityAssets assets{};
         assets.SetLargeImage(UTF8(image));
-        assets.SetLargeText(UTF8(PresenceText(album.length ? album : @"YouTube Music")));
+        assets.SetLargeText(UTF8(PresenceText(tooltip)));
+        if (songURL) assets.SetLargeUrl(UTF8(songURL));
         activity.SetAssets(assets);
+    }
+    // up to two buttons (labels max 32 characters); others see them, the sender usually does not
+    if (payloadMode < 2) {
+        if (songButton) {
+            discordpp::ActivityButton b{};
+            b.SetLabel("Listen on YouTube Music");
+            b.SetUrl(UTF8(songURL));
+            activity.AddButton(b);
+        }
+        if (githubButton) {
+            discordpp::ActivityButton b{};
+            b.SetLabel("ivLyrics on GitHub");
+            b.SetUrl(UTF8(github));
+            activity.AddButton(b);
+        }
     }
     BOOL withTimes = payloadMode == 0 && duration > 0 && elapsed <= duration && fabs(rate - 1) < 0.001;
     if (withTimes) {
@@ -446,7 +489,8 @@ static NSString *CoverURL(NSString *title) {
     auto epoch = generation;
     auto revision = metadataRevision;
     YTMPLog(@"presence_send", @{ @"mode": @(payloadMode), @"details": PresenceText(title), @"state": PresenceText(artist),
-                                 @"duration": @(duration), @"elapsed": @(elapsed), @"timestamps": @(withTimes), @"image": image ?: @"", @"image_source": gCoverReason ?: @"" });
+                                 @"duration": @(duration), @"elapsed": @(elapsed), @"timestamps": @(withTimes), @"image": image ?: @"", @"image_source": gCoverReason ?: @"",
+                                 @"name": name, @"song_url": songURL ?: @"", @"buttons": @((songButton ? 1 : 0) + (githubButton ? 1 : 0)), @"interval": @(interval) });
     inFlight = YES; lastSend = now;
     client->UpdateRichPresence(activity, [self, epoch, revision, fingerprint, image](auto result) {
         LogResult(@"presence_result", result);

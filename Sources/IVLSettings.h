@@ -47,6 +47,11 @@ extern NSString *const IVLKeyLastfmKey;          // NSString API key (the shared
 extern NSString *const IVLKeyLastfmUser;         // NSString user name after login
 extern NSString *const IVLKeyListenBrainzEnabled;// BOOL
 extern NSString *const IVLKeyOpenPlayer;         // BOOL  lyrics screen opens on the player page
+extern NSString *const IVLKeyDiscordInterval;   // NSInteger seconds between presence updates (3..60, default 15)
+extern NSString *const IVLKeyDiscordName;        // NSString activity name ("Listening to <name>")
+extern NSString *const IVLKeyDiscordSongButton;  // BOOL  "Listen on YouTube Music" button
+extern NSString *const IVLKeyDiscordGitHubButton;// BOOL  GitHub button
+extern NSString *const IVLKeyDiscordGitHubURL;   // NSString
 extern NSString *const IVLKeyCaptionLang;        // NSString, "" = automatic (song language)
 
 @interface IVLSettings : NSObject

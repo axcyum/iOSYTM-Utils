@@ -14,7 +14,7 @@
 #define IVL_VERSION "1.0.0"
 #endif
 
-typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStepper, IVLRowLink, IVLRowAction, IVLRowInfo, IVLRowText, IVLRowColor };
+typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStepper, IVLRowLink, IVLRowAction, IVLRowInfo, IVLRowText, IVLRowColor, IVLRowSlider };
 
 @interface IVLRow : NSObject
 @property (nonatomic) IVLRowType type;
@@ -32,6 +32,7 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
 @property (nonatomic, copy) NSString *symbol;                 // SF Symbol for link rows
 @property (nonatomic, copy) NSString *placeholder;            // text rows
 @property (nonatomic) UIKeyboardType keyboard;
+@property (nonatomic) double danger;                          // slider rows: values below are shown in red
 @property (nonatomic) BOOL secure;                            // text rows stored in the keychain, never shown again
 @property (nonatomic, copy) void (^onText)(NSString *text);   // text rows without a settings key
 @end
@@ -288,9 +289,23 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
     };
     NSMutableArray *account = [NSMutableArray arrayWithObjects:state, login, nil];
     if (d.linked) [account addObject:forget];
+    IVLRow *interval = [IVLRow type:IVLRowSlider key:IVLKeyDiscordInterval title:IVLLoc(@"discord_interval")];
+    interval.min = 3; interval.max = 60; interval.step = 1; interval.danger = 15;
+    interval.format = ^NSString *(double v) {
+        return v < 15 ? [NSString stringWithFormat:IVLLoc(@"discord_interval_danger_fmt"), v] : [NSString stringWithFormat:IVLLoc(@"discord_interval_fmt"), v];
+    };
+    IVLRow *name = [IVLRow type:IVLRowText key:IVLKeyDiscordName title:IVLLoc(@"discord_name")];
+    name.placeholder = @"YouTube Music iOS";
+    IVLRow *songButton = [IVLRow type:IVLRowSwitch key:IVLKeyDiscordSongButton title:IVLLoc(@"discord_song_button")];
+    IVLRow *githubButton = [IVLRow type:IVLRowSwitch key:IVLKeyDiscordGitHubButton title:IVLLoc(@"discord_github_button")];
+    IVLRow *githubURL = [IVLRow type:IVLRowText key:IVLKeyDiscordGitHubURL title:IVLLoc(@"discord_github_url")];
+    githubURL.placeholder = @"https://github.com/…";
+    githubURL.keyboard = UIKeyboardTypeURL;
     return @[
         [IVLSection title:nil footer:IVLLoc(@"footer_discord") rows:account],
         [IVLSection title:nil footer:nil rows:@[share, cover]],
+        [IVLSection title:IVLLoc(@"discord_display") footer:IVLLoc(@"footer_discord_display") rows:@[name, songButton, githubButton, githubURL]],
+        [IVLSection title:IVLLoc(@"discord_interval") footer:IVLLoc(@"footer_discord_interval") rows:@[interval]],
         [IVLSection title:nil footer:nil rows:@[logs]],
     ];
 }
@@ -506,6 +521,54 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
             [f addAction:[UIAction actionWithHandler:^(UIAction *a) { [(UITextField *)a.sender resignFirstResponder]; }] forControlEvents:UIControlEventEditingDidEndOnExit];
             c.accessoryView = f;
             break;
+        }
+        case IVLRowSlider: {
+            // full-width slider under the title; values below `danger` are the "danger zone"
+            c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
+            c.selectionStyle = UITableViewCellSelectionStyleNone;
+            double v = MAX(row.min, MIN(row.max, [IVLSettings doubleForKey:row.key]));
+            UILabel *value = [UILabel new];
+            value.font = [UIFont monospacedDigitSystemFontOfSize:15 weight:UIFontWeightSemibold];
+            value.textAlignment = NSTextAlignmentRight;
+            UISlider *sl = [UISlider new];
+            sl.minimumValue = row.min; sl.maximumValue = row.max; sl.value = v;
+            NSString *(^fmt)(double) = row.format;
+            double danger = row.danger, step = row.step > 0 ? row.step : 1;
+            NSString *key = row.key;
+            void (^paint)(double) = ^(double x) {
+                BOOL hot = danger > 0 && x < danger;
+                value.text = fmt ? fmt(x) : @(x).stringValue;
+                value.textColor = hot ? UIColor.systemRedColor : UIColor.secondaryLabelColor;
+                sl.minimumTrackTintColor = hot ? UIColor.systemRedColor : nil;
+            };
+            paint(v);
+            [sl addAction:[UIAction actionWithHandler:^(UIAction *a) {
+                UISlider *s2 = (UISlider *)a.sender;
+                double x = round(s2.value / step) * step;
+                paint(x);
+            }] forControlEvents:UIControlEventValueChanged];
+            [sl addAction:[UIAction actionWithHandler:^(UIAction *a) {
+                UISlider *s2 = (UISlider *)a.sender;
+                double x = round(s2.value / step) * step;
+                s2.value = x;
+                if (danger > 0 && x < danger) [[UINotificationFeedbackGenerator new] notificationOccurred:UINotificationFeedbackTypeWarning];
+                [IVLSettings setObject:@(x) forKey:key];
+            }] forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside];
+            UILabel *title = [UILabel new];
+            title.text = row.title;
+            UIStackView *top = [[UIStackView alloc] initWithArrangedSubviews:@[title, value]];
+            UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[top, sl]];
+            stack.axis = UILayoutConstraintAxisVertical;
+            stack.spacing = 8;
+            stack.translatesAutoresizingMaskIntoConstraints = NO;
+            [c.contentView addSubview:stack];
+            [NSLayoutConstraint activateConstraints:@[
+                [stack.leadingAnchor constraintEqualToAnchor:c.contentView.layoutMarginsGuide.leadingAnchor],
+                [stack.trailingAnchor constraintEqualToAnchor:c.contentView.layoutMarginsGuide.trailingAnchor],
+                [stack.topAnchor constraintEqualToAnchor:c.contentView.topAnchor constant:12],
+                [stack.bottomAnchor constraintEqualToAnchor:c.contentView.bottomAnchor constant:-12],
+            ]];
+            return c;
         }
         case IVLRowColor: {
             NSString *hex = row.placeholder ?: @"";

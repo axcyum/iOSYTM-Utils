@@ -33,6 +33,11 @@ NSString *const IVLKeyLockLead = @"lockLead";
 NSString *const IVLKeyProviderSpotify = @"providerSpotify";
 NSString *const IVLKeyProviderCaptions = @"providerCaptions";
 NSString *const IVLKeyCaptionLang = @"captionLang";
+NSString *const IVLKeyDiscordInterval = @"discordInterval";
+NSString *const IVLKeyDiscordName = @"discordName";
+NSString *const IVLKeyDiscordSongButton = @"discordSongButton";
+NSString *const IVLKeyDiscordGitHubButton = @"discordGitHubButton";
+NSString *const IVLKeyDiscordGitHubURL = @"discordGitHubURL";
 NSString *const IVLKeyLastfmEnabled = @"lastfmEnabled";
 NSString *const IVLKeyLastfmKey = @"lastfmKey";
 NSString *const IVLKeyLastfmUser = @"lastfmUser";
@@ -93,6 +98,11 @@ static NSString *IVLLocCaptionsName(void) {
             IVLKeyProviderSpotify: @YES,
             IVLKeyProviderCaptions: @YES,
             IVLKeyCaptionLang: @"",
+            IVLKeyDiscordInterval: @15,
+            IVLKeyDiscordName: @"YouTube Music iOS",
+            IVLKeyDiscordSongButton: @YES,
+            IVLKeyDiscordGitHubButton: @YES,
+            IVLKeyDiscordGitHubURL: @"https://github.com/axcyum/ivLyricsYTM",
             IVLKeyLastfmEnabled: @YES,
             IVLKeyLastfmKey: @"",
             IVLKeyListenBrainzEnabled: @YES,
