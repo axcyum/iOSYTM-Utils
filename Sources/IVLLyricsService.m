@@ -227,7 +227,8 @@ static NSURL *IVLURL(NSString *base, NSString *path, NSDictionary<NSString *, NS
 }
 
 - (void)invokeProvider:(NSString *)pid track:(IVLTrack *)track completion:(IVLLyricsCompletion)done {
-    if ([pid isEqualToString:@"captions"]) [self captionsForTrack:track completion:done];
+    if ([pid isEqualToString:@"github"]) [self githubLRCForTrack:track completion:done];
+    else if ([pid isEqualToString:@"captions"]) [self captionsForTrack:track completion:done];
     else if ([pid isEqualToString:@"spotify"]) [[IVLSpotify shared] lyricsForTrack:track completion:done];
     else if ([pid isEqualToString:@"youtube"]) [self youtubeForTrack:track completion:done];
     else if ([pid isEqualToString:@"lyricsplus"]) [self lyricsPlusForTrack:track completion:done];
@@ -363,10 +364,11 @@ static NSInteger IVLLyricsQuality(IVLLyrics *ly, IVLTrack *track) {
             }
         }
 
-        // 2. Check saved per-song provider preference (e.g. "youtube", "unison", "lyricsplus", "spotify", "lrclib")
+        // 2. Check saved per-song provider preference (e.g. "github", "youtube", "unison", "lyricsplus", "spotify", "lrclib")
         NSString *pinned = [IVLSettings pinnedProviderForKeys:keys];
         BOOL isRealProvider = pinned.length > 0 && ![pinned isEqualToString:@"manual"] &&
-                              ![pinned isEqualToString:@"lrclib_manual"] && ![pinned isEqualToString:@"captions_manual"];
+                              ![pinned isEqualToString:@"lrclib_manual"] && ![pinned isEqualToString:@"captions_manual"] &&
+                              ![pinned isEqualToString:@"lrc_file"];
         if (isRealProvider) {
             [self invokeProvider:pinned track:track completion:^(IVLLyrics *ly, NSError *err) {
                 if (ly && ly.lines.count) {
@@ -460,7 +462,8 @@ static NSInteger IVLLyricsQuality(IVLLyrics *ly, IVLTrack *track) {
 - (void)removeCachedLyricsForTrack:(IVLTrack *)track {
     NSArray<NSString *> *keys = [IVLLyricsService storageKeysForTrack:track];
     NSString *pinned = [IVLSettings pinnedProviderForKeys:keys];
-    BOOL keepSavedSnapshot = [pinned isEqualToString:@"lrclib_manual"] || [pinned isEqualToString:@"captions_manual"] || [pinned isEqualToString:@"manual"];
+    BOOL keepSavedSnapshot = [pinned isEqualToString:@"lrclib_manual"] || [pinned isEqualToString:@"captions_manual"] ||
+                             [pinned isEqualToString:@"lrc_file"] || [pinned isEqualToString:@"manual"];
     for (NSString *k in keys) [_memory removeObjectForKey:k];
     dispatch_sync(_io, ^{
         for (NSString *k in keys) {

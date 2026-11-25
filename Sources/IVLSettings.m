@@ -19,6 +19,9 @@ NSString *const IVLKeyProviderLRCLIB = @"providerLRCLIB";
 NSString *const IVLKeyProviderYouTube = @"providerYouTube";
 NSString *const IVLKeyProviderLyricsPlus = @"providerLyricsPlus";
 NSString *const IVLKeyProviderLyrically = @"providerLyrically";
+NSString *const IVLKeyProviderGitHub = @"providerGitHub";
+NSString *const IVLKeyGitHubLRCRepo = @"githubLRCRepo";
+NSString *const IVLKeyGitHubLRCBranch = @"githubLRCBranch";
 NSString *const IVLKeyProviderOrder = @"providerOrderList";
 NSString *const IVLKeyGlobalOffset = @"globalOffset";
 NSString *const IVLKeyAutoResume = @"autoResume";
@@ -88,6 +91,9 @@ static NSString *IVLLocCaptionsName(void) {
             IVLKeyProviderYouTube: @YES,
             IVLKeyProviderLyricsPlus: @YES,
             IVLKeyProviderLyrically: @YES,
+            IVLKeyProviderGitHub: @YES,
+            IVLKeyGitHubLRCRepo: @"",
+            IVLKeyGitHubLRCBranch: @"",
             IVLKeyProviderOrder: [self knownProviders],
             IVLKeyGlobalOffset: @0,
             IVLKeyAutoResume: @3,
@@ -136,8 +142,8 @@ static NSString *IVLLocCaptionsName(void) {
 }
 
 + (NSArray<NSString *> *)knownProviders {
-    // word-synced sources first
-    return @[@"youtube", @"lyricsplus", @"spotify", @"captions", @"unison", @"lyrically", @"lrclib"];
+    // user GitHub LRC repo first (instant no-op when unconfigured), then synced sources
+    return @[@"github", @"youtube", @"lyricsplus", @"spotify", @"captions", @"unison", @"lyrically", @"lrclib"];
 }
 
 + (NSArray<NSString *> *)providerIDs {
@@ -157,12 +163,12 @@ static NSString *IVLLocCaptionsName(void) {
 + (void)setProviderIDs:(NSArray<NSString *> *)ids { [self setObject:[ids copy] forKey:IVLKeyProviderOrder]; }
 
 + (NSString *)enableKeyForProvider:(NSString *)pid {
-    return @{ @"captions": IVLKeyProviderCaptions, @"spotify": IVLKeyProviderSpotify, @"youtube": IVLKeyProviderYouTube, @"lyricsplus": IVLKeyProviderLyricsPlus, @"unison": IVLKeyProviderUnison,
+    return @{ @"github": IVLKeyProviderGitHub, @"captions": IVLKeyProviderCaptions, @"spotify": IVLKeyProviderSpotify, @"youtube": IVLKeyProviderYouTube, @"lyricsplus": IVLKeyProviderLyricsPlus, @"unison": IVLKeyProviderUnison,
               @"lyrically": IVLKeyProviderLyrically, @"lrclib": IVLKeyProviderLRCLIB }[pid] ?: @"";
 }
 
 + (NSString *)nameForProvider:(NSString *)pid {
-    return @{ @"captions": IVLLocCaptionsName(), @"spotify": @"Spotify", @"youtube": @"YouTube Music", @"lyricsplus": @"LyricsPlus", @"unison": @"Unison", @"lyrically": @"Lyrically", @"lrclib": @"LRCLIB" }[pid] ?: pid;
+    return @{ @"github": @"GitHub LRC", @"captions": IVLLocCaptionsName(), @"spotify": @"Spotify", @"youtube": @"YouTube Music", @"lyricsplus": @"LyricsPlus", @"unison": @"Unison", @"lyrically": @"Lyrically", @"lrclib": @"LRCLIB" }[pid] ?: pid;
 }
 
 + (NSArray<NSString *> *)enabledProviderIDs {

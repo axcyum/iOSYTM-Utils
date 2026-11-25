@@ -2,6 +2,7 @@
 #import "IVLSettings.h"
 #import "IVLLocalization.h"
 #import "IVLLyricsService.h"
+#import "IVLLyricsService+Private.h"
 #import "IVLTranslator.h"
 #import "IVLSpotify.h"
 #import "IVLDiscord.h"
@@ -179,6 +180,7 @@ typedef NS_ENUM(NSInteger, IVLRowType) {
         @"sync": IVLLoc(@"sec_sync"),
         @"lock": IVLLoc(@"sec_lock"),
         @"spotify": @"Spotify",
+        @"github_lrc": IVLLoc(@"github_lrc_repo"),
         @"discord": @"Discord Rich Presence",
         @"wnp": @"WebNowPlaying",
         @"accent": IVLLoc(@"accent_color"),
@@ -453,6 +455,55 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
     ];
 }
 
+- (NSArray<IVLSection *> *)githubLRCSections {
+    IVLRow *use = [IVLRow type:IVLRowSwitch key:IVLKeyProviderGitHub title:IVLLoc(@"github_lrc_use")];
+
+    IVLRow *repo = [IVLRow type:IVLRowText key:IVLKeyGitHubLRCRepo title:IVLLoc(@"github_lrc_repo_field")];
+    repo.placeholder = @"owner/repo";
+    repo.keyboard = UIKeyboardTypeURL;
+    repo.onText = ^(NSString *t) {
+        NSString *extractedBranch = nil;
+        NSString *norm = [IVLLyricsService parseGitHubOwnerRepo:t extractedBranch:&extractedBranch];
+        [IVLSettings setObject:(norm.length ? norm : t) forKey:IVLKeyGitHubLRCRepo];
+        if (extractedBranch.length && ![[IVLSettings objectForKey:IVLKeyGitHubLRCBranch] length]) {
+            [IVLSettings setObject:extractedBranch forKey:IVLKeyGitHubLRCBranch];
+        }
+        [[IVLLyricsService shared] invalidateGitHubLRCCache];
+    };
+
+    IVLRow *branch = [IVLRow type:IVLRowText key:IVLKeyGitHubLRCBranch title:IVLLoc(@"github_lrc_branch")];
+    branch.placeholder = IVLLoc(@"github_lrc_branch_placeholder");
+    branch.keyboard = UIKeyboardTypeASCIICapable;
+    branch.onText = ^(NSString *t) {
+        [IVLSettings setObject:t forKey:IVLKeyGitHubLRCBranch];
+        [[IVLLyricsService shared] invalidateGitHubLRCCache];
+    };
+
+    __weak typeof(self) weakSelf = self;
+    IVLRow *test = [IVLRow type:IVLRowAction key:@"" title:IVLLoc(@"github_lrc_test")];
+    test.action = ^(UIViewController *vc) {
+        [vc.view endEditing:YES];
+        NSString *r = [IVLSettings objectForKey:IVLKeyGitHubLRCRepo] ?: @"";
+        NSString *b = [IVLSettings objectForKey:IVLKeyGitHubLRCBranch] ?: @"";
+        [[IVLLyricsService shared] verifyGitHubLRCRepo:r branch:b completion:^(BOOL ok, NSUInteger count, NSString *norm, NSString *errMsg) {
+            if (ok && norm.length) {
+                [IVLSettings setObject:norm forKey:IVLKeyGitHubLRCRepo];
+                [weakSelf rebuild];
+            }
+            NSString *title = ok ? IVLLoc(@"github_lrc_test_ok") : IVLLoc(@"github_lrc_test_fail");
+            NSString *msg = ok ? [NSString stringWithFormat:IVLLoc(@"github_lrc_test_ok_fmt"), norm ?: r, (unsigned long)count] : (errMsg ?: @"Error");
+            UIAlertController *a = [UIAlertController alertControllerWithTitle:title message:msg preferredStyle:UIAlertControllerStyleAlert];
+            [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+            [vc presentViewController:a animated:YES completion:nil];
+        }];
+    };
+
+    return @[
+        [IVLSection title:nil footer:IVLLoc(@"footer_github_lrc") rows:@[repo, branch, test]],
+        [IVLSection title:nil footer:nil rows:@[use]],
+    ];
+}
+
 - (NSArray<IVLSection *> *)discordSections {
     IVLDiscord *d = [IVLDiscord shared];
     IVLRow *state = [IVLRow type:IVLRowInfo key:@"" title:IVLLoc(@"status")];
@@ -514,6 +565,7 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
     if ([_page isEqualToString:@"sync"]) { _sections = [self syncSections]; return; }
     if ([_page isEqualToString:@"lock"]) { _sections = [self lockSections]; return; }
     if ([_page isEqualToString:@"spotify"]) { _sections = [self spotifySections]; return; }
+    if ([_page isEqualToString:@"github_lrc"]) { _sections = [self githubLRCSections]; return; }
     if ([_page isEqualToString:@"discord"]) { _sections = [self discordSections]; return; }
     if ([_page isEqualToString:@"wnp"]) { _sections = [self wnpSections]; return; }
     if ([_page isEqualToString:@"scrobble"]) { _sections = [self scrobbleSections]; return; }
@@ -1108,6 +1160,7 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
 }
 
 + (NSString *)detailFor:(NSString *)pid {
+    if ([pid isEqualToString:@"github"]) return IVLLoc(@"src_github");
     if ([pid isEqualToString:@"captions"]) return IVLLoc(@"src_captions");
     if ([pid isEqualToString:@"spotify"]) return IVLLoc(@"src_spotify");
     if ([pid isEqualToString:@"youtube"]) return IVLLoc(@"src_youtube");
@@ -1120,7 +1173,7 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return 2; }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    return section == 0 ? _ids.count : 2;
+    return section == 0 ? _ids.count : 3;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
@@ -1141,11 +1194,16 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
             c.imageView.image = IVLBadgeImage(@"music.note.list", @"music.note", @"1DB954");
             c.textLabel.text = @"Spotify";
             c.detailTextLabel.text = [IVLSpotify shared].loggedIn ? IVLLoc(@"spotify_logged_in") : IVLLoc(@"spotify_logged_out");
-        } else {
+        } else if (indexPath.row == 1) {
             c.imageView.image = IVLBadgeImage(@"captions.bubble.fill", @"text.bubble.fill", @"0A84FF");
             c.textLabel.text = IVLLoc(@"caption_lang");
             NSString *code = [IVLSettings objectForKey:IVLKeyCaptionLang];
             c.detailTextLabel.text = code.length ? [IVLLanguagePickerViewController nameForCode:code] : IVLLoc(@"caption_auto");
+        } else {
+            c.imageView.image = IVLBadgeImage(@"chevron.left.forwardslash.chevron.right", @"folder.fill", @"24292F");
+            c.textLabel.text = IVLLoc(@"github_lrc_repo");
+            NSString *repo = [IVLSettings objectForKey:IVLKeyGitHubLRCRepo];
+            c.detailTextLabel.text = repo.length ? repo : IVLLoc(@"not_configured");
         }
         return c;
     }
@@ -1195,10 +1253,12 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
     if (indexPath.section != 1) return;
     if (indexPath.row == 0) {
         [self.navigationController pushViewController:[[IVLSettingsViewController alloc] initWithPage:@"spotify"] animated:YES];
-    } else {
+    } else if (indexPath.row == 1) {
         IVLLanguagePickerViewController *picker = [IVLLanguagePickerViewController new];
         picker.settingsKey = IVLKeyCaptionLang;
         [self.navigationController pushViewController:picker animated:YES];
+    } else {
+        [self.navigationController pushViewController:[[IVLSettingsViewController alloc] initWithPage:@"github_lrc"] animated:YES];
     }
 }
 

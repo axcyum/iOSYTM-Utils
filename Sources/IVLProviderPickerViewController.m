@@ -1,4 +1,5 @@
 #import "IVLProviderPickerViewController.h"
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import "IVLSearchViewController.h"
 #import "IVLLyricsService.h"
 #import "IVLPlaybackManager.h"
@@ -13,6 +14,9 @@
 @end
 
 typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLProbeEmpty, IVLProbeFailed };
+
+@interface IVLProviderPickerViewController () <UIDocumentPickerDelegate>
+@end
 
 @implementation IVLProviderPickerViewController {
     NSArray<NSString *> *_ids;
@@ -65,7 +69,9 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return 3; }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    return section == 1 ? _ids.count : 1;
+    if (section == 1) return _ids.count;
+    if (section == 2) return 2;
+    return 1;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
@@ -107,16 +113,29 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
         return c;
     }
     if (indexPath.section == 2) {
-        c.textLabel.text = IVLLoc(@"search_lyrics");
-        if ([pinned isEqualToString:@"lrclib_manual"]) {
-            NSString *savedSrc = cur.source.length ? cur.source : @"LRCLIB";
-            c.detailTextLabel.text = [NSString stringWithFormat:@"✓ %@", savedSrc];
-            c.detailTextLabel.textColor = UIColor.systemGreenColor;
+        if (indexPath.row == 0) {
+            c.textLabel.text = IVLLoc(@"search_lyrics");
+            if ([pinned isEqualToString:@"lrclib_manual"]) {
+                NSString *savedSrc = cur.source.length ? cur.source : @"LRCLIB";
+                c.detailTextLabel.text = [NSString stringWithFormat:@"✓ %@", savedSrc];
+                c.detailTextLabel.textColor = UIColor.systemGreenColor;
+            } else {
+                c.detailTextLabel.text = IVLLoc(@"search_lrclib_hint");
+            }
+            c.imageView.image = [UIImage systemImageNamed:@"magnifyingglass"];
+            c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         } else {
-            c.detailTextLabel.text = IVLLoc(@"search_lrclib_hint");
+            c.textLabel.text = IVLLoc(@"import_lrc_file");
+            if ([pinned isEqualToString:@"lrc_file"]) {
+                NSString *savedSrc = cur.source.length ? cur.source : @"LRC";
+                c.detailTextLabel.text = [NSString stringWithFormat:@"✓ %@", savedSrc];
+                c.detailTextLabel.textColor = UIColor.systemGreenColor;
+            } else {
+                c.detailTextLabel.text = IVLLoc(@"import_lrc_hint");
+            }
+            c.imageView.image = [UIImage systemImageNamed:@"doc.text"];
+            c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         }
-        c.imageView.image = [UIImage systemImageNamed:@"magnifyingglass"];
-        c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         return c;
     }
 
@@ -160,6 +179,11 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
         c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;   // choose the subtitle language for this song
         c.selectionStyle = UITableViewCellSelectionStyleDefault;
     }
+    if ([pid isEqualToString:@"github"] && st != IVLProbeLoading && ![[IVLSettings objectForKey:IVLKeyGitHubLRCRepo] length]) {
+        c.detailTextLabel.text = IVLLoc(@"github_lrc_tap_to_setup");
+        c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        c.selectionStyle = UITableViewCellSelectionStyleDefault;
+    }
     return c;
 }
 
@@ -171,7 +195,14 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
         return;
     }
     if (indexPath.section == 2) {
-        [self.navigationController pushViewController:[IVLSearchViewController new] animated:YES];
+        if (indexPath.row == 0) {
+            [self.navigationController pushViewController:[IVLSearchViewController new] animated:YES];
+        } else {
+            UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeItem] asCopy:YES];
+            picker.delegate = self;
+            picker.allowsMultipleSelection = NO;
+            [self presentViewController:picker animated:YES completion:nil];
+        }
         return;
     }
     NSString *pid = _ids[indexPath.row];
@@ -181,9 +212,38 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
         [self.navigationController pushViewController:list animated:YES];
         return;
     }
+    if ([pid isEqualToString:@"github"] && ![[IVLSettings objectForKey:IVLKeyGitHubLRCRepo] length]) {
+        [self.navigationController pushViewController:[[IVLSettingsViewController alloc] initWithPage:@"github_lrc"] animated:YES];
+        return;
+    }
     IVLLyrics *ly = _results[pid];
     if (!ly) return;
     [[IVLPlaybackManager shared] useManualLyrics:ly providerID:pid];
+    [[UINotificationFeedbackGenerator new] notificationOccurred:UINotificationFeedbackTypeSuccess];
+    [self close];
+}
+
+#pragma mark - UIDocumentPickerDelegate
+
+- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    NSURL *url = urls.firstObject;
+    if (!url) return;
+    BOOL scoped = [url startAccessingSecurityScopedResource];
+    NSData *data = [NSData dataWithContentsOfURL:url];
+    if (scoped) [url stopAccessingSecurityScopedResource];
+
+    NSString *fileName = url.lastPathComponent ?: @"lyrics.lrc";
+    IVLLyrics *ly = [IVLLyricsService parseLyricsData:data fileName:fileName durationMs:(NSInteger)(_track.duration * 1000)];
+    if (!ly.lines.count) {
+        UIAlertController *a = [UIAlertController alertControllerWithTitle:IVLLoc(@"import_lrc_failed")
+                                                                   message:fileName
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+        [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:a animated:YES completion:nil];
+        return;
+    }
+    ly.source = [NSString stringWithFormat:@"LRC (%@)", fileName];
+    [[IVLPlaybackManager shared] useManualLyrics:ly providerID:@"lrc_file"];
     [[UINotificationFeedbackGenerator new] notificationOccurred:UINotificationFeedbackTypeSuccess];
     [self close];
 }

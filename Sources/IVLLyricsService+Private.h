@@ -31,6 +31,17 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)youtubeSquareCoverForTrack:(IVLTrack *)track completion:(void (^)(NSString *_Nullable coverURL, NSString *_Nullable vid))completion;
 @end
 
+/// Root-level LRC/TTML files hosted in a user-specified GitHub repository
+@interface IVLLyricsService (GitHubLRC)
++ (nullable NSString *)parseGitHubOwnerRepo:(NSString *)raw extractedBranch:(NSString *_Nullable *_Nullable)outBranch;
++ (nullable IVLLyrics *)parseLyricsData:(NSData *)data fileName:(NSString *)fileName durationMs:(NSInteger)durMs;
+- (void)invalidateGitHubLRCCache;
+- (void)githubLRCForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)done;
+- (void)verifyGitHubLRCRepo:(NSString *)raw
+                     branch:(nullable NSString *)branch
+                 completion:(void (^)(BOOL ok, NSUInteger fileCount, NSString *_Nullable normalizedRepo, NSString *_Nullable errorMsg))completion;
+@end
+
 FOUNDATION_EXPORT NSDictionary *_Nullable IVLPickCaptionTrack(NSArray<NSDictionary *> *tracks, IVLTrack *track);
 
 /// Best match among @{ id, title, artist, duration(seconds) } candidates (nil when nothing is convincing).

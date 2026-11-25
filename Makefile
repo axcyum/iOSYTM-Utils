@@ -32,7 +32,7 @@ endif
 ivLyricsYTM_FILES = $(wildcard Sources/*.x) $(wildcard Sources/*.m) $(wildcard Sources/*.mm)
 ivLyricsYTM_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-unused-function -Wno-format-nonliteral -Wno-format-security -Wno-error -ISources -DIVL_VERSION=\"$(PACKAGE_VERSION)\" -DIVL_COMMIT=\"$(GIT_COMMIT)\"
 ivLyricsYTM_CCFLAGS = -std=c++20 -fno-modules -fno-cxx-modules
-ivLyricsYTM_FRAMEWORKS = UIKit Foundation QuartzCore CoreText CoreImage NaturalLanguage MediaPlayer WebKit Security Network AVFoundation AVKit ShazamKit
+ivLyricsYTM_FRAMEWORKS = UIKit Foundation QuartzCore CoreText CoreImage NaturalLanguage MediaPlayer WebKit Security Network AVFoundation AVKit ShazamKit UniformTypeIdentifiers
 
 ifneq ($(DISCORD_SDK),)
 # The SDK is not linked: tools/gen_discord_stubs.py turns its C API into forwarding stubs that are
