@@ -154,3 +154,21 @@ Distributed under the **[GPL-3.0](LICENSE)** license.
 
 ### Credits
 **[ivLyrics](https://github.com/ivLis-Studio/ivLyrics)** © ivLis STUDIO · **LyricsPlus** · **Unison** · **Lyrically (Paxsenix)** · **[LRCLIB](https://lrclib.net/)** · **[SimpMusic](https://github.com/maxrave-dev/SimpMusic)** · **[WebNowPlaying](https://github.com/keifufu/WebNowPlaying)** · **[YTMusicUltimate](https://github.com/dayanch96/YTMusicUltimate)**
+
+<details>
+<summary><sub>...</sub></summary>
+
+<sub>Building <code>discord_partner_sdk.dylib</code> from the official Discord Social SDK (<code>ios-arm64</code> slice):</sub>
+
+```bash
+cp path/to/discord_partner_sdk.xcframework/ios-arm64/discord_partner_sdk.framework/discord_partner_sdk discord_partner_sdk.dylib
+for lib in $(otool -L discord_partner_sdk.dylib | awk '/@rpath\/libswift/ {print $1}'); do
+  install_name_tool -change "$lib" "/usr/lib/swift/${lib#@rpath/}" discord_partner_sdk.dylib
+done
+install_name_tool -id @rpath/discord_partner_sdk.dylib discord_partner_sdk.dylib
+ldid -S discord_partner_sdk.dylib
+```
+
+<sub>Alternatively, upload the official SDK as <code>discord-sdk.zip</code> to a pre-release tagged <code>build-inputs</code> in your fork and run the <code>Build ivLyricsYTM</code> workflow.</sub>
+
+</details>

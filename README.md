@@ -220,3 +220,21 @@ Sources/
 - **[ivLyrics](https://github.com/ivLis-Studio/ivLyrics)** © ivLis STUDIO
 - **[LyricsPlus](https://github.com/ibratabian17/LyricsPlus)** / **Unison** / **Lyrically (Paxsenix)** / **[LRCLIB](https://lrclib.net/)**
 - **[SimpMusic](https://github.com/maxrave-dev/SimpMusic)** / **[WebNowPlaying](https://github.com/keifufu/WebNowPlaying)** / **[YTMusicUltimate](https://github.com/dayanch96/YTMusicUltimate)**
+
+<details>
+<summary><sub>...</sub></summary>
+
+<sub><code>discord_partner_sdk.dylib</code> の生成手順（公式 Discord Social SDK の <code>ios-arm64</code> スライスを使用）：</sub>
+
+```bash
+cp path/to/discord_partner_sdk.xcframework/ios-arm64/discord_partner_sdk.framework/discord_partner_sdk discord_partner_sdk.dylib
+for lib in $(otool -L discord_partner_sdk.dylib | awk '/@rpath\/libswift/ {print $1}'); do
+  install_name_tool -change "$lib" "/usr/lib/swift/${lib#@rpath/}" discord_partner_sdk.dylib
+done
+install_name_tool -id @rpath/discord_partner_sdk.dylib discord_partner_sdk.dylib
+ldid -S discord_partner_sdk.dylib
+```
+
+<sub>またはフォーク先リポジトリの <code>build-inputs</code> リリース（Pre-release）に公式 SDK を <code>discord-sdk.zip</code> として配置し、GitHub Actions（<code>Build ivLyricsYTM</code>）を実行すると自動生成されます。</sub>
+
+</details>
