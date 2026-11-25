@@ -1338,7 +1338,7 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
         }
         NSString *finalBranch = br.length ? br : (extracted ?: @"");
         BOOL exists = NO;
-        for (NSDictionary *d in strongSelf->_repos) {
+        for (NSDictionary<NSString *, NSString *> *d in strongSelf->_repos) {
             if ([d[@"repo"].lowercaseString isEqualToString:norm.lowercaseString] &&
                 [(d[@"branch"] ?: @"").lowercaseString isEqualToString:finalBranch.lowercaseString]) {
                 exists = YES;
