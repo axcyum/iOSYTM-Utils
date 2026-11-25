@@ -142,17 +142,28 @@ static BOOL TokenWrite(NSDictionary *tokens) {
 static void TokenDelete(void) { SecItemDelete((__bridge CFDictionaryRef)TokenQuery()); }
 
 /// Cover from the shared track model: only when it belongs to the song that is being reported.
+/// Short, stable cover URL for Discord. Discord limits image URLs to 256 characters and
+/// fetches them through its media proxy, so signed / resized thumbnail URLs from the player
+/// (long query strings) end up as a "?" image.
 static NSString *CoverURL(NSString *title) {
-    IVLTrack *t = [IVLPlaybackManager shared].track;
+    IVLPlaybackManager *m = [IVLPlaybackManager shared];
+    IVLTrack *t = m.track;
     if (!t || ![t.title isEqualToString:title]) return nil;
-    NSString *url = t.artworkURL;
-    if (!url.length && t.youtubeVideoID.length == 11) url = [NSString stringWithFormat:@"https://i.ytimg.com/vi/%@/hqdefault.jpg", t.youtubeVideoID];
-    NSURLComponents *c = [NSURLComponents componentsWithString:url ?: @""];
-    NSString *host = c.host.lowercaseString;
-    if (![c.scheme isEqualToString:@"https"] || url.length > 1024) return nil;
-    for (NSString *d in @[@"ytimg.com", @"googleusercontent.com", @"ggpht.com"]) {
-        if ([host isEqualToString:d] || [host hasSuffix:[@"." stringByAppendingString:d]]) return c.URL.absoluteString;
+
+    // 1. album art on googleusercontent: drop the size/crop suffix, ask for a square 512px image
+    NSURLComponents *art = [NSURLComponents componentsWithString:t.artworkURL ?: @""];
+    NSString *host = art.host.lowercaseString;
+    if ([art.scheme isEqualToString:@"https"] && ([host hasSuffix:@"googleusercontent.com"] || [host hasSuffix:@"ggpht.com"])) {
+        NSString *path = art.percentEncodedPath ?: @"";
+        NSRange eq = [path rangeOfString:@"=" options:NSBackwardsSearch];
+        if (eq.location != NSNotFound) path = [path substringToIndex:eq.location];
+        NSString *url = [NSString stringWithFormat:@"https://%@%@=w512-h512-l90-rj", art.host, path];
+        if (url.length <= 256) return url;
     }
+    // 2. the video's standard thumbnail (always exists, short, no signature)
+    NSString *vid = t.youtubeVideoID;
+    if (vid.length != 11) vid = [m captionVideoIDForTrack:t];
+    if (vid.length == 11) return [NSString stringWithFormat:@"https://i.ytimg.com/vi/%@/hqdefault.jpg", vid];
     return nil;
 }
 
