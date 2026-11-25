@@ -135,10 +135,10 @@ cyan -i YouTubeMusic.ipa -o YouTubeMusic_Utils.ipa -uwsf ivLyricsYTM.dylib disco
 
 - **GitHub Actions での自動注入**：リポジトリの Actions から `Build ivLyricsYTM` を手動実行（`workflow_dispatch`）し、`ipa_url` に復号済み IPA の URL を指定すると、注入済み IPA が Artifacts に生成されます。
 
-### IPA注入(Windows/Linux/MacOS [Impactor](https://github.com/claration/impactor))
+### IPA 注入 楽 (Windows/Linux/MacOS [Impactor](https://github.com/claration/impactor))
 <img width="581" height="511" alt="{98E34315-B6AC-4A65-8CE1-8932EEE539CE}" src="https://github.com/user-attachments/assets/80615ecd-313a-496c-8182-9eacde9edd90" /><br>
-初期設定をすまし、サイドローディングができるようになったら、TweakからDylibを選択、インストールで完了です。<br>
-2個以上（DiscordSDK等）も同時にできます
+初期設定をすまし、サイドローディングができるようになったら、TweakからDylibを選択、
+インストールを押して完了です。2個以上（DiscordSDK等）も同時にできます
 
 
 ### 脱獄環境（Jailbreak）
