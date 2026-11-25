@@ -52,6 +52,8 @@ typedef NS_ENUM(NSInteger, IVLLyricsState) {
 @interface IVLPlaybackManager (Captions)
 /// Caption tracks of the video loaded in the player: [{url, lang, name, asr}] (main thread).
 - (NSArray<NSDictionary *> *)currentCaptionTracks;
+/// Video id loaded in the player if it is `track` (title or length agree), otherwise nil.
+- (nullable NSString *)captionVideoIDForTrack:(IVLTrack *)track;
 @end
 
 NS_ASSUME_NONNULL_END

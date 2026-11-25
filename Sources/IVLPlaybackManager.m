@@ -197,7 +197,8 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
         title = nTitle;
         artist = nArtist.length ? nArtist : (pArtist ?: @"");
         duration = nDuration > 0 ? nDuration : pDuration;
-        if (pVid.length && IVLLooseEqual(pTitle, nTitle)) vid = pVid;
+        BOOL sameLength = pDuration > 0 && nDuration > 0 && fabs(pDuration - nDuration) < 1.5;
+        if (pVid.length && (IVLLooseEqual(pTitle, nTitle) || (pTitle.length && sameLength))) vid = pVid;
         else if (p && attempt < 6) { retry(); return; }   // give the player a moment to catch up
     } else if (pVid.length && pTitle.length) {
         if (pDuration <= 0 && attempt < 8) { retry(); return; }

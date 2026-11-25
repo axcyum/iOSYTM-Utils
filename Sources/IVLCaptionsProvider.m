@@ -121,39 +121,48 @@ static IVLLyrics *IVLParseJSON3(NSDictionary *json, NSInteger durMs) {
     }];
 }
 
+static NSError *IVLCapError(NSString *message) {
+    return [NSError errorWithDomain:@"IVLCaptions" code:404 userInfo:@{ NSLocalizedDescriptionKey: message }];
+}
+
 - (void)captionsForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)done {
     NSInteger durMs = (NSInteger)(track.duration * 1000);
     __block NSArray *inApp = nil;
-    void (^readApp)(void) = ^{ inApp = [[IVLPlaybackManager shared] currentCaptionTracks]; };
+    __block NSString *playing = nil;
+    void (^readApp)(void) = ^{
+        IVLPlaybackManager *m = [IVLPlaybackManager shared];
+        playing = [m captionVideoIDForTrack:track];
+        inApp = playing ? [m currentCaptionTracks] : @[];
+    };
     if (NSThread.isMainThread) readApp(); else dispatch_sync(dispatch_get_main_queue(), readApp);
+    NSString *vid = playing ?: track.youtubeVideoID;
 
     NSDictionary *pick = IVLPickCaptionTrack(inApp ?: @[]);
     if (pick) { [self fetchCaptionTrack:pick durationMs:durMs label:@"字幕" completion:done]; return; }
+    if (!vid.length) { done(nil, IVLCapError(@"再生中の動画を特定できません")); return; }
 
-    NSString *vid = track.youtubeVideoID;
-    if (!vid.length) {
-        done(nil, [NSError errorWithDomain:@"IVLCaptions" code:404 userInfo:@{ NSLocalizedDescriptionKey: @"この動画に字幕はありません" }]);
-        return;
-    }
-    // song playing: look for the music video version
-    [self musicVideoCounterpartFor:vid completion:^(NSString *mv) {
-        if (!mv.length) {
-            done(nil, [NSError errorWithDomain:@"IVLCaptions" code:404 userInfo:@{ NSLocalizedDescriptionKey: @"字幕付きの動画版が見つかりません" }]);
-            return;
-        }
-        [self innerTubePlayer:mv completion:^(NSDictionary *player) {
-            double len = [player[@"videoDetails"][@"lengthSeconds"] doubleValue];
-            if (track.duration > 0 && len > 0 && fabs(len - track.duration) > 2.0) {
-                done(nil, [NSError errorWithDomain:@"IVLCaptions" code:404 userInfo:@{ NSLocalizedDescriptionKey:
-                    [NSString stringWithFormat:@"動画版の長さが曲と違うため使えません（%.0f秒 / %.0f秒）", len, track.duration] }]);
-                return;
-            }
-            NSDictionary *t = IVLPickCaptionTrack(IVLCaptionTracksFromJSON(player));
-            if (!t) {
-                done(nil, [NSError errorWithDomain:@"IVLCaptions" code:404 userInfo:@{ NSLocalizedDescriptionKey: @"動画版に字幕がありません" }]);
-                return;
-            }
-            [self fetchCaptionTrack:t durationMs:durMs label:@"動画字幕" completion:done];
+    NSString *appNote = [NSString stringWithFormat:@"アプリ内 %lu件", (unsigned long)inApp.count];
+    // 1. caption list of the playing video straight from the player API
+    [self innerTubePlayer:vid completion:^(NSDictionary *player) {
+        NSArray *tracks = IVLCaptionTracksFromJSON(player ?: @{});
+        NSDictionary *t = IVLPickCaptionTrack(tracks);
+        if (t) { [self fetchCaptionTrack:t durationMs:durMs label:@"字幕" completion:done]; return; }
+        NSString *status = [player[@"playabilityStatus"][@"status"] description] ?: (player ? @"?" : @"通信失敗");
+        NSString *apiNote = [NSString stringWithFormat:@"API %@ %lu件", status, (unsigned long)tracks.count];
+
+        // 2. audio-only song: the music video version
+        [self musicVideoCounterpartFor:vid completion:^(NSString *mv) {
+            if (!mv.length) { done(nil, IVLCapError([NSString stringWithFormat:@"字幕なし（%@ / %@ / 動画版なし）", appNote, apiNote])); return; }
+            [self innerTubePlayer:mv completion:^(NSDictionary *mp) {
+                double len = [mp[@"videoDetails"][@"lengthSeconds"] doubleValue];
+                if (track.duration > 0 && len > 0 && fabs(len - track.duration) > 2.0) {
+                    done(nil, IVLCapError([NSString stringWithFormat:@"動画版の長さが曲と違うため使えません（%.0f秒 / %.0f秒）", len, track.duration]));
+                    return;
+                }
+                NSDictionary *mt = IVLPickCaptionTrack(IVLCaptionTracksFromJSON(mp ?: @{}));
+                if (!mt) { done(nil, IVLCapError([NSString stringWithFormat:@"字幕なし（%@ / %@ / 動画版にも字幕なし）", appNote, apiNote])); return; }
+                [self fetchCaptionTrack:mt durationMs:durMs label:@"動画字幕" completion:done];
+            }];
         }];
     }];
 }
@@ -199,12 +208,28 @@ static IVLLyrics *IVLParseJSON3(NSDictionary *json, NSInteger durMs) {
 
 @implementation IVLPlaybackManager (Captions)
 
-- (NSArray<NSDictionary *> *)currentCaptionTracks {
+/// Video id loaded in the player when it is this track (title or length must agree).
+- (NSString *)captionVideoIDForTrack:(IVLTrack *)track {
     id player = self.player;
-    NSString *vid = self.track.youtubeVideoID;
     NSString *playing = IVLCapStr(IVLCapFirst(player, @[@"currentVideoID", @"contentVideoID"]));
-    if (!vid.length || ![vid isEqualToString:playing]) return @[];   // only the video that is actually loaded
+    if (!playing.length) return nil;
+    if ([playing isEqualToString:track.youtubeVideoID]) return playing;
     id response = IVLCapGet(player, @"playerResponse");
+    id data = IVLCapFirst(response, @[@"playerData"]) ?: response;
+    id details = IVLCapGet(data, @"videoDetails");
+    NSString *title = IVLCapStr(IVLCapGet(details, @"title")).lowercaseString;
+    NSString *want = track.title.lowercaseString;
+    BOOL titleMatch = title.length && want.length && ([title containsString:want] || [want containsString:title]);
+    CGFloat len = 0;
+    if ([player respondsToSelector:@selector(currentVideoTotalMediaTime)]) {
+        len = ((CGFloat (*)(id, SEL))objc_msgSend)(player, @selector(currentVideoTotalMediaTime));
+    }
+    BOOL lengthMatch = len > 0 && track.duration > 0 && fabs(len - track.duration) < 1.5;
+    return (titleMatch || lengthMatch) ? playing : nil;
+}
+
+- (NSArray<NSDictionary *> *)currentCaptionTracks {
+    id response = IVLCapGet(self.player, @"playerResponse");
     id data = IVLCapFirst(response, @[@"playerData"]) ?: response;
     return IVLCaptionTracksFromResponse(data);
 }
