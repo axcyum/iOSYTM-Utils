@@ -28,6 +28,7 @@ extern NSString *const IVLKeyAutoResume;         // NSInteger seconds, 0 = never
 extern NSString *const IVLKeyButtonX;            // double 0..1
 extern NSString *const IVLKeyButtonY;            // double 0..1
 extern NSString *const IVLKeySongOffsets;        // NSDictionary videoID -> ms
+extern NSString *const IVLKeySongProviders;      // NSDictionary trackKey -> providerID / "lrclib_manual"
 extern NSString *const IVLKeyLockEnabled;        // BOOL  lyrics on the lock screen artwork
 extern NSString *const IVLKeyLockAnimation;      // BOOL  slide + fade between lines
 extern NSString *const IVLKeyLockKaraoke;        // BOOL  word fill on the lock screen
@@ -47,8 +48,10 @@ extern NSString *const IVLKeyLastfmKey;          // NSString API key (the shared
 extern NSString *const IVLKeyLastfmUser;         // NSString user name after login
 extern NSString *const IVLKeyListenBrainzEnabled;// BOOL
 extern NSString *const IVLKeyOpenPlayer;         // BOOL  lyrics screen opens on the player page
-extern NSString *const IVLKeyImmersivePlayer;    // BOOL  Apple Music full-bleed hero (experimental, default NO)
-extern NSString *const IVLKeyDiscordInterval;   // NSInteger seconds between presence updates (3..60, default 15)
+extern NSString *const IVLKeyImmersivePlayer;    // BOOL  Apple Music full-bleed hero UI (experimental, default NO)
+extern NSString *const IVLKeyAMLyrics;           // BOOL  Apple Music inline lyrics view (experimental, default NO)
+extern NSString *const IVLKeyDiscordInterval;    // NSInteger seconds between presence updates (3..60, default 15)
+extern NSString *const IVLKeyDiscordStatusDisplay; // NSInteger 0 = Activity Name, 1 = Artist Name, 2 = Song Title
 extern NSString *const IVLKeyDiscordName;        // NSString activity name ("Listening to <name>")
 extern NSString *const IVLKeyDiscordSongButton;  // BOOL  "Listen on YouTube Music" button
 extern NSString *const IVLKeyDiscordGitHubButton;// BOOL  GitHub button
@@ -65,6 +68,9 @@ extern NSString *const IVLKeyCaptionLang;        // NSString, "" = automatic (so
 
 + (NSInteger)songOffsetForVideoID:(NSString *)videoID;
 + (void)setSongOffset:(NSInteger)ms forVideoID:(NSString *)videoID;
+
++ (nullable NSString *)pinnedProviderForKeys:(NSArray<NSString *> *)keys;
++ (void)setPinnedProvider:(nullable NSString *)providerID forKeys:(NSArray<NSString *> *)keys;
 
 + (NSString *)defaultTranslationLanguage;
 

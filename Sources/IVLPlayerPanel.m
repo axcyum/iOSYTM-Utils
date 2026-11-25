@@ -826,8 +826,8 @@ static NSString *IVLClock(double s) {
 
 - (void)settingsChanged:(NSNotification *)n {
     NSString *k = n.object;
-    if (!k || [k isEqualToString:IVLKeyImmersivePlayer]) {
-        if (![self isImmersive] && _lyricsMode) [self setLyricsMode:NO animated:NO];
+    if (!k || [k isEqualToString:IVLKeyImmersivePlayer] || [k isEqualToString:IVLKeyAMLyrics]) {
+        if (![self usesAMLyrics] && _lyricsMode) [self setLyricsMode:NO animated:NO];
         [self setNeedsLayout];
     }
     if (!k || [k isEqualToString:IVLKeyTranslation] || [k isEqualToString:IVLKeyPronunciation] || [k isEqualToString:IVLKeyShowBreaks]) {
@@ -856,12 +856,13 @@ static NSString *IVLClock(double s) {
 }
 
 - (BOOL)isImmersive { return [IVLSettings boolForKey:IVLKeyImmersivePlayer]; }
+- (BOOL)usesAMLyrics { return [self isImmersive] || [IVLSettings boolForKey:IVLKeyAMLyrics]; }
 - (BOOL)isVideoShape { return _aspect > 1.12; }
 
 - (void)toggleLyricsMode { [self setLyricsMode:!_lyricsMode animated:YES]; }
 
 - (void)setLyricsMode:(BOOL)on animated:(BOOL)animated {
-    if (on && ![self isImmersive]) {
+    if (on && ![self usesAMLyrics]) {
         if (self.onShowLyrics) self.onShowLyrics();
         return;
     }
@@ -1177,7 +1178,7 @@ static NSString *IVLClock(double s) {
     UIEdgeInsets safe = self.safeAreaInsets;
     CGFloat inner = W - kPad * 2;
     BOOL immersive = [self isImmersive];
-    BOOL inLyrics = immersive && _lyricsMode;
+    BOOL inLyrics = [self usesAMLyrics] && _lyricsMode;
 
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
@@ -1450,7 +1451,7 @@ static NSString *IVLClock(double s) {
 
 - (void)artTapped {
     [[UIImpactFeedbackGenerator new] impactOccurred];
-    if ([self isImmersive]) {
+    if ([self usesAMLyrics]) {
         [self setLyricsMode:YES animated:YES];
     } else if (self.onShowLyrics) {
         self.onShowLyrics();
@@ -1459,7 +1460,7 @@ static NSString *IVLClock(double s) {
 
 - (void)lyricsTapped {
     [[UIImpactFeedbackGenerator new] impactOccurred];
-    if ([self isImmersive]) {
+    if ([self usesAMLyrics]) {
         [self toggleLyricsMode];
     } else if (self.onShowLyrics) {
         self.onShowLyrics();

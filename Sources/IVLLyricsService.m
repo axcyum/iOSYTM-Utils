@@ -4,6 +4,7 @@
 #import "IVLLyricsParser.h"
 #import "IVLSettings.h"
 #import <NaturalLanguage/NaturalLanguage.h>
+#import <CommonCrypto/CommonDigest.h>
 
 #ifndef IVL_VERSION
 #define IVL_VERSION "1.0.0"
@@ -309,6 +310,27 @@ static NSInteger IVLLyricsQuality(IVLLyrics *ly, IVLTrack *track) {
 
 #pragma mark - Public
 
++ (NSArray<NSString *> *)storageKeysForTrack:(IVLTrack *)track {
+    if (!track) return @[];
+    NSMutableArray<NSString *> *keys = [NSMutableArray array];
+    if (track.youtubeVideoID.length) [keys addObject:track.youtubeVideoID];
+    if (track.videoID.length && ![track.videoID hasPrefix:@"np_"] && ![keys containsObject:track.videoID]) {
+        [keys addObject:track.videoID];
+    }
+    NSString *ct = [[self cleanTitle:track.title] lowercaseString];
+    NSString *ca = [[self cleanArtist:track.artist] lowercaseString];
+    if (ct.length) {
+        NSData *d = [[NSString stringWithFormat:@"%@\n%@", ct, ca ?: @""] dataUsingEncoding:NSUTF8StringEncoding];
+        unsigned char out[CC_SHA1_DIGEST_LENGTH];
+        CC_SHA1(d.bytes, (CC_LONG)d.length, out);
+        NSMutableString *sig = [NSMutableString stringWithString:@"sig_"];
+        for (int i = 0; i < 10; i++) [sig appendFormat:@"%02x", out[i]];
+        if (![keys containsObject:sig]) [keys addObject:sig];
+    }
+    if (track.videoID.length && ![keys containsObject:track.videoID]) [keys addObject:track.videoID];
+    return keys;
+}
+
 - (void)fetchProvider:(NSString *)providerID track:(IVLTrack *)track completion:(IVLLyricsCompletion)completion {
     [self invokeProvider:providerID track:track completion:^(IVLLyrics *ly, NSError *err) {
         if (ly && !ly.language) ly.language = [IVLLyricsService detectLanguage:ly];
@@ -318,20 +340,67 @@ static NSInteger IVLLyricsQuality(IVLLyrics *ly, IVLTrack *track) {
 
 - (void)lyricsForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)completion {
     IVLLyricsCompletion main = ^(IVLLyrics *ly, NSError *e) { dispatch_async(dispatch_get_main_queue(), ^{ completion(ly, e); }); };
-    NSString *vid = track.videoID;
-    IVLLyrics *mem = vid.length ? [_memory objectForKey:vid] : nil;
-    if (mem) { main(mem, nil); return; }
+    NSArray<NSString *> *keys = [IVLLyricsService storageKeysForTrack:track];
+    for (NSString *k in keys) {
+        IVLLyrics *mem = [_memory objectForKey:k];
+        if (mem) { main(mem, nil); return; }
+    }
 
     dispatch_async(_io, ^{
-        IVLLyrics *disk = [self readFile:[self manualPathFor:vid]] ?: [self readFile:[self cachePathFor:vid]];
-        if (disk) { [self->_memory setObject:disk forKey:vid]; main(disk, nil); return; }
+        // 1. Check permanently saved manual lyrics (LRCLIB selection / pinned provider snapshot) across all track keys
+        for (NSString *k in keys) {
+            IVLLyrics *saved = [self readFile:[self savedPathFor:k]] ?: [self readFile:[self manualPathFor:k]];
+            if (saved) {
+                saved.manual = YES;
+                for (NSString *mk in keys) {
+                    [self->_memory setObject:saved forKey:mk];
+                    if (![[NSFileManager defaultManager] fileExistsAtPath:[self savedPathFor:mk]]) {
+                        [self writeLyrics:saved toPath:[self savedPathFor:mk]];
+                    }
+                }
+                main(saved, nil);
+                return;
+            }
+        }
 
+        // 2. Check saved per-song provider preference (e.g. "youtube", "unison", "lyricsplus", "spotify", "lrclib")
+        NSString *pinned = [IVLSettings pinnedProviderForKeys:keys];
+        BOOL isRealProvider = pinned.length > 0 && ![pinned isEqualToString:@"manual"] &&
+                              ![pinned isEqualToString:@"lrclib_manual"] && ![pinned isEqualToString:@"captions_manual"];
+        if (isRealProvider) {
+            [self invokeProvider:pinned track:track completion:^(IVLLyrics *ly, NSError *err) {
+                if (ly && ly.lines.count) {
+                    ly.manual = YES;
+                    ly.pinnedProvider = pinned;
+                    if (!ly.language) ly.language = [IVLLyricsService detectLanguage:ly];
+                    for (NSString *mk in keys) [self->_memory setObject:ly forKey:mk];
+                    dispatch_async(self->_io, ^{
+                        for (NSString *mk in keys) [self writeLyrics:ly toPath:[self savedPathFor:mk]];
+                    });
+                }
+                main(ly.lines.count ? ly : nil, err);
+            }];
+            return;
+        }
+
+        // 3. Check standard auto-fetched disk cache
+        for (NSString *k in keys) {
+            IVLLyrics *disk = [self readFile:[self cachePathFor:k]];
+            if (disk) {
+                for (NSString *mk in keys) [self->_memory setObject:disk forKey:mk];
+                main(disk, nil);
+                return;
+            }
+        }
+
+        // 4. Parallel search across enabled providers
         [self runProviders:[IVLSettings enabledProviderIDs] track:track completion:^(IVLLyrics *ly, NSError *err) {
             if (ly) {
                 ly.language = [IVLLyricsService detectLanguage:ly];
-                if (vid.length) {
-                    [self->_memory setObject:ly forKey:vid];
-                    dispatch_async(self->_io, ^{ [self writeLyrics:ly toPath:[self cachePathFor:vid]]; });
+                for (NSString *mk in keys) [self->_memory setObject:ly forKey:mk];
+                NSString *primary = keys.firstObject;
+                if (primary.length) {
+                    dispatch_async(self->_io, ^{ [self writeLyrics:ly toPath:[self cachePathFor:primary]]; });
                 }
             }
             main(ly, err);
@@ -366,12 +435,55 @@ static NSInteger IVLLyricsQuality(IVLLyrics *ly, IVLTrack *track) {
     }];
 }
 
+- (void)saveManualLyrics:(IVLLyrics *)lyrics forTrack:(IVLTrack *)track providerID:(NSString *)providerID {
+    if (!track || !lyrics) return;
+    NSArray<NSString *> *keys = [IVLLyricsService storageKeysForTrack:track];
+    if (!keys.count) return;
+    lyrics.manual = YES;
+    lyrics.pinnedProvider = providerID;
+    if (!lyrics.language) lyrics.language = [IVLLyricsService detectLanguage:lyrics];
+    [IVLSettings setPinnedProvider:(providerID.length ? providerID : @"manual") forKeys:keys];
+    for (NSString *k in keys) [_memory setObject:lyrics forKey:k];
+    dispatch_async(_io, ^{
+        for (NSString *k in keys) [self writeLyrics:lyrics toPath:[self savedPathFor:k]];
+    });
+}
+
 - (void)saveManualLyrics:(IVLLyrics *)lyrics forVideoID:(NSString *)videoID {
     if (!videoID.length || !lyrics) return;
     lyrics.manual = YES;
     if (!lyrics.language) lyrics.language = [IVLLyricsService detectLanguage:lyrics];
     [_memory setObject:lyrics forKey:videoID];
-    dispatch_async(_io, ^{ [self writeLyrics:lyrics toPath:[self manualPathFor:videoID]]; });
+    dispatch_async(_io, ^{ [self writeLyrics:lyrics toPath:[self savedPathFor:videoID]]; });
+}
+
+- (void)removeCachedLyricsForTrack:(IVLTrack *)track {
+    NSArray<NSString *> *keys = [IVLLyricsService storageKeysForTrack:track];
+    NSString *pinned = [IVLSettings pinnedProviderForKeys:keys];
+    BOOL keepSavedSnapshot = [pinned isEqualToString:@"lrclib_manual"] || [pinned isEqualToString:@"captions_manual"] || [pinned isEqualToString:@"manual"];
+    for (NSString *k in keys) [_memory removeObjectForKey:k];
+    dispatch_sync(_io, ^{
+        for (NSString *k in keys) {
+            [[NSFileManager defaultManager] removeItemAtPath:[self cachePathFor:k] error:nil];
+            if (!keepSavedSnapshot) {
+                [[NSFileManager defaultManager] removeItemAtPath:[self savedPathFor:k] error:nil];
+                [[NSFileManager defaultManager] removeItemAtPath:[self manualPathFor:k] error:nil];
+            }
+        }
+    });
+}
+
+- (void)clearManualChoiceForTrack:(IVLTrack *)track {
+    NSArray<NSString *> *keys = [IVLLyricsService storageKeysForTrack:track];
+    [IVLSettings setPinnedProvider:nil forKeys:keys];
+    for (NSString *k in keys) [_memory removeObjectForKey:k];
+    dispatch_sync(_io, ^{
+        for (NSString *k in keys) {
+            [[NSFileManager defaultManager] removeItemAtPath:[self savedPathFor:k] error:nil];
+            [[NSFileManager defaultManager] removeItemAtPath:[self manualPathFor:k] error:nil];
+            [[NSFileManager defaultManager] removeItemAtPath:[self cachePathFor:k] error:nil];
+        }
+    });
 }
 
 - (void)removeCachedLyricsForVideoID:(NSString *)videoID {
@@ -379,7 +491,6 @@ static NSInteger IVLLyricsQuality(IVLLyrics *ly, IVLTrack *track) {
     [_memory removeObjectForKey:videoID];
     dispatch_sync(_io, ^{
         [[NSFileManager defaultManager] removeItemAtPath:[self cachePathFor:videoID] error:nil];
-        [[NSFileManager defaultManager] removeItemAtPath:[self manualPathFor:videoID] error:nil];
     });
 }
 
@@ -424,6 +535,11 @@ static NSInteger IVLLyricsQuality(IVLLyrics *ly, IVLTrack *track) {
     return [base stringByAppendingPathComponent:@"ivLyricsYTM/manual"];
 }
 
+- (NSString *)savedDir {
+    NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+    return [docs stringByAppendingPathComponent:@"ivLyrics/saved_lyrics"];
+}
+
 static NSString *IVLSafeName(NSString *vid) {
     NSCharacterSet *bad = [[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"] invertedSet];
     return [[[vid ?: @"" componentsSeparatedByCharactersInSet:bad] componentsJoinedByString:@"_"] stringByAppendingPathExtension:@"json"];
@@ -431,6 +547,7 @@ static NSString *IVLSafeName(NSString *vid) {
 
 - (NSString *)cachePathFor:(NSString *)vid { return vid.length ? [[self cacheDir] stringByAppendingPathComponent:IVLSafeName(vid)] : nil; }
 - (NSString *)manualPathFor:(NSString *)vid { return vid.length ? [[self manualDir] stringByAppendingPathComponent:IVLSafeName(vid)] : nil; }
+- (NSString *)savedPathFor:(NSString *)vid { return vid.length ? [[self savedDir] stringByAppendingPathComponent:IVLSafeName(vid)] : nil; }
 
 - (IVLLyrics *)readFile:(NSString *)path {
     if (!path) return nil;

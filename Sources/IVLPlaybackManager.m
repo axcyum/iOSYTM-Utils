@@ -429,7 +429,10 @@ static NSArray<NSString *> *IVLCandidateThumbURLs(NSString *rawThumb, NSString *
         target.youtubeVideoID = pVid;
         if (pThumb.length && !target.artworkURL.length) target.artworkURL = pThumb;
         [self ensureArtworkForTrack:target attempt:1];
-        if (self.state == IVLLyricsStateNotFound || self.state == IVLLyricsStateError) [self loadLyricsIgnoringCache:NO];
+        NSString *vidPin = [IVLSettings pinnedProviderForKeys:@[pVid]];
+        if (self.state == IVLLyricsStateNotFound || self.state == IVLLyricsStateError || (vidPin.length && !self.lyrics.manual)) {
+            [self loadLyricsIgnoringCache:NO];
+        }
         return;
     }
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.08 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -570,7 +573,7 @@ static NSArray<NSString *> *IVLCandidateThumbURLs(NSString *rawThumb, NSString *
 - (void)loadLyricsIgnoringCache:(BOOL)ignoreCache {
     IVLTrack *t = self.track;
     if (!t) return;
-    if (ignoreCache) [[IVLLyricsService shared] removeCachedLyricsForVideoID:t.videoID];
+    if (ignoreCache) [[IVLLyricsService shared] removeCachedLyricsForTrack:t];
     self.state = IVLLyricsStateLoading;
     self.lyrics = nil;
     [[NSNotificationCenter defaultCenter] postNotificationName:IVLLyricsDidChangeNotification object:self];
@@ -586,9 +589,19 @@ static NSArray<NSString *> *IVLCandidateThumbURLs(NSString *rawThumb, NSString *
 
 - (void)reloadLyrics { [self loadLyricsIgnoringCache:YES]; }
 
+- (void)resetManualChoiceAndReload {
+    if (!self.track) return;
+    [[IVLLyricsService shared] clearManualChoiceForTrack:self.track];
+    [self loadLyricsIgnoringCache:NO];
+}
+
 - (void)useManualLyrics:(IVLLyrics *)lyrics {
+    [self useManualLyrics:lyrics providerID:nil];
+}
+
+- (void)useManualLyrics:(IVLLyrics *)lyrics providerID:(NSString *)providerID {
     if (!self.track || !lyrics) return;
-    [[IVLLyricsService shared] saveManualLyrics:lyrics forVideoID:self.track.videoID];
+    [[IVLLyricsService shared] saveManualLyrics:lyrics forTrack:self.track providerID:providerID];
     self.lyrics = lyrics;
     self.state = IVLLyricsStateLoaded;
     [self refreshExtras];

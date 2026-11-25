@@ -28,7 +28,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) BOOL karaoke;
 @property (nonatomic, copy) NSString *source;           // "Unison", "LRCLIB", ...
 @property (nonatomic, copy, nullable) NSString *language; // detected (BCP-47)
-@property (nonatomic, assign) BOOL manual;               // chosen by user search
+@property (nonatomic, assign) BOOL manual;               // chosen by user search / provider picker
+@property (nonatomic, copy, nullable) NSString *pinnedProvider; // provider id or "lrclib_manual"
 
 - (NSInteger)indexOfLineAtTime:(NSInteger)ms;              // -1 before first line
 - (NSString *)plainText;

@@ -13,6 +13,7 @@ TARGET := iphone:clang:latest:18.0
 ARCHS := arm64
 INSTALL_TARGET_PROCESSES = YouTubeMusic
 PACKAGE_VERSION = 1.0.0
+GIT_COMMIT := $(shell git rev-parse --short=7 HEAD 2>/dev/null || echo dev)
 
 ifeq ($(ROOTLESS),1)
 THEOS_PACKAGE_SCHEME = rootless
@@ -29,7 +30,7 @@ LIBRARY_NAME = ivLyricsYTM
 endif
 
 ivLyricsYTM_FILES = $(wildcard Sources/*.x) $(wildcard Sources/*.m) $(wildcard Sources/*.mm)
-ivLyricsYTM_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-unused-function -Wno-format-nonliteral -Wno-format-security -Wno-error -ISources -DIVL_VERSION=\"$(PACKAGE_VERSION)\"
+ivLyricsYTM_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-unused-function -Wno-format-nonliteral -Wno-format-security -Wno-error -ISources -DIVL_VERSION=\"$(PACKAGE_VERSION)\" -DIVL_COMMIT=\"$(GIT_COMMIT)\"
 ivLyricsYTM_CCFLAGS = -std=c++20 -fno-modules -fno-cxx-modules
 ivLyricsYTM_FRAMEWORKS = UIKit Foundation QuartzCore CoreText CoreImage NaturalLanguage MediaPlayer WebKit Security Network AVFoundation AVKit ShazamKit
 

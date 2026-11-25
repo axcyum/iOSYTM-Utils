@@ -14,8 +14,45 @@
 #define IVL_VERSION "1.0.0"
 #endif
 
-static NSString *const kIVLAuthorURL = @"https://github.com/axcyum";
-static NSString *const kIVLRepoURL   = @"https://github.com/axcyum/iOSYTM-Utils";
+#ifndef IVL_COMMIT
+#define IVL_COMMIT "dev"
+#endif
+
+static NSString *const kIVLAuthorURL    = @"https://github.com/axcyum";
+static NSString *const kIVLRepoURL      = @"https://github.com/axcyum/iOSYTM-Utils";
+static NSString *const kIVLActionsURL   = @"https://github.com/axcyum/iOSYTM-Utils/actions";
+static NSString *const kIVLReleasesAPI  = @"https://api.github.com/repos/axcyum/iOSYTM-Utils/releases?per_page=10";
+static NSString *const kIVLMainHeadAPI  = @"https://api.github.com/repos/axcyum/iOSYTM-Utils/commits/main";
+
+static NSString *IVLNormalizeSemver(NSString *raw) {
+    NSString *s = [raw stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] ?: @"";
+    if ([s hasPrefix:@"v"] || [s hasPrefix:@"V"]) s = [s substringFromIndex:1];
+    NSRange dash = [s rangeOfString:@"-"];
+    if (dash.location != NSNotFound) s = [s substringToIndex:dash.location];
+    return s;
+}
+
+static NSComparisonResult IVLCompareSemver(NSString *a, NSString *b) {
+    NSArray<NSString *> *pa = [IVLNormalizeSemver(a) componentsSeparatedByString:@"."];
+    NSArray<NSString *> *pb = [IVLNormalizeSemver(b) componentsSeparatedByString:@"."];
+    NSUInteger n = MAX(pa.count, pb.count);
+    for (NSUInteger i = 0; i < n; i++) {
+        NSInteger va = i < pa.count ? [pa[i] integerValue] : 0;
+        NSInteger vb = i < pb.count ? [pb[i] integerValue] : 0;
+        if (va < vb) return NSOrderedAscending;
+        if (va > vb) return NSOrderedDescending;
+    }
+    return NSOrderedSame;
+}
+
+static BOOL IVLHasRealCommit(void) {
+    NSString *c = @IVL_COMMIT;
+    return c.length >= 7 && ![c isEqualToString:@"dev"] && ![c isEqualToString:@"unknown"];
+}
+
+static NSString *IVLDisplayVersion(void) {
+    return IVLHasRealCommit() ? [NSString stringWithFormat:@"%s (%s)", IVL_VERSION, IVL_COMMIT] : @IVL_VERSION;
+}
 
 static UIImage *IVLBadgeImage(NSString *symbol, NSString *fallback, NSString *hex) {
     if (!symbol.length || !hex.length) return nil;
@@ -72,7 +109,9 @@ typedef NS_ENUM(NSInteger, IVLRowType) {
 @property (nonatomic, copy) BOOL (^getBool)(void);
 @property (nonatomic, copy) void (^setBool)(BOOL on);
 @property (nonatomic, assign) BOOL destructive;
+@property (nonatomic, assign) BOOL disabled;
 @property (nonatomic, assign) BOOL external;
+@property (nonatomic, assign) BOOL busy;
 @property (nonatomic, copy) NSString *symbol;
 @property (nonatomic, copy) NSString *fallbackSymbol;
 @property (nonatomic, copy) NSString *badgeHex;
@@ -118,6 +157,8 @@ typedef NS_ENUM(NSInteger, IVLRowType) {
     NSArray<IVLSection *> *_sections;
     NSString *_page;
     __weak UILabel *_previewLabel;
+    BOOL _checkingUpdate;
+    NSString *_updateStatus;
 }
 
 - (instancetype)init { return [self initWithPage:nil]; }
@@ -202,10 +243,27 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
     IVLRow *accent = colorPage(@"accent", IVLLoc(@"accent_color"), IVLKeyAccentColor);
     IVLRow *bg = colorPage(@"bgcolor", IVLLoc(@"bg_color"), IVLKeyBackgroundColor);
     IVLRow *openPlayer = [IVLRow type:IVLRowSwitch key:IVLKeyOpenPlayer title:IVLLoc(@"open_player")];
+
+    __weak typeof(self) weakSelf = self;
+    BOOL amUIOn = [IVLSettings boolForKey:IVLKeyImmersivePlayer];
+
     IVLRow *immersive = [IVLRow type:IVLRowSwitch key:IVLKeyImmersivePlayer title:IVLLoc(@"immersive_player")];
+    immersive.getBool = ^BOOL { return [IVLSettings boolForKey:IVLKeyImmersivePlayer]; };
+    immersive.setBool = ^(BOOL on) {
+        [IVLSettings setBool:on forKey:IVLKeyImmersivePlayer];
+        if (on) [IVLSettings setBool:YES forKey:IVLKeyAMLyrics];
+        [weakSelf rebuild];
+    };
+
+    IVLRow *amLyrics = [IVLRow type:IVLRowSwitch key:IVLKeyAMLyrics title:IVLLoc(@"am_lyrics")];
+    amLyrics.disabled = amUIOn;
+    amLyrics.getBool = ^BOOL {
+        return [IVLSettings boolForKey:IVLKeyImmersivePlayer] ? YES : [IVLSettings boolForKey:IVLKeyAMLyrics];
+    };
+
     return @[
         [IVLSection title:IVLLoc(@"theme") footer:IVLLoc(@"footer_theme") rows:@[theme, accent, bg]],
-        [IVLSection title:IVLLoc(@"player_style") footer:IVLLoc(@"footer_player_style") rows:@[openPlayer, immersive]],
+        [IVLSection title:IVLLoc(@"player_style") footer:IVLLoc(@"footer_player_style") rows:@[openPlayer, amLyrics, immersive]],
     ];
 }
 
@@ -433,12 +491,14 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
     interval.format = ^NSString *(double v) {
         return v < 15 ? [NSString stringWithFormat:IVLLoc(@"discord_interval_danger_fmt"), v] : [NSString stringWithFormat:IVLLoc(@"discord_interval_fmt"), v];
     };
+    IVLRow *statusDisp = [IVLRow type:IVLRowSegment key:IVLKeyDiscordStatusDisplay title:IVLLoc(@"discord_status_display")];
+    statusDisp.options = @[IVLLoc(@"status_disp_name"), IVLLoc(@"status_disp_artist"), IVLLoc(@"status_disp_title")];
     IVLRow *songButton = [IVLRow type:IVLRowSwitch key:IVLKeyDiscordSongButton title:IVLLoc(@"discord_song_button")];
     IVLRow *githubButton = [IVLRow type:IVLRowSwitch key:IVLKeyDiscordGitHubButton title:IVLLoc(@"discord_github_button")];
     return @[
         [IVLSection title:nil footer:IVLLoc(@"footer_discord") rows:account],
         [IVLSection title:nil footer:nil rows:@[share, cover]],
-        [IVLSection title:IVLLoc(@"discord_display") footer:IVLLoc(@"footer_discord_display") rows:@[songButton, githubButton]],
+        [IVLSection title:IVLLoc(@"discord_display") footer:IVLLoc(@"footer_discord_display") rows:@[statusDisp, songButton, githubButton]],
         [IVLSection title:IVLLoc(@"discord_interval") footer:IVLLoc(@"footer_discord_interval") rows:@[interval]],
         [IVLSection title:nil footer:nil rows:@[logs]],
     ];
@@ -601,17 +661,173 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
         if (u) [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
     };
 
+    __weak typeof(self) weakSelf = self;
+    IVLRow *checkUpdates = [[IVLRow type:IVLRowAction key:@"" title:IVLLoc(@"check_updates")]
+                            withBadge:@"arrow.triangle.2.circlepath" fallback:@"arrow.clockwise" hex:@"30D158"];
+    checkUpdates.busy = _checkingUpdate;
+    checkUpdates.detail = ^NSString *{
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) return nil;
+        return strongSelf->_checkingUpdate ? IVLLoc(@"checking_updates") : strongSelf->_updateStatus;
+    };
+    checkUpdates.action = ^(UIViewController *vc) {
+        [weakSelf checkForUpdatesFrom:vc];
+    };
+
     IVLRow *version = [[IVLRow type:IVLRowInfo key:@"" title:IVLLoc(@"version")]
                        withBadge:@"info.circle.fill" fallback:@"info.circle" hex:@"8E8E93"];
-    version.detail = ^NSString *{ return @IVL_VERSION; };
+    version.detail = ^NSString *{ return IVLDisplayVersion(); };
 
     _sections = @[
         [IVLSection title:IVLLoc(@"sec_general") footer:nil rows:@[master, btnPage, appearancePage, displayPage]],
         [IVLSection title:IVLLoc(@"sec_lyrics_lang") footer:nil rows:@[sourcesPage, transPage, syncPage]],
         [IVLSection title:IVLLoc(@"sec_tools") footer:nil rows:@[lockPage, sleepPage, recognizeRow]],
         [IVLSection title:IVLLoc(@"sec_integrations") footer:nil rows:@[discordPage, scrobblePage, wnpPage, statsPage]],
-        [IVLSection title:IVLLoc(@"sec_data") footer:IVLLoc(@"footer_about") rows:@[clear, devLink, repoLink, version]],
+        [IVLSection title:IVLLoc(@"sec_data") footer:IVLLoc(@"footer_about") rows:@[clear, checkUpdates, devLink, repoLink, version]],
     ];
+}
+
+- (void)checkForUpdatesFrom:(UIViewController *)vc {
+    if (_checkingUpdate) return;
+    _checkingUpdate = YES;
+    [self rebuild];
+
+    NSURLSessionConfiguration *cfg = [NSURLSessionConfiguration ephemeralSessionConfiguration];
+    cfg.timeoutIntervalForRequest = 12.0;
+    cfg.requestCachePolicy = NSURLRequestReloadIgnoringLocalCacheData;
+    NSURLSession *session = [NSURLSession sessionWithConfiguration:cfg];
+
+    dispatch_group_t grp = dispatch_group_create();
+    __block NSString *latestReleaseTag = nil;
+    __block NSString *latestReleaseURL = nil;
+    __block NSString *latestReleaseBody = nil;
+    __block NSString *latestMainSHA = nil;
+    __block NSString *latestMainMsg = nil;
+    __block NSError *fetchErr = nil;
+    __block BOOL gotAnyResponse = NO;
+
+    NSMutableURLRequest *(^makeReq)(NSString *) = ^NSMutableURLRequest *(NSString *urlStr) {
+        NSMutableURLRequest *r = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:urlStr]];
+        [r setValue:@"application/vnd.github+json" forHTTPHeaderField:@"Accept"];
+        [r setValue:@"iOSYTM-Utils" forHTTPHeaderField:@"User-Agent"];
+        return r;
+    };
+
+    dispatch_group_enter(grp);
+    [[session dataTaskWithRequest:makeReq(kIVLReleasesAPI) completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+        NSInteger code = [resp isKindOfClass:[NSHTTPURLResponse class]] ? ((NSHTTPURLResponse *)resp).statusCode : 0;
+        if (code == 200 && data.length) {
+            id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+            if ([json isKindOfClass:[NSArray class]]) {
+                gotAnyResponse = YES;
+                for (id item in (NSArray *)json) {
+                    if (![item isKindOfClass:[NSDictionary class]]) continue;
+                    NSDictionary *rel = item;
+                    if ([rel[@"draft"] boolValue]) continue;
+                    NSString *tag = [rel[@"tag_name"] isKindOfClass:[NSString class]] ? rel[@"tag_name"] : @"";
+                    if (!tag.length || [tag isEqualToString:@"build-inputs"]) continue;
+                    latestReleaseTag = tag;
+                    latestReleaseURL = [rel[@"html_url"] isKindOfClass:[NSString class]] ? rel[@"html_url"] : nil;
+                    latestReleaseBody = [rel[@"body"] isKindOfClass:[NSString class]] ? rel[@"body"] : nil;
+                    break;
+                }
+            }
+        } else if (err && !fetchErr) {
+            fetchErr = err;
+        }
+        dispatch_group_leave(grp);
+    }] resume];
+
+    dispatch_group_enter(grp);
+    [[session dataTaskWithRequest:makeReq(kIVLMainHeadAPI) completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+        NSInteger code = [resp isKindOfClass:[NSHTTPURLResponse class]] ? ((NSHTTPURLResponse *)resp).statusCode : 0;
+        if (code == 200 && data.length) {
+            id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+            if ([json isKindOfClass:[NSDictionary class]]) {
+                gotAnyResponse = YES;
+                NSString *sha = [json[@"sha"] isKindOfClass:[NSString class]] ? json[@"sha"] : nil;
+                if (sha.length >= 7) latestMainSHA = [sha substringToIndex:7];
+                NSDictionary *commitObj = [json[@"commit"] isKindOfClass:[NSDictionary class]] ? json[@"commit"] : nil;
+                NSString *msg = [commitObj[@"message"] isKindOfClass:[NSString class]] ? commitObj[@"message"] : nil;
+                if (msg.length) {
+                    latestMainMsg = [[msg componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet].firstObject
+                                     stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+                }
+            }
+        } else if (err && !fetchErr) {
+            fetchErr = err;
+        }
+        dispatch_group_leave(grp);
+    }] resume];
+
+    __weak typeof(self) weakSelf = self;
+    __weak UIViewController *weakVC = vc;
+    dispatch_group_notify(grp, dispatch_get_main_queue(), ^{
+        [session finishTasksAndInvalidate];
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf->_checkingUpdate = NO;
+
+        if (!gotAnyResponse) {
+            [strongSelf rebuild];
+            UIViewController *presenter = weakVC ?: strongSelf;
+            UIAlertController *a = [UIAlertController alertControllerWithTitle:IVLLoc(@"update_check_failed")
+                                                                       message:fetchErr.localizedDescription
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+            [a addAction:[UIAlertAction actionWithTitle:IVLLoc(@"cancel") style:UIAlertActionStyleCancel handler:nil]];
+            [a addAction:[UIAlertAction actionWithTitle:IVLLoc(@"open_github") style:UIAlertActionStyleDefault handler:^(UIAlertAction *act) {
+                NSURL *u = [NSURL URLWithString:kIVLRepoURL];
+                if (u) [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
+            }]];
+            [presenter presentViewController:a animated:YES completion:nil];
+            return;
+        }
+
+        BOOL hasNewRelease = latestReleaseTag.length > 0 && IVLCompareSemver(latestReleaseTag, @IVL_VERSION) == NSOrderedDescending;
+        NSString *localCommit = @IVL_COMMIT;
+        BOOL hasNewCommit = !hasNewRelease && IVLHasRealCommit() && latestMainSHA.length >= 7
+            && ![latestMainSHA.lowercaseString isEqualToString:[localCommit substringToIndex:MIN((NSUInteger)7, localCommit.length)].lowercaseString];
+
+        if (hasNewRelease || hasNewCommit) {
+            strongSelf->_updateStatus = IVLLoc(@"update_badge_new");
+            [strongSelf rebuild];
+            NSString *msg = nil;
+            NSString *openURLStr = kIVLRepoURL;
+            if (hasNewRelease) {
+                NSString *notes = [latestReleaseBody stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+                if (notes.length > 220) notes = [[notes substringToIndex:220] stringByAppendingString:@"…"];
+                NSString *suffix = notes.length ? [NSString stringWithFormat:@"\n\n%@", notes] : @"";
+                msg = [NSString stringWithFormat:IVLLoc(@"update_release_msg_fmt"), latestReleaseTag, @IVL_VERSION, suffix];
+                if (latestReleaseURL.length) openURLStr = latestReleaseURL;
+            } else {
+                msg = [NSString stringWithFormat:IVLLoc(@"update_commit_msg_fmt"),
+                       [localCommit substringToIndex:MIN((NSUInteger)7, localCommit.length)],
+                       latestMainSHA,
+                       latestMainMsg.length ? latestMainMsg : kIVLRepoURL];
+                openURLStr = kIVLActionsURL;
+            }
+            UIViewController *presenter = weakVC ?: strongSelf;
+            UIAlertController *a = [UIAlertController alertControllerWithTitle:IVLLoc(@"update_available")
+                                                                       message:msg
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+            [a addAction:[UIAlertAction actionWithTitle:IVLLoc(@"cancel") style:UIAlertActionStyleCancel handler:nil]];
+            [a addAction:[UIAlertAction actionWithTitle:IVLLoc(@"open_github") style:UIAlertActionStyleDefault handler:^(UIAlertAction *act) {
+                NSURL *u = [NSURL URLWithString:openURLStr];
+                if (u) [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
+            }]];
+            [presenter presentViewController:a animated:YES completion:nil];
+        } else {
+            strongSelf->_updateStatus = IVLLoc(@"update_badge_latest");
+            [strongSelf rebuild];
+            UIViewController *presenter = weakVC ?: strongSelf;
+            NSString *msg = [NSString stringWithFormat:IVLLoc(@"up_to_date_msg_fmt"), IVLDisplayVersion()];
+            UIAlertController *a = [UIAlertController alertControllerWithTitle:IVLLoc(@"up_to_date")
+                                                                       message:msg
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+            [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+            [presenter presentViewController:a animated:YES completion:nil];
+        }
+    });
 }
 
 #pragma mark - UITableViewDataSource
@@ -661,13 +877,20 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
     switch (row.type) {
         case IVLRowSwitch: {
             UISwitch *s = [UISwitch new];
-            s.on = row.getBool ? row.getBool() : [IVLSettings boolForKey:row.key];
-            NSString *key = row.key;
-            void (^custom)(BOOL) = row.setBool;
-            [s addAction:[UIAction actionWithHandler:^(UIAction *a) {
-                BOOL on = ((UISwitch *)a.sender).on;
-                if (custom) custom(on); else [IVLSettings setBool:on forKey:key];
-            }] forControlEvents:UIControlEventValueChanged];
+            s.on = row.disabled ? YES : (row.getBool ? row.getBool() : [IVLSettings boolForKey:row.key]);
+            if (row.disabled) {
+                s.enabled = NO;
+                c.textLabel.textColor = UIColor.secondaryLabelColor;
+                c.backgroundColor = [UIColor colorWithWhite:1 alpha:0.05];
+                c.contentView.alpha = 0.55;
+            } else {
+                NSString *key = row.key;
+                void (^custom)(BOOL) = row.setBool;
+                [s addAction:[UIAction actionWithHandler:^(UIAction *a) {
+                    BOOL on = ((UISwitch *)a.sender).on;
+                    if (custom) custom(on); else [IVLSettings setBool:on forKey:key];
+                }] forControlEvents:UIControlEventValueChanged];
+            }
             c.accessoryView = s;
             break;
         }
@@ -746,7 +969,14 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
                 c.textLabel.textColor = row.destructive ? UIColor.systemRedColor : self.view.tintColor;
             }
             c.detailTextLabel.text = row.detail ? row.detail() : nil;
-            c.selectionStyle = UITableViewCellSelectionStyleDefault;
+            if (row.busy) {
+                UIActivityIndicatorView *sp = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
+                [sp startAnimating];
+                c.accessoryView = sp;
+                c.selectionStyle = UITableViewCellSelectionStyleNone;
+            } else {
+                c.selectionStyle = UITableViewCellSelectionStyleDefault;
+            }
             break;
         case IVLRowInfo:
             c.detailTextLabel.text = row.detail ? row.detail() : nil;

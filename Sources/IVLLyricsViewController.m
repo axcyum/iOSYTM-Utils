@@ -430,9 +430,10 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
         [_panel.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
         [_panel.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
     ]];
+    BOOL useAMLyrics = [IVLSettings boolForKey:IVLKeyImmersivePlayer] || [IVLSettings boolForKey:IVLKeyAMLyrics];
     if ([IVLSettings boolForKey:IVLKeyOpenPlayer]) {
         [self setShowPlayer:YES animated:NO];
-    } else if ([IVLSettings boolForKey:IVLKeyImmersivePlayer]) {
+    } else if (useAMLyrics) {
         [self setShowPlayer:YES animated:NO];
         [_panel setLyricsMode:YES animated:NO];
     }
@@ -695,6 +696,18 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
         [self refreshToolbar];
         return;
     }
+    if ([key isEqualToString:IVLKeyImmersivePlayer] || [key isEqualToString:IVLKeyAMLyrics]) {
+        BOOL useAM = [IVLSettings boolForKey:IVLKeyImmersivePlayer] || [IVLSettings boolForKey:IVLKeyAMLyrics];
+        if (!useAM && _showPlayer && _panel.lyricsMode) {
+            [_panel setLyricsMode:NO animated:NO];
+            [self setShowPlayer:NO animated:NO];
+        } else if (useAM && !_showPlayer) {
+            [self setShowPlayer:YES animated:NO];
+            [_panel setLyricsMode:YES animated:NO];
+        }
+        [self refreshMoreMenu];
+        return;
+    }
     if ([key isEqualToString:IVLKeyShowBreaks]) { [self lyricsChanged]; return; }
     [self refreshToolbar];
 }
@@ -751,12 +764,25 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
             [ws showToast:IVLLoc(@"copied")];
         }]];
     }
-    if (_showPlayer && [IVLSettings boolForKey:IVLKeyImmersivePlayer]) {
+    BOOL useAMLyrics = [IVLSettings boolForKey:IVLKeyImmersivePlayer] || [IVLSettings boolForKey:IVLKeyAMLyrics];
+    if (_showPlayer && useAMLyrics) {
         BOOL inAMLyrics = _panel.lyricsMode;
         [items addObject:[UIAction actionWithTitle:(inAMLyrics ? IVLLoc(@"show_player") : IVLLoc(@"show_lyrics"))
                                              image:[UIImage systemImageNamed:(inAMLyrics ? @"play.square" : @"quote.bubble")]
                                         identifier:nil
                                            handler:^(UIAction *a) { __strong typeof(ws) ss = ws; if (ss) [ss->_panel toggleLyricsMode]; }]];
+        if (![IVLSettings boolForKey:IVLKeyImmersivePlayer]) {
+            [items addObject:[UIAction actionWithTitle:IVLLoc(@"open_classic_lyrics")
+                                                 image:[UIImage systemImageNamed:@"text.justify.left"]
+                                            identifier:nil
+                                               handler:^(UIAction *a) {
+                __strong typeof(ws) ss = ws;
+                if (ss) {
+                    [ss->_panel setLyricsMode:NO animated:NO];
+                    [ss setShowPlayer:NO animated:YES];
+                }
+            }]];
+        }
     } else {
         [items addObject:[UIAction actionWithTitle:(_showPlayer ? IVLLoc(@"show_lyrics") : IVLLoc(@"show_player"))
                                              image:[UIImage systemImageNamed:(_showPlayer ? @"quote.bubble" : @"play.square")]

@@ -27,6 +27,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)youtubeForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)done;
 /// YouTube Music song search (title verified); used when the player's video id is unknown.
 - (void)youtubeVideoIDForTrack:(IVLTrack *)track completion:(void (^)(NSString *_Nullable vid))completion;
+/// Resolves a borderless 1:1 square album cover URL (googleusercontent) and videoId for Discord RPC.
+- (void)youtubeSquareCoverForTrack:(IVLTrack *)track completion:(void (^)(NSString *_Nullable coverURL, NSString *_Nullable vid))completion;
 @end
 
 FOUNDATION_EXPORT NSDictionary *_Nullable IVLPickCaptionTrack(NSArray<NSDictionary *> *tracks, IVLTrack *track);

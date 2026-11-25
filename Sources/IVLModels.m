@@ -46,7 +46,8 @@
         [lines addObject:d];
     }
     return @{ @"v": @1, @"lines": lines, @"synced": @(self.synced), @"karaoke": @(self.karaoke),
-              @"source": self.source ?: @"", @"lang": self.language ?: @"", @"manual": @(self.manual) };
+              @"source": self.source ?: @"", @"lang": self.language ?: @"", @"manual": @(self.manual),
+              @"pinnedProvider": self.pinnedProvider ?: @"" };
 }
 
 + (instancetype)lyricsWithDictionary:(NSDictionary *)dict {
@@ -81,6 +82,8 @@
     NSString *lang = dict[@"lang"];
     ly.language = lang.length ? lang : nil;
     ly.manual = [dict[@"manual"] boolValue];
+    NSString *pp = [dict[@"pinnedProvider"] isKindOfClass:[NSString class]] ? dict[@"pinnedProvider"] : nil;
+    ly.pinnedProvider = pp.length ? pp : nil;
     return ly;
 }
 

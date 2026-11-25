@@ -25,8 +25,13 @@ typedef void (^IVLLyricsCompletion)(IVLLyrics *_Nullable lyrics, NSError *_Nulla
 /// Free-text search on LRCLIB for the manual picker.
 - (void)searchQuery:(NSString *)query completion:(void (^)(NSArray<IVLSearchResult *> *results, NSError *_Nullable error))completion;
 
++ (NSArray<NSString *> *)storageKeysForTrack:(nullable IVLTrack *)track;
+
+- (void)saveManualLyrics:(IVLLyrics *)lyrics forTrack:(IVLTrack *)track providerID:(nullable NSString *)providerID;
 - (void)saveManualLyrics:(IVLLyrics *)lyrics forVideoID:(NSString *)videoID;
-- (void)removeCachedLyricsForVideoID:(NSString *)videoID;   // also removes manual choice
+- (void)removeCachedLyricsForTrack:(IVLTrack *)track;       // clears auto-cache only (preserves saved manual/provider choice)
+- (void)clearManualChoiceForTrack:(IVLTrack *)track;        // removes saved manual lyrics & pinned provider for track
+- (void)removeCachedLyricsForVideoID:(NSString *)videoID;
 - (void)clearCache;
 - (unsigned long long)cacheSize;
 

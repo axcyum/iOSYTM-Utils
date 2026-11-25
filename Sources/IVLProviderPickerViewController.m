@@ -96,16 +96,25 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
     c.detailTextLabel.textColor = UIColor.secondaryLabelColor;
     c.detailTextLabel.numberOfLines = 2;
     IVLLyrics *cur = [IVLPlaybackManager shared].lyrics;
+    NSArray<NSString *> *keys = [IVLLyricsService storageKeysForTrack:_track];
+    NSString *pinned = [IVLSettings pinnedProviderForKeys:keys];
 
     if (indexPath.section == 0) {
         c.textLabel.text = IVLLoc(@"auto_provider");
         c.imageView.image = [UIImage systemImageNamed:@"wand.and.stars"];
-        c.accessoryType = (cur && !cur.manual) ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
+        BOOL isAuto = !pinned.length && (!cur || !cur.manual);
+        c.accessoryType = isAuto ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
         return c;
     }
     if (indexPath.section == 2) {
         c.textLabel.text = IVLLoc(@"search_lyrics");
-        c.detailTextLabel.text = IVLLoc(@"search_lrclib_hint");
+        if ([pinned isEqualToString:@"lrclib_manual"]) {
+            NSString *savedSrc = cur.source.length ? cur.source : @"LRCLIB";
+            c.detailTextLabel.text = [NSString stringWithFormat:@"✓ %@", savedSrc];
+            c.detailTextLabel.textColor = UIColor.systemGreenColor;
+        } else {
+            c.detailTextLabel.text = IVLLoc(@"search_lrclib_hint");
+        }
         c.imageView.image = [UIImage systemImageNamed:@"magnifyingglass"];
         c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         return c;
@@ -113,7 +122,10 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
 
     NSString *pid = _ids[indexPath.row];
     NSString *name = [IVLSettings nameForProvider:pid];
-    c.textLabel.text = name;
+    BOOL isPinnedThis = [pinned isEqualToString:pid]
+        || ([pid isEqualToString:@"captions"] && [pinned isEqualToString:@"captions_manual"])
+        || (!pinned.length && cur.manual && [cur.source isEqualToString:_results[pid].source]);
+    c.textLabel.text = ([pid isEqualToString:@"captions"] && isPinnedThis) ? [@"✓ " stringByAppendingString:name] : name;
     c.textLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
     IVLProbeState st = (IVLProbeState)[_states[pid] integerValue];
     IVLLyrics *ly = _results[pid];
@@ -127,15 +139,17 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
         }
         case IVLProbeFound:
             c.detailTextLabel.text = [self syncLabel:ly];
-            c.accessoryType = (cur.manual && [cur.source isEqualToString:ly.source]) ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
+            c.accessoryType = isPinnedThis ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
             break;
         case IVLProbeEmpty:
             c.detailTextLabel.text = self->_reasons[pid] ?: IVLLoc(@"not_found");
-            c.textLabel.alpha = 0.5;
+            c.textLabel.alpha = isPinnedThis ? 1.0 : 0.5;
+            if (isPinnedThis) c.accessoryType = UITableViewCellAccessoryCheckmark;
             break;
         case IVLProbeFailed:
             c.detailTextLabel.text = self->_reasons[pid] ?: IVLLoc(@"provider_error");
-            c.textLabel.alpha = 0.5;
+            c.textLabel.alpha = isPinnedThis ? 1.0 : 0.5;
+            if (isPinnedThis) c.accessoryType = UITableViewCellAccessoryCheckmark;
             break;
     }
     if (![IVLSettings boolForKey:[IVLSettings enableKeyForProvider:pid]]) {
@@ -152,7 +166,7 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     if (indexPath.section == 0) {
-        [[IVLPlaybackManager shared] reloadLyrics];   // drops the pinned choice and re-runs automatic selection
+        [[IVLPlaybackManager shared] resetManualChoiceAndReload];   // drops the pinned choice and re-runs automatic selection
         [self close];
         return;
     }
@@ -160,15 +174,16 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
         [self.navigationController pushViewController:[IVLSearchViewController new] animated:YES];
         return;
     }
-    if ([_ids[indexPath.row] isEqualToString:@"captions"]) {
+    NSString *pid = _ids[indexPath.row];
+    if ([pid isEqualToString:@"captions"]) {
         IVLCaptionTrackListViewController *list = [IVLCaptionTrackListViewController new];
         list.track = _track;
         [self.navigationController pushViewController:list animated:YES];
         return;
     }
-    IVLLyrics *ly = _results[_ids[indexPath.row]];
+    IVLLyrics *ly = _results[pid];
     if (!ly) return;
-    [[IVLPlaybackManager shared] useManualLyrics:ly];
+    [[IVLPlaybackManager shared] useManualLyrics:ly providerID:pid];
     [[UINotificationFeedbackGenerator new] notificationOccurred:UINotificationFeedbackTypeSuccess];
     [self close];
 }
@@ -252,7 +267,7 @@ typedef NS_ENUM(NSInteger, IVLProbeState) { IVLProbeLoading, IVLProbeFound, IVLP
                 [self presentViewController:a animated:YES completion:nil];
                 return;
             }
-            [[IVLPlaybackManager shared] useManualLyrics:ly];
+            [[IVLPlaybackManager shared] useManualLyrics:ly providerID:@"captions_manual"];
             [[UINotificationFeedbackGenerator new] notificationOccurred:UINotificationFeedbackTypeSuccess];
             [self dismissViewControllerAnimated:YES completion:nil];
         });

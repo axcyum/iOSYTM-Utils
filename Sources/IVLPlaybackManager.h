@@ -46,8 +46,10 @@ typedef NS_ENUM(NSInteger, IVLLyricsState) {
 - (NSInteger)songOffsetMs;
 - (void)setSongOffsetMs:(NSInteger)ms;
 
-- (void)reloadLyrics;                       // ignore cache
+- (void)reloadLyrics;                       // ignore auto-cache
+- (void)resetManualChoiceAndReload;         // clear saved provider / LRCLIB override for current track and reload
 - (void)useManualLyrics:(IVLLyrics *)lyrics;
+- (void)useManualLyrics:(IVLLyrics *)lyrics providerID:(nullable NSString *)providerID;
 - (void)refreshExtras;                       // re-apply translation / pronunciation after settings change
 - (nullable NSString *)currentLineText;
 @end

@@ -96,6 +96,68 @@ static NSString *IVLYTNorm(NSString *s) {
     }] resume];
 }
 
+/// Extracts an unsigned 544x544 1:1 square googleusercontent/ggpht cover URL from any InnerTube subtree.
+static NSString *IVLYTExtractSquareCover(id node) {
+    NSArray *thumbs = IVLYTArray(IVLYTFind(node, @"thumbnails", 0));
+    for (id item in [thumbs reverseObjectEnumerator]) {
+        NSString *u = IVLYTString(IVLYTDict(item)[@"url"]);
+        if (!u.length) continue;
+        NSURLComponents *comp = [NSURLComponents componentsWithString:u];
+        NSString *host = comp.host.lowercaseString ?: @"";
+        if ([comp.scheme isEqualToString:@"https"] && ([host hasSuffix:@"googleusercontent.com"] || [host hasSuffix:@"ggpht.com"])) {
+            NSString *path = comp.percentEncodedPath ?: @"";
+            NSRange eq = [path rangeOfString:@"=" options:NSBackwardsSearch];
+            if (eq.location != NSNotFound) path = [path substringToIndex:eq.location];
+            NSString *clean = [NSString stringWithFormat:@"https://%@%@=w544-h544-l90-rj", comp.host, path];
+            if (clean.length <= 256) return clean;
+        }
+    }
+    return nil;
+}
+
+/// Resolves a borderless 1:1 square cover URL (yt3/lh3.googleusercontent.com) + videoId via WEB_REMIX.
+- (void)youtubeSquareCoverForTrack:(IVLTrack *)track completion:(void (^)(NSString *_Nullable coverURL, NSString *_Nullable vid))completion {
+    if (!track.title.length) { completion(nil, nil); return; }
+    NSString *knownVid = track.youtubeVideoID;
+    void (^searchSongs)(void) = ^{
+        NSString *title = [IVLLyricsService cleanTitle:track.title];
+        NSString *query = [NSString stringWithFormat:@"%@ %@", title, [IVLLyricsService cleanArtist:track.artist]];
+        [self innerTube:@"search" client:@"WEB_REMIX" body:@{ @"query": query, @"params": @"EgWKAQIIAWoKEAkQBRAKEAMQBA==" } completion:^(NSDictionary *json) {
+            NSString *want = IVLYTNorm(title);
+            NSArray *shelfItems = IVLYTArray(IVLYTFind(IVLYTFind(json, @"musicShelfRenderer", 0), @"contents", 0));
+            for (id item in shelfItems) {
+                NSDictionary *r = IVLYTDict(IVLYTDict(item)[@"musicResponsiveListItemRenderer"]);
+                if (!r) continue;
+                NSString *vid = IVLYTString(IVLYTFind(r, @"videoId", 0));
+                NSArray *runs = IVLYTArray(IVLYTFind(IVLYTArray(r[@"flexColumns"]).firstObject, @"runs", 0));
+                NSString *name = IVLYTNorm(IVLYTString(IVLYTDict(runs.firstObject)[@"text"]));
+                BOOL idMatch = (knownVid.length == 11 && [vid isEqualToString:knownVid]);
+                BOOL titleMatch = (vid.length && want.length && name.length && ([name containsString:want] || [want containsString:name]));
+                if (idMatch || titleMatch) {
+                    NSString *sq = IVLYTExtractSquareCover(r[@"thumbnail"]);
+                    completion(sq, vid.length == 11 ? vid : knownVid);
+                    return;
+                }
+            }
+            completion(nil, knownVid);
+        }];
+    };
+
+    if (knownVid.length == 11) {
+        [self innerTube:@"next" client:@"WEB_REMIX" body:@{ @"videoId": knownVid, @"isAudioOnly": @YES } completion:^(NSDictionary *json) {
+            NSDictionary *panelItem = IVLYTDict(IVLYTFind(json, @"playlistPanelVideoRenderer", 0));
+            NSString *sq = IVLYTExtractSquareCover(panelItem[@"thumbnail"] ?: json);
+            if (sq.length) {
+                completion(sq, knownVid);
+            } else {
+                searchSongs();
+            }
+        }];
+    } else {
+        searchSongs();
+    }
+}
+
 /// When only the system now-playing info is known: search songs and verify the title.
 - (void)youtubeVideoIDForTrack:(IVLTrack *)track completion:(void (^)(NSString *_Nullable vid))completion {
     if (track.youtubeVideoID.length) { completion(track.youtubeVideoID); return; }

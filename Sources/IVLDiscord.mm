@@ -147,36 +147,71 @@ static BOOL TokenWrite(NSDictionary *tokens) {
 }
 static void TokenDelete(void) { SecItemDelete((__bridge CFDictionaryRef)TokenQuery()); }
 
-/// Cover from the shared track model: only when it belongs to the song that is being reported.
+/// Cover from the shared track model: resolves a borderless 1:1 square album cover from YouTube Music
+/// InnerTube (`yt3/lh3.googleusercontent.com/...=w544-h544-l90-rj`), avoiding YouTube's letterboxed
+/// 4:3 `hqdefault.jpg` + Art Track pillarbox double borders. Pure 16:9 videos fall back to `mqdefault.jpg`.
 static NSString *gCoverReason = @"";
-static NSMutableDictionary<NSString *, NSString *> *gSearchedIDs;   // "title|artist" -> video id ("" = none)
+static NSMutableDictionary<NSString *, NSString *> *gSearchedIDs;     // "title|artist" -> video id ("" = none)
+static NSMutableDictionary<NSString *, NSString *> *gSquareCovers;    // "title|artist" -> url | "PENDING" | "NONE"
+static BOOL gCoverJustResolved = NO;
 
 static NSString *CurrentVideoID(IVLTrack *t);
 static NSString *CoverKey(IVLTrack *t) { return [NSString stringWithFormat:@"%@|%@", t.title ?: @"", t.artist ?: @""]; }
 
-/// Short, stable cover URL for Discord. Discord limits image URLs to 256 characters and
-/// fetches them through its media proxy, so signed thumbnail URLs are avoided.
-/// When the playing video id is unknown, a YouTube Music search fills it in (cached, async).
 static NSString *CoverURL(NSString *title) {
     IVLPlaybackManager *m = [IVLPlaybackManager shared];
     IVLTrack *t = m.track;
     if (!t) { gCoverReason = @"no track"; return nil; }
-    if (![t.title isEqualToString:title]) { gCoverReason = [NSString stringWithFormat:@"title mismatch (%@)", t.title ?: @""]; return nil; }
+    BOOL matches = [t.title isEqualToString:title] ||
+        (t.title.length && title.length && ([title.lowercaseString containsString:t.title.lowercaseString] || [t.title.lowercaseString containsString:title.lowercaseString]));
+    if (!matches) { gCoverReason = [NSString stringWithFormat:@"title mismatch (%@)", t.title ?: @""]; return nil; }
 
-    // 1. album art on googleusercontent: drop the size/crop suffix, ask for a square 512px image
+    // 1. Direct googleusercontent/ggpht URL already on the track -> borderless 1:1 544px square
     NSURLComponents *art = [NSURLComponents componentsWithString:t.artworkURL ?: @""];
-    NSString *host = art.host.lowercaseString;
+    NSString *host = art.host.lowercaseString ?: @"";
     if ([art.scheme isEqualToString:@"https"] && ([host hasSuffix:@"googleusercontent.com"] || [host hasSuffix:@"ggpht.com"])) {
         NSString *path = art.percentEncodedPath ?: @"";
         NSRange eq = [path rangeOfString:@"=" options:NSBackwardsSearch];
         if (eq.location != NSNotFound) path = [path substringToIndex:eq.location];
-        NSString *url = [NSString stringWithFormat:@"https://%@%@=w512-h512-l90-rj", art.host, path];
+        NSString *url = [NSString stringWithFormat:@"https://%@%@=w544-h544-l90-rj", art.host, path];
         if (url.length <= 256) { gCoverReason = @"album art"; return url; }
     }
-    // 2. the video's standard thumbnail (always exists, short, no signature)
+
+    // 2. Cached or async lookup of YouTube Music's borderless 1:1 square album cover
+    if (!gSquareCovers) gSquareCovers = [NSMutableDictionary dictionary];
+    if (!gSearchedIDs) gSearchedIDs = [NSMutableDictionary dictionary];
+    NSString *key = CoverKey(t);
+    NSString *cachedCover = gSquareCovers[key];
+    if ([cachedCover hasPrefix:@"https://"]) {
+        gCoverReason = @"ytm square art";
+        return cachedCover;
+    }
+    if (!cachedCover) {
+        gSquareCovers[key] = @"PENDING";
+        [[IVLLyricsService shared] youtubeSquareCoverForTrack:t completion:^(NSString *coverURL, NSString *foundVid) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (foundVid.length == 11) gSearchedIDs[key] = foundVid;
+                gSquareCovers[key] = coverURL.length ? coverURL : @"NONE";
+                gCoverJustResolved = YES;
+                [[IVLDiscord shared] performSelector:@selector(tick)];
+            });
+        }];
+        // Hold ~250ms for the borderless square cover rather than flashing a letterboxed video frame first
+        gCoverReason = @"resolving square art";
+        return nil;
+    }
+    if ([cachedCover isEqualToString:@"PENDING"]) {
+        gCoverReason = @"resolving square art";
+        return nil;
+    }
+
+    // 3. Confirmed video-only track: use 16:9 `mqdefault.jpg` (no 4:3 top/bottom black bars unlike `hqdefault.jpg`)
     NSString *vid = CurrentVideoID(t);
-    if (vid.length == 11) { gCoverReason = @"video thumbnail"; return [NSString stringWithFormat:@"https://i.ytimg.com/vi/%@/hqdefault.jpg", vid]; }
-    gCoverReason = gSearchedIDs[CoverKey(t)] ? @"no video id (searching or not found)" : @"no video id";
+    if (vid.length == 11) {
+        gCoverReason = @"video thumbnail (16:9)";
+        return [NSString stringWithFormat:@"https://i.ytimg.com/vi/%@/mqdefault.jpg", vid];
+    }
+    gCoverReason = @"no video id";
     return nil;
 }
 
@@ -267,6 +302,7 @@ static NSString *CurrentVideoID(IVLTrack *t) {
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(resume) name:UIApplicationDidBecomeActiveNotification object:nil];
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(background) name:UIApplicationDidEnterBackgroundNotification object:nil];
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(tick) name:IVLTrackDidChangeNotification object:nil];
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(discordSettingsChanged:) name:IVLSettingsDidChangeNotification object:nil];
         [self resume];
     }
     return self;
@@ -401,6 +437,14 @@ static NSString *CurrentVideoID(IVLTrack *t) {
     [self resume]; [self tick];
 }
 
+- (void)discordSettingsChanged:(NSNotification *)n {
+    NSString *k = n.object;
+    if (!k || [k isEqualToString:IVLKeyDiscordStatusDisplay] || [k isEqualToString:IVLKeyDiscordSongButton] || [k isEqualToString:IVLKeyDiscordGitHubButton]) {
+        lastFingerprint = nil;
+        [self tick];
+    }
+}
+
 - (BOOL)coverEnabled {
     id v = [NSUserDefaults.standardUserDefaults objectForKey:kCoverKey];
     return v ? [v boolValue] : YES;
@@ -454,12 +498,16 @@ static NSString *CurrentVideoID(IVLTrack *t) {
     NSString *songKey = [NSString stringWithFormat:@"%@\n%@", title, artist ?: @""];
     BOOL songChanged = ![songKey isEqualToString:lastSentSongKey ?: @""];
     NSInteger interval = MAX(3, MIN(60, [IVLSettings integerForKey:IVLKeyDiscordInterval]));
-    NSTimeInterval minWait = songChanged ? 2.0 : (NSTimeInterval)interval;
+    // Kick off square cover resolution immediately even while waiting on cooldown so it's ready in cache
+    NSString *preResolvedImage = ([self coverEnabled] && !omitArtwork) ? CoverURL(title) : nil;
+    NSTimeInterval minWait = (songChanged || gCoverJustResolved) ? 2.0 : (NSTimeInterval)interval;
     if (inFlight || blockedPayload || now < nextAttempt || now - lastSend < minWait) return;
+    gCoverJustResolved = NO;
 
-    NSString *image = ([self coverEnabled] && !omitArtwork) ? CoverURL(title) : nil;
+    NSString *image = preResolvedImage;
     NSString *vid = ([track.title isEqualToString:title] || (track.title.length && [title containsString:track.title])) ? CurrentVideoID(track) : nil;
     NSString *songURL = vid ? [NSString stringWithFormat:@"https://music.youtube.com/watch?v=%@", vid] : nil;
+    NSInteger statusDisp = [IVLSettings integerForKey:IVLKeyDiscordStatusDisplay];
     // Listening activities print the large image text as the album line, so the version goes on the
     // small YouTube Music badge instead, where it only shows on hover: "v1.0.0 iOS 26.0.1"
     NSString *tooltip = [NSString stringWithFormat:@"v%s iOS %@", IVL_VERSION, UIDevice.currentDevice.systemVersion];
@@ -467,11 +515,17 @@ static NSString *CurrentVideoID(IVLTrack *t) {
     NSString *github = @"https://github.com/axcyum/iOSYTM-Utils";
     BOOL githubButton = [IVLSettings boolForKey:IVLKeyDiscordGitHubButton];
     // everything that is shown is part of the fingerprint: changes (cover found later, settings) trigger a resend
-    fingerprint = [fingerprint stringByAppendingFormat:@"\n%@\n%@\n%d%d%@", image ?: @"", songURL ?: @"", songButton, githubButton, github ?: @""];
+    fingerprint = [fingerprint stringByAppendingFormat:@"\n%@\n%@\n%ld%d%d%@", image ?: @"", songURL ?: @"", (long)statusDisp, songButton, githubButton, github ?: @""];
     if (published && [fingerprint isEqual:lastFingerprint]) return;
 
     discordpp::Activity activity{};
     activity.SetType(payloadMode < 2 ? discordpp::ActivityTypes::Listening : discordpp::ActivityTypes::Playing);
+    if (payloadMode < 2) {
+        discordpp::StatusDisplayTypes sdt = discordpp::StatusDisplayTypes::Name;
+        if (statusDisp == 1 && PresenceText(artist).length) sdt = discordpp::StatusDisplayTypes::State;
+        else if (statusDisp == 2 && PresenceText(title).length) sdt = discordpp::StatusDisplayTypes::Details;
+        activity.SetStatusDisplayType(sdt);
+    }
     activity.SetDetails(UTF8(PresenceText(title)));
     if (songURL && payloadMode == 0) activity.SetDetailsUrl(UTF8(songURL));
     if (PresenceText(artist).length) activity.SetState(UTF8(PresenceText(artist)));

@@ -25,6 +25,7 @@ NSString *const IVLKeyAutoResume = @"autoResume";
 NSString *const IVLKeyButtonX = @"buttonX";
 NSString *const IVLKeyButtonY = @"buttonY";
 NSString *const IVLKeySongOffsets = @"songOffsets";
+NSString *const IVLKeySongProviders = @"songProviders";
 NSString *const IVLKeyLockEnabled = @"lockEnabled";
 NSString *const IVLKeyLockAnimation = @"lockAnimation";
 NSString *const IVLKeyLockKaraoke = @"lockKaraoke";
@@ -34,6 +35,7 @@ NSString *const IVLKeyProviderSpotify = @"providerSpotify";
 NSString *const IVLKeyProviderCaptions = @"providerCaptions";
 NSString *const IVLKeyCaptionLang = @"captionLang";
 NSString *const IVLKeyDiscordInterval = @"discordInterval";
+NSString *const IVLKeyDiscordStatusDisplay = @"discordStatusDisplay";
 NSString *const IVLKeyDiscordName = @"discordName";
 NSString *const IVLKeyDiscordSongButton = @"discordSongButton";
 NSString *const IVLKeyDiscordGitHubButton = @"discordGitHubButton";
@@ -44,6 +46,7 @@ NSString *const IVLKeyLastfmUser = @"lastfmUser";
 NSString *const IVLKeyListenBrainzEnabled = @"listenbrainzEnabled";
 NSString *const IVLKeyOpenPlayer = @"openPlayer";
 NSString *const IVLKeyImmersivePlayer = @"immersivePlayer";
+NSString *const IVLKeyAMLyrics = @"amLyrics";
 NSString *const IVLKeyWNPEnabled = @"wnpEnabled";
 NSString *const IVLKeyWNPHost = @"wnpHost";
 NSString *const IVLKeyWNPPort = @"wnpPort";
@@ -91,6 +94,7 @@ static NSString *IVLLocCaptionsName(void) {
             IVLKeyButtonX: @0.9,
             IVLKeyButtonY: @0.2,
             IVLKeySongOffsets: @{},
+            IVLKeySongProviders: @{},
             IVLKeyLockEnabled: @YES,
             IVLKeyLockAnimation: @YES,
             IVLKeyLockKaraoke: @YES,
@@ -100,6 +104,7 @@ static NSString *IVLLocCaptionsName(void) {
             IVLKeyProviderCaptions: @YES,
             IVLKeyCaptionLang: @"",
             IVLKeyDiscordInterval: @15,
+            IVLKeyDiscordStatusDisplay: @0,
             IVLKeyDiscordName: @"YouTube Music iOS",
             IVLKeyDiscordSongButton: @YES,
             IVLKeyDiscordGitHubButton: @YES,
@@ -109,6 +114,7 @@ static NSString *IVLLocCaptionsName(void) {
             IVLKeyListenBrainzEnabled: @YES,
             IVLKeyOpenPlayer: @NO,
             IVLKeyImmersivePlayer: @NO,
+            IVLKeyAMLyrics: @NO,
             IVLKeyWNPEnabled: @NO,
             IVLKeyWNPHost: @"",
             IVLKeyWNPPort: @8974,
@@ -199,6 +205,29 @@ static NSString *IVLLocCaptionsName(void) {
     NSMutableDictionary *m = [d isKindOfClass:[NSDictionary class]] ? [d mutableCopy] : [NSMutableDictionary dictionary];
     if (ms == 0) [m removeObjectForKey:videoID]; else m[videoID] = @(ms);
     [self setObject:m forKey:IVLKeySongOffsets];
+}
+
++ (NSString *)pinnedProviderForKeys:(NSArray<NSString *> *)keys {
+    NSDictionary *d = [self objectForKey:IVLKeySongProviders];
+    if (![d isKindOfClass:[NSDictionary class]]) return nil;
+    for (NSString *k in keys) {
+        NSString *v = d[k];
+        if ([v isKindOfClass:[NSString class]] && v.length) return v;
+    }
+    return nil;
+}
+
++ (void)setPinnedProvider:(NSString *)providerID forKeys:(NSArray<NSString *> *)keys {
+    if (!keys.count) return;
+    NSDictionary *d = [self objectForKey:IVLKeySongProviders];
+    NSMutableDictionary *m = [d isKindOfClass:[NSDictionary class]] ? [d mutableCopy] : [NSMutableDictionary dictionary];
+    for (NSString *k in keys) {
+        if (!k.length) continue;
+        if (providerID.length) m[k] = providerID;
+        else [m removeObjectForKey:k];
+    }
+    [self setObject:m forKey:IVLKeySongProviders];
+    [[NSUserDefaults standardUserDefaults] synchronize];
 }
 
 @end

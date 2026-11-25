@@ -130,7 +130,9 @@
 }
 
 - (void)pick:(IVLSearchResult *)r {
-    [[IVLPlaybackManager shared] useManualLyrics:r.lyrics];
+    if (!r.lyrics) return;
+    r.lyrics.source = r.title.length ? [NSString stringWithFormat:@"LRCLIB (%@)", r.title] : @"LRCLIB";
+    [[IVLPlaybackManager shared] useManualLyrics:r.lyrics providerID:@"lrclib_manual"];
     [[UINotificationFeedbackGenerator new] notificationOccurred:UINotificationFeedbackTypeSuccess];
     [self close];
 }
