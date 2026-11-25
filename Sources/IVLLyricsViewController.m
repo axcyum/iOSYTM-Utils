@@ -156,6 +156,7 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
 
     NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
     [nc addObserver:self selector:@selector(trackChanged) name:IVLTrackDidChangeNotification object:nil];
+    [nc addObserver:self selector:@selector(artworkChanged) name:IVLArtworkDidChangeNotification object:nil];
     [nc addObserver:self selector:@selector(lyricsChanged) name:IVLLyricsDidChangeNotification object:nil];
     [nc addObserver:self selector:@selector(settingsChanged:) name:IVLSettingsDidChangeNotification object:nil];
 
@@ -575,23 +576,26 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
 
 #pragma mark Content
 
+- (void)artworkChanged {
+    UIImage *img = [IVLPlaybackManager shared].track.artworkImage;
+    if (!img) return;
+    [UIView transitionWithView:self.view duration:0.3 options:UIViewAnimationOptionTransitionCrossDissolve | UIViewAnimationOptionAllowUserInteraction animations:^{
+        self->_artwork.image = img;
+        self->_bgImage.image = img;
+        [self->_panel setArtwork:img];
+    } completion:nil];
+    if ([IVLTheme style] == 2) [self applyBackgroundStyle];
+}
+
 - (void)trackChanged {
-    IVLTrack *t = [IVLPlaybackManager shared].track;
+    IVLPlaybackManager *m = [IVLPlaybackManager shared];
+    IVLTrack *t = m.track;
     _titleLabel.text = t.title ?: IVLLoc(@"nothing_playing");
     _artistLabel.text = t.artist;
     _artwork.image = t.artworkImage;
     _bgImage.image = t.artworkImage;
     [_panel setArtwork:t.artworkImage];
-    NSString *url = t.artworkURL;
-    IVLLoadImage(url, ^(UIImage *img) {
-        if (!img || ![[IVLPlaybackManager shared].track.artworkURL isEqualToString:url]) return;
-        [UIView transitionWithView:self.view duration:0.4 options:UIViewAnimationOptionTransitionCrossDissolve | UIViewAnimationOptionAllowUserInteraction animations:^{
-            self->_artwork.image = img;
-            self->_bgImage.image = img;
-            [self->_panel setArtwork:img];
-        } completion:nil];
-        if ([IVLTheme style] == 2) [self applyBackgroundStyle];
-    });
+    if (!t.artworkImage) [m ensureArtworkNow];
     if ([IVLTheme style] == 2) [self applyBackgroundStyle];
     [self refreshOffsetLabel];
     [self lyricsChanged];
@@ -801,6 +805,8 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
 - (void)tick {
     BOOL playing = [IVLRemoteControl isPlaying];
     if (playing != _shownHeaderPlaying) [self setHeaderPlaying:playing];
+    UIImage *curArt = [IVLPlaybackManager shared].track.artworkImage;
+    if (curArt && _artwork.image != curArt) [self artworkChanged];
     if (_showPlayer) [_panel refresh];
     if (!_synced || !_lines.count || _table.hidden) return;
     NSInteger t = [[IVLPlaybackManager shared] currentTimeMs];

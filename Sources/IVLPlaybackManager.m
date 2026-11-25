@@ -1,5 +1,6 @@
 #import "IVLPlaybackManager.h"
 #import "IVLLyricsService.h"
+#import "IVLLyricsService+Private.h"
 #import "IVLTranslator.h"
 #import "IVLSettings.h"
 #import "YTMHeaders.h"
@@ -9,6 +10,7 @@
 #import <CommonCrypto/CommonDigest.h>
 
 NSNotificationName const IVLTrackDidChangeNotification = @"IVLTrackDidChangeNotification";
+NSNotificationName const IVLArtworkDidChangeNotification = @"IVLArtworkDidChangeNotification";
 NSNotificationName const IVLLyricsDidChangeNotification = @"IVLLyricsDidChangeNotification";
 
 @interface IVLPlaybackManager ()
@@ -26,9 +28,14 @@ NSNotificationName const IVLLyricsDidChangeNotification = @"IVLLyricsDidChangeNo
     NSString *_lastPlayerVid;
     NSString *_committedPlayerVid;
     NSString *_committedNPKey;
+    NSString *_staleNPKey;
     NSDictionary *_npInfo;
     CFTimeInterval _npStamp;
     NSString *_npKey;
+    BOOL _artworkIsFallback;
+    BOOL _artworkURLInFlight;
+    BOOL _vidSearchInFlight;
+    NSCache<NSString *, UIImage *> *_artCache;
     NSUInteger _activateCount, _heartbeatCount, _npCount;
 }
 
@@ -41,6 +48,8 @@ NSNotificationName const IVLLyricsDidChangeNotification = @"IVLLyricsDidChangeNo
 
 - (instancetype)init {
     if ((self = [super init])) {
+        _artCache = [NSCache new];
+        _artCache.countLimit = 30;
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(settingsChanged:) name:IVLSettingsDidChangeNotification object:nil];
     }
     return self;
@@ -62,7 +71,7 @@ NSNotificationName const IVLLyricsDidChangeNotification = @"IVLLyricsDidChangeNo
     }
 }
 
-#pragma mark - Track detection
+#pragma mark - Helpers & Artwork Extraction
 
 static NSString *IVLStr(id v) { return [v isKindOfClass:[NSString class]] ? v : nil; }
 
@@ -80,6 +89,206 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
     for (int i = 0; i < 10; i++) [h appendFormat:@"%02x", out[i]];
     return h;
 }
+
+/// Safely extracts UIImage from an MPMediaItemArtwork (skipping LockLyrics' rendered frames),
+/// trying multiple target sizes in case the app's requestHandler expects native bounds.
+static UIImage *IVLExtractNPArtwork(id artObj) {
+    if (![artObj isKindOfClass:[MPMediaItemArtwork class]]) return nil;
+    if ([[IVLLockScreen shared] isRenderedArtwork:artObj]) return nil;
+    MPMediaItemArtwork *art = (MPMediaItemArtwork *)artObj;
+    UIImage *img = nil;
+    @try { img = [art imageWithSize:CGSizeMake(720, 720)]; } @catch (__unused NSException *e) {}
+    if ((!img || img.size.width <= 1) && art.bounds.size.width > 1 && art.bounds.size.height > 1) {
+        @try { img = [art imageWithSize:art.bounds.size]; } @catch (__unused NSException *e) {}
+    }
+    if (!img || img.size.width <= 1) {
+        @try { img = [art imageWithSize:CGSizeMake(320, 320)]; } @catch (__unused NSException *e) {}
+    }
+    return (img && img.size.width > 1 && img.size.height > 1) ? img : nil;
+}
+
+/// Builds an ordered list of candidate URLs for a thumbnail without breaking signed googleusercontent URLs.
+static NSArray<NSString *> *IVLCandidateThumbURLs(NSString *rawThumb, NSString *vid) {
+    NSMutableArray<NSString *> *urls = [NSMutableArray array];
+    if (rawThumb.length) {
+        NSURLComponents *comp = [NSURLComponents componentsWithString:rawThumb];
+        NSString *host = comp.host.lowercaseString ?: @"";
+        if ([comp.scheme isEqualToString:@"https"] && ([host hasSuffix:@"googleusercontent.com"] || [host hasSuffix:@"ggpht.com"])) {
+            NSString *path = comp.percentEncodedPath ?: @"";
+            NSRange eq = [path rangeOfString:@"=" options:NSBackwardsSearch];
+            if (eq.location != NSNotFound) {
+                NSString *basePath = [path substringToIndex:eq.location];
+                NSString *clean720 = [NSString stringWithFormat:@"https://%@%@=w720-h720-l90-rj", comp.host, basePath];
+                [urls addObject:clean720];
+            }
+        }
+        if (![urls containsObject:rawThumb]) [urls addObject:rawThumb];
+    }
+    if (vid.length == 11) {
+        [urls addObject:[NSString stringWithFormat:@"https://i.ytimg.com/vi/%@/hqdefault.jpg", vid]];
+    }
+    return urls;
+}
+
+- (void)applyArtwork:(UIImage *)img isFallback:(BOOL)isFallback forTrack:(IVLTrack *)target {
+    if (!img || self.track != target) return;
+    if (target.artworkImage && !_artworkIsFallback && isFallback) return;
+    BOOL changed = (target.artworkImage != img);
+    target.artworkImage = img;
+    _artworkIsFallback = isFallback;
+    if (changed) {
+        [[NSNotificationCenter defaultCenter] postNotificationName:IVLArtworkDidChangeNotification object:self];
+    }
+}
+
+/// Checks IVLLockScreen.originalInfo, _npInfo, and MPNowPlayingInfoCenter.defaultCenter for matching MPMediaItemArtwork.
+- (UIImage *)probeSystemArtworkForTrack:(IVLTrack *)target {
+    if (!target) return nil;
+    NSArray *sources = @[
+        [IVLLockScreen shared].originalInfo ?: @{},
+        _npInfo ?: @{},
+        [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo ?: @{},
+    ];
+    for (NSDictionary *info in sources) {
+        if (!info.count) continue;
+        NSString *nTitle = IVLStr(info[MPMediaItemPropertyTitle]);
+        NSString *nArtist = IVLStr(info[MPMediaItemPropertyArtist]) ?: @"";
+        NSString *infoKey = nTitle.length ? [NSString stringWithFormat:@"%@\n%@", nTitle, nArtist] : @"";
+        double nDur = [info[MPMediaItemPropertyPlaybackDuration] doubleValue];
+        BOOL sameDur = (nDur > 0 && target.duration > 0 && fabs(nDur - target.duration) < 2.5);
+        BOOL notStale = infoKey.length > 0 && ![infoKey isEqualToString:_staleNPKey ?: @""];
+        // Accept NP artwork if title matches OR if NowPlaying has already moved off the previous song
+        // (handles tracks whose YouTube videoDetails title is English while YTM NowPlaying title is Japanese).
+        if (nTitle.length && !IVLLooseEqual(target.title, nTitle) && !(notStale && (sameDur || !target.duration))) {
+            continue;
+        }
+        UIImage *img = IVLExtractNPArtwork(info[MPMediaItemPropertyArtwork]);
+        if (img) return img;
+    }
+    return nil;
+}
+
+- (void)downloadThumbCandidates:(NSArray<NSString *> *)urls index:(NSUInteger)idx forTrack:(IVLTrack *)target {
+    if (self.track != target || idx >= urls.count) {
+        _artworkURLInFlight = NO;
+        return;
+    }
+    if (target.artworkImage && !_artworkIsFallback) {
+        _artworkURLInFlight = NO;
+        return;
+    }
+    NSString *urlStr = urls[idx];
+    BOOL isYTFallback = [urlStr containsString:@"i.ytimg.com/vi/"];
+    // Give MPMediaItemArtwork / googleusercontent a brief head start before falling back to 4:3 i.ytimg.com on songs
+    if (isYTFallback && target.artworkImage) {
+        _artworkURLInFlight = NO;
+        return;
+    }
+
+    UIImage *cached = [_artCache objectForKey:urlStr];
+    if (cached) {
+        _artworkURLInFlight = NO;
+        if (!target.artworkURL.length) target.artworkURL = urlStr;
+        [self applyArtwork:cached isFallback:isYTFallback forTrack:target];
+        return;
+    }
+
+    NSURL *u = [NSURL URLWithString:urlStr];
+    if (!u) {
+        [self downloadThumbCandidates:urls index:idx + 1 forTrack:target];
+        return;
+    }
+
+    _artworkURLInFlight = YES;
+    __weak typeof(self) ws = self;
+    [[[NSURLSession sharedSession] dataTaskWithURL:u completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+        NSInteger status = [resp isKindOfClass:[NSHTTPURLResponse class]] ? ((NSHTTPURLResponse *)resp).statusCode : 200;
+        UIImage *img = (data.length > 0 && status < 400) ? [UIImage imageWithData:data] : nil;
+        if (img && img.size.width <= 1) img = nil;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __strong typeof(ws) ss = ws;
+            if (!ss || ss.track != target) { if (ss) ss->_artworkURLInFlight = NO; return; }
+            if (img) {
+                [ss->_artCache setObject:img forKey:urlStr];
+                ss->_artworkURLInFlight = NO;
+                if (!isYTFallback || !target.artworkURL.length) target.artworkURL = urlStr;
+                [ss applyArtwork:img isFallback:isYTFallback forTrack:target];
+            } else {
+                [ss downloadThumbCandidates:urls index:idx + 1 forTrack:target];
+            }
+        });
+    }] resume];
+}
+
+/// Continuously polls both MPMediaItemArtwork (same source as Lock Screen) and YTPlayerViewController thumbnails
+/// until crisp artwork is secured — works identically whether the track has lyrics or not.
+- (void)ensureArtworkForTrack:(IVLTrack *)target attempt:(NSInteger)attempt {
+    if (self.track != target) return;
+    if (target.artworkImage && !_artworkIsFallback) return;
+
+    // 1. Check MPMediaItemArtwork across originalInfo / _npInfo / defaultCenter
+    UIImage *npImg = [self probeSystemArtworkForTrack:target];
+    if (npImg) {
+        [self applyArtwork:npImg isFallback:NO forTrack:target];
+        return;
+    }
+
+    // 2. Check YTPlayerViewController thumbnail URLs (and update youtubeVideoID if player caught up)
+    NSString *pTitle = nil, *pArtist = nil, *pVid = nil, *pThumb = nil;
+    CGFloat pDuration = 0;
+    [self readPlayerTitle:&pTitle artist:&pArtist vid:&pVid thumb:&pThumb duration:&pDuration];
+    BOOL sameLen = pDuration > 0 && target.duration > 0 && fabs(pDuration - target.duration) < 2.0;
+    BOOL playerMatches = pVid.length && ([pVid isEqualToString:target.youtubeVideoID ?: @""] || IVLLooseEqual(pTitle, target.title) || (pTitle.length && sameLen));
+    if (playerMatches) {
+        if (!target.youtubeVideoID.length) {
+            _committedPlayerVid = pVid;
+            target.videoID = pVid;
+            target.youtubeVideoID = pVid;
+        }
+        if (pThumb.length && !target.artworkURL.length) {
+            target.artworkURL = pThumb;
+        }
+    }
+
+    if (!_artworkURLInFlight) {
+        NSString *rawURL = target.artworkURL;
+        NSString *fallbackVid = (attempt >= 2) ? (target.youtubeVideoID ?: (playerMatches ? pVid : nil)) : nil;
+        NSArray<NSString *> *candidates = IVLCandidateThumbURLs(rawURL, fallbackVid);
+        if (candidates.count) {
+            [self downloadThumbCandidates:candidates index:0 forTrack:target];
+        } else if (attempt >= 3 && !target.youtubeVideoID.length && !_vidSearchInFlight) {
+            _vidSearchInFlight = YES;
+            __weak typeof(self) ws = self;
+            [[IVLLyricsService shared] youtubeVideoIDForTrack:target completion:^(NSString *foundVid) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    __strong typeof(ws) ss = ws;
+                    if (!ss || ss.track != target) return;
+                    ss->_vidSearchInFlight = NO;
+                    if (foundVid.length == 11) {
+                        if (!target.youtubeVideoID.length) target.youtubeVideoID = foundVid;
+                        [ss downloadThumbCandidates:IVLCandidateThumbURLs(target.artworkURL, foundVid) index:0 forTrack:target];
+                    }
+                });
+            }];
+        }
+    }
+
+    if (attempt >= 14) return;
+    static const double delays[] = { 0.08, 0.15, 0.25, 0.40, 0.60, 0.85, 1.2, 1.6, 2.2, 3.0, 4.0, 5.0, 6.5, 8.0 };
+    double delay = delays[MIN((NSInteger)(sizeof(delays) / sizeof(delays[0])) - 1, MAX(0, attempt))];
+    __weak typeof(self) ws = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [ws ensureArtworkForTrack:target attempt:attempt + 1];
+    });
+}
+
+- (void)ensureArtworkNow {
+    if (self.track && (!self.track.artworkImage || _artworkIsFallback)) {
+        [self ensureArtworkForTrack:self.track attempt:0];
+    }
+}
+
+#pragma mark - Track detection
 
 - (void)resolveImmediately {
     if (![IVLSettings boolForKey:IVLKeyEnabled]) return;
@@ -121,23 +330,21 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
         NSString *key = [NSString stringWithFormat:@"%@\n%@", title ?: @"", artist];
         if (!title.length) return;
 
-        // If the track was already resolved instantly from YTPlayerViewController, fill in any missing
-        // MPMediaItemArtwork when system NowPlaying catches up without restarting lyric loading.
-        if (self.track && ![key isEqualToString:self->_committedNPKey ?: @""] && IVLLooseEqual(self.track.title, title)) {
+        // ALWAYS check for newly arrived MPMediaItemArtwork on every setNowPlayingInfo: call for the
+        // current song (YouTube Music sets title/artist first, then sets artwork on a later call!).
+        double nDur = [copy[MPMediaItemPropertyPlaybackDuration] doubleValue];
+        BOOL sameDurAsCurrent = (self.track && nDur > 0 && self.track.duration > 0 && fabs(nDur - self.track.duration) < 2.5);
+        BOOL movedOffStale = ![key isEqualToString:self->_staleNPKey ?: @""];
+        if (self.track && (IVLLooseEqual(self.track.title, title) || [key isEqualToString:self->_committedNPKey ?: @""] || (movedOffStale && sameDurAsCurrent && self.track.youtubeVideoID.length > 0 && !self->_committedNPKey.length))) {
             self->_npKey = key;
             self->_committedNPKey = key;
-            if (!self.track.artworkImage) {
-                id art = copy[MPMediaItemPropertyArtwork];
-                if ([art isKindOfClass:[MPMediaItemArtwork class]] && ![[IVLLockScreen shared] isRenderedArtwork:art]) {
-                    @try { self.track.artworkImage = [(MPMediaItemArtwork *)art imageWithSize:CGSizeMake(600, 600)]; } @catch (__unused NSException *e) {}
-                    if (self.track.artworkImage) {
-                        [[NSNotificationCenter defaultCenter] postNotificationName:IVLTrackDidChangeNotification object:self];
-                    }
-                }
+            if (!self.track.artworkImage || self->_artworkIsFallback) {
+                UIImage *img = IVLExtractNPArtwork(copy[MPMediaItemPropertyArtwork]);
+                if (!img) img = [self probeSystemArtworkForTrack:self.track];
+                if (img) [self applyArtwork:img isFallback:NO forTrack:self.track];
             }
-            if (self.track.duration <= 0) {
-                double nDur = [copy[MPMediaItemPropertyPlaybackDuration] doubleValue];
-                if (nDur > 0) self.track.duration = nDur;
+            if (self.track.duration <= 0 && nDur > 0) {
+                self.track.duration = nDur;
             }
             return;
         }
@@ -151,11 +358,10 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
 }
 
 - (void)refreshNow {
-    if (!_npInfo) {
-        NSDictionary *info = ([IVLLockScreen shared].originalInfo ?: [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo);
-        if (info.count) [self nowPlayingInfoDidChange:info];
-    }
+    NSDictionary *info = ([IVLLockScreen shared].originalInfo ?: [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo);
+    if (info.count) [self nowPlayingInfoDidChange:info];
     if (!self.track) [self resolveImmediately];
+    else [self ensureArtworkNow];
 }
 
 - (NSString *)diagnostics {
@@ -195,7 +401,6 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
             NSString *dv = IVLStr(details.videoId);
             if (!pVid.length) pVid = dv;
             else if (dv.length && ![dv isEqualToString:pVid]) {
-                // playerResponse still belongs to the previous video; ignore its stale metadata
                 pTitle = nil; pArtist = nil; pThumb = nil;
             }
         }
@@ -212,10 +417,8 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
     if (outDur) *outDur = pDuration;
 }
 
-/// If we committed immediately from NowPlaying before YTPlayerViewController flipped its videoID,
-/// upgrade the track in-place once the player catches up (within ~1s).
 - (void)upgradeVideoIDForTrack:(IVLTrack *)target attempt:(NSInteger)attempt {
-    if (self.track != target || target.youtubeVideoID.length == 11 || attempt >= 12) return;
+    if (self.track != target || target.youtubeVideoID.length == 11 || attempt >= 16) return;
     NSString *pTitle = nil, *pArtist = nil, *pVid = nil, *pThumb = nil;
     CGFloat pDuration = 0;
     [self readPlayerTitle:&pTitle artist:&pArtist vid:&pVid thumb:&pThumb duration:&pDuration];
@@ -224,10 +427,8 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
         _committedPlayerVid = pVid;
         target.videoID = pVid;
         target.youtubeVideoID = pVid;
-        if (pThumb.length) {
-            target.artworkURL = [pThumb stringByReplacingOccurrencesOfString:@"w\\d+-h\\d+" withString:@"w720-h720" options:NSRegularExpressionSearch range:NSMakeRange(0, pThumb.length)];
-        }
-        [[NSNotificationCenter defaultCenter] postNotificationName:IVLTrackDidChangeNotification object:self];
+        if (pThumb.length && !target.artworkURL.length) target.artworkURL = pThumb;
+        [self ensureArtworkForTrack:target attempt:1];
         if (self.state == IVLLyricsStateNotFound || self.state == IVLLyricsStateError) [self loadLyricsIgnoringCache:NO];
         return;
     }
@@ -248,7 +449,7 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
     CGFloat pDuration = 0;
     [self readPlayerTitle:&pTitle artist:&pArtist vid:&pVid thumb:&pThumb duration:&pDuration];
 
-    NSDictionary *np = _npInfo ?: ([IVLLockScreen shared].originalInfo ?: [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo);
+    NSDictionary *np = [IVLLockScreen shared].originalInfo ?: (_npInfo ?: [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo);
     NSString *nTitle = IVLStr(np[MPMediaItemPropertyTitle]);
     NSString *nArtist = IVLStr(np[MPMediaItemPropertyArtist]);
     double nDuration = [np[MPMediaItemPropertyPlaybackDuration] doubleValue];
@@ -272,14 +473,14 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
         _committedPlayerVid = pVid;
         _committedNPKey = npKey;
     } else if (pIsNew && !npIsNew) {
-        // Player switched to a new track while MPNowPlayingInfoCenter still holds the old song!
-        // Never wait for stale NowPlaying — switch immediately as soon as playerDetails is ready.
         if (pTitle.length) {
             title = pTitle;
             artist = pArtist ?: @"";
             duration = pDuration > 0 ? pDuration : 0;
             vid = pVid;
             useNPArt = NO;
+            _staleNPKey = npKey;
+            _committedNPKey = nil;
             _committedPlayerVid = pVid;
         } else if (attempt < 16) {
             retryFast();
@@ -288,8 +489,6 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
             return;
         }
     } else if (npIsNew) {
-        // System NowPlaying switched first; give YTPlayerViewController 1 fast 50ms tick to flip its videoID,
-        // then commit immediately so the UI never lags behind on skip.
         if (self.player && attempt < 1) {
             retryFast();
             return;
@@ -321,11 +520,13 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
 
     NSString *key = vid.length ? vid : IVLSyntheticKey(title, artist);
     if ([self.track.videoID isEqualToString:key] || (vid.length && [self.track.youtubeVideoID isEqualToString:vid])) {
-        if (useNPArt && !self.track.artworkImage) {
-            id art = np[MPMediaItemPropertyArtwork];
-            if ([art isKindOfClass:[MPMediaItemArtwork class]] && ![[IVLLockScreen shared] isRenderedArtwork:art]) {
-                @try { self.track.artworkImage = [(MPMediaItemArtwork *)art imageWithSize:CGSizeMake(600, 600)]; } @catch (__unused NSException *e) {}
-                if (self.track.artworkImage) [[NSNotificationCenter defaultCenter] postNotificationName:IVLTrackDidChangeNotification object:self];
+        if (useNPArt) {
+            _staleNPKey = nil;
+            if (duration > 0 && self.track.duration <= 0) self.track.duration = duration;
+            if (!self.track.artworkImage || _artworkIsFallback) {
+                UIImage *img = IVLExtractNPArtwork(np[MPMediaItemPropertyArtwork]);
+                if (img) [self applyArtwork:img isFallback:NO forTrack:self.track];
+                else [self ensureArtworkForTrack:self.track attempt:0];
             }
         }
         return;
@@ -337,21 +538,24 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
     t.title = title;
     t.artist = artist;
     t.duration = duration;
-    if (useNPArt) {
-        id art = np[MPMediaItemPropertyArtwork];
-        if ([art isKindOfClass:[MPMediaItemArtwork class]] && ![[IVLLockScreen shared] isRenderedArtwork:art]) {
-            @try { t.artworkImage = [(MPMediaItemArtwork *)art imageWithSize:CGSizeMake(600, 600)]; } @catch (__unused NSException *e) {}
-        }
-    }
     if (vid.length && pThumb.length) {
-        t.artworkURL = [pThumb stringByReplacingOccurrencesOfString:@"w\\d+-h\\d+" withString:@"w720-h720" options:NSRegularExpressionSearch range:NSMakeRange(0, pThumb.length)];
+        t.artworkURL = pThumb;
+    }
+    if (useNPArt) {
+        UIImage *img = IVLExtractNPArtwork(np[MPMediaItemPropertyArtwork]);
+        if (img) t.artworkImage = img;
     }
 
     _lastRaw = 0;
     _lastRawChange = CACurrentMediaTime();
+    _artworkIsFallback = NO;
+    _artworkURLInFlight = NO;
+    _vidSearchInFlight = NO;
+    if (useNPArt) _staleNPKey = nil;
     self.track = t;
     self.lyrics = nil;
     [[NSNotificationCenter defaultCenter] postNotificationName:IVLTrackDidChangeNotification object:self];
+    [self ensureArtworkForTrack:t attempt:0];
     [self loadLyricsIgnoringCache:NO];
 
     if (!vid.length && self.player) {

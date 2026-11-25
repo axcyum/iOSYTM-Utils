@@ -4,6 +4,7 @@
 NS_ASSUME_NONNULL_BEGIN
 
 extern NSNotificationName const IVLTrackDidChangeNotification;
+extern NSNotificationName const IVLArtworkDidChangeNotification;  // artworkImage arrived or upgraded for current track
 extern NSNotificationName const IVLLyricsDidChangeNotification;   // lyrics, translation or pronunciation updated
 
 typedef NS_ENUM(NSInteger, IVLLyricsState) {
@@ -31,6 +32,8 @@ typedef NS_ENUM(NSInteger, IVLLyricsState) {
 - (void)nowPlayingInfoDidChange:(nullable NSDictionary *)info;
 /// Re-check sources now (called when the lyrics UI opens).
 - (void)refreshNow;
+/// Force an immediate re-check of all artwork sources for the current track.
+- (void)ensureArtworkNow;
 - (NSString *)diagnostics;
 
 /// Playback position in ms with global + per-song offset applied.

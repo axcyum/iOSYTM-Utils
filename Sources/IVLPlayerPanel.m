@@ -683,6 +683,7 @@ static NSString *IVLClock(double s) {
         [nc addObserver:self selector:@selector(settingsChanged:) name:IVLSettingsDidChangeNotification object:nil];
         [nc addObserver:self selector:@selector(reloadAMLyrics) name:IVLLyricsDidChangeNotification object:nil];
         [nc addObserver:self selector:@selector(trackDidChange) name:IVLTrackDidChangeNotification object:nil];
+        [nc addObserver:self selector:@selector(artworkDidChange) name:IVLArtworkDidChangeNotification object:nil];
 
         [self syncVolume];
         [self updateAudioRoute];
@@ -838,8 +839,13 @@ static NSString *IVLClock(double s) {
 
 - (void)trackDidChange {
     IVLTrack *t = [IVLPlaybackManager shared].track;
-    if (t.artworkImage) [self setArtwork:t.artworkImage];
+    [self setArtwork:t.artworkImage];
     [self reloadAMLyrics];
+}
+
+- (void)artworkDidChange {
+    UIImage *img = [IVLPlaybackManager shared].track.artworkImage;
+    if (img) [self setArtwork:img];
 }
 
 - (void)setMoreMenu:(UIMenu *)menu { _moreMenu = menu; _more.menu = menu; }
@@ -1121,7 +1127,7 @@ static NSString *IVLClock(double s) {
 #pragma mark - Atmosphere
 
 - (void)setArtwork:(UIImage *)image {
-    NSString *key = image ? [NSString stringWithFormat:@"%p", image] : @"";
+    NSString *key = image ? [NSString stringWithFormat:@"%p_%.0fx%.0f", image, image.size.width, image.size.height] : @"";
     if ([key isEqualToString:_imageKey]) return;
     _imageKey = key;
     _hero.image = image;
@@ -1133,7 +1139,7 @@ static NSString *IVLClock(double s) {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         UIImage *blurred = nil;
         @try {
-            CIImage *ci = [CIImage imageWithCGImage:image.CGImage];
+            CIImage *ci = image.CIImage ?: (image.CGImage ? [CIImage imageWithCGImage:image.CGImage] : nil);
             if (ci) {
                 CGFloat scale = 360.0 / MAX(1, ci.extent.size.width);
                 CIImage *small = [ci imageByApplyingTransform:CGAffineTransformMakeScale(scale, scale)];
@@ -1355,6 +1361,9 @@ static NSString *IVLClock(double s) {
 - (void)refresh {
     IVLPlaybackManager *m = [IVLPlaybackManager shared];
     IVLTrack *t = m.track;
+    if (t.artworkImage && _hero.image != t.artworkImage) {
+        [self setArtwork:t.artworkImage];
+    }
     NSString *title = t.title ?: @"";
     if (![title isEqualToString:_title.attributedText.string ?: @""]) {
         _title.attributedText = [[NSAttributedString alloc] initWithString:title attributes:@{
