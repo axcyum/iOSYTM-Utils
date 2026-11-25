@@ -9,6 +9,7 @@
 #import "IVLRecognizer.h"
 #import "IVLProviderPickerViewController.h"
 #import "IVLSettingsViewController.h"
+#import "IVLRemoteControl.h"
 
 #pragma mark - Helpers
 
@@ -87,8 +88,10 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     UIImageView *_artwork;
     UILabel *_titleLabel;
     UILabel *_artistLabel;
+    UIButton *_playButton;
     UIButton *_moreButton;
     UIButton *_closeButton;
+    BOOL _shownHeaderPlaying;
 
     UITableView *_table;
     CAGradientLayer *_fadeMask;
@@ -280,7 +283,12 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     texts.axis = UILayoutConstraintAxisVertical;
     texts.spacing = 2;
 
-    UIImageSymbolConfiguration *sc = [UIImageSymbolConfiguration configurationWithPointSize:17 weight:UIImageSymbolWeightBold];
+    UIImageSymbolConfiguration *sc = [UIImageSymbolConfiguration configurationWithPointSize:16 weight:UIImageSymbolWeightBold];
+    _shownHeaderPlaying = [IVLRemoteControl isPlaying];
+    _playButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [_playButton setImage:[UIImage systemImageNamed:(_shownHeaderPlaying ? @"pause.fill" : @"play.fill") withConfiguration:sc] forState:UIControlStateNormal];
+    [_playButton addTarget:self action:@selector(headerPlayTapped) forControlEvents:UIControlEventTouchUpInside];
+
     _moreButton = [UIButton buttonWithType:UIButtonTypeSystem];
     [_moreButton setImage:[UIImage systemImageNamed:@"ellipsis" withConfiguration:sc] forState:UIControlStateNormal];
     _moreButton.showsMenuAsPrimaryAction = YES;
@@ -289,19 +297,20 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     [_closeButton setImage:[UIImage systemImageNamed:@"chevron.down" withConfiguration:sc] forState:UIControlStateNormal];
     _closeButton.accessibilityLabel = IVLLoc(@"close");
     [_closeButton addTarget:self action:@selector(close) forControlEvents:UIControlEventTouchUpInside];
-    for (UIButton *b in @[_moreButton, _closeButton]) {
+    for (UIButton *b in @[_playButton, _moreButton, _closeButton]) {
         b.tintColor = UIColor.whiteColor;
-        b.backgroundColor = [UIColor colorWithWhite:1 alpha:0.12];
-        b.layer.cornerRadius = 20;
-        [b.widthAnchor constraintEqualToConstant:40].active = YES;
-        [b.heightAnchor constraintEqualToConstant:40].active = YES;
+        b.backgroundColor = [UIColor colorWithWhite:1 alpha:0.13];
+        b.layer.cornerRadius = 19;
+        [b.widthAnchor constraintEqualToConstant:38].active = YES;
+        [b.heightAnchor constraintEqualToConstant:38].active = YES;
     }
 
-    UIStackView *row = [[UIStackView alloc] initWithArrangedSubviews:@[_artwork, texts, _moreButton, _closeButton]];
+    UIStackView *row = [[UIStackView alloc] initWithArrangedSubviews:@[_artwork, texts, _playButton, _moreButton, _closeButton]];
     row.axis = UILayoutConstraintAxisHorizontal;
     row.alignment = UIStackViewAlignmentCenter;
-    row.spacing = 12;
-    [row setCustomSpacing:8 afterView:_moreButton];
+    row.spacing = 10;
+    [row setCustomSpacing:6 afterView:_playButton];
+    [row setCustomSpacing:6 afterView:_moreButton];
     row.translatesAutoresizingMaskIntoConstraints = NO;
     [_header addSubview:row];
 
@@ -408,6 +417,8 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     __weak typeof(self) ws = self;
     _panel.onShowLyrics = ^{ [ws setShowPlayer:NO animated:YES]; };
     _panel.onClose = ^{ [ws dismissViewControllerAnimated:NO completion:nil]; };
+    _panel.onOpenProviderPicker = ^{ [ws openProviderPicker]; };
+    _panel.onLyricsModeChanged = ^{ [ws refreshMoreMenu]; };
     // the queue lives in YouTube Music's own player: hand the screen back to it
     _panel.onQueue = ^{ [ws close]; };
     // a full-screen sheet of its own, above the lyrics header and toolbar
@@ -418,7 +429,12 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
         [_panel.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
         [_panel.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
     ]];
-    if ([IVLSettings boolForKey:IVLKeyOpenPlayer]) [self setShowPlayer:YES animated:NO];
+    if ([IVLSettings boolForKey:IVLKeyOpenPlayer]) {
+        [self setShowPlayer:YES animated:NO];
+    } else if ([IVLSettings boolForKey:IVLKeyImmersivePlayer]) {
+        [self setShowPlayer:YES animated:NO];
+        [_panel setLyricsMode:YES animated:NO];
+    }
 }
 
 /// Switch between the lyrics list and the Apple Music-style player page (tap the header artwork).
@@ -731,7 +747,18 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
             [ws showToast:IVLLoc(@"copied")];
         }]];
     }
-    [items addObject:[UIAction actionWithTitle:(_showPlayer ? IVLLoc(@"show_lyrics") : IVLLoc(@"show_player")) image:[UIImage systemImageNamed:_showPlayer ? @"quote.bubble" : @"play.square"] identifier:nil handler:^(UIAction *a) { [ws toggleShowPlayer]; }]];
+    if (_showPlayer && [IVLSettings boolForKey:IVLKeyImmersivePlayer]) {
+        BOOL inAMLyrics = _panel.lyricsMode;
+        [items addObject:[UIAction actionWithTitle:(inAMLyrics ? IVLLoc(@"show_player") : IVLLoc(@"show_lyrics"))
+                                             image:[UIImage systemImageNamed:(inAMLyrics ? @"play.square" : @"quote.bubble")]
+                                        identifier:nil
+                                           handler:^(UIAction *a) { [ws->_panel toggleLyricsMode]; }]];
+    } else {
+        [items addObject:[UIAction actionWithTitle:(_showPlayer ? IVLLoc(@"show_lyrics") : IVLLoc(@"show_player"))
+                                             image:[UIImage systemImageNamed:(_showPlayer ? @"quote.bubble" : @"play.square")]
+                                        identifier:nil
+                                           handler:^(UIAction *a) { [ws toggleShowPlayer]; }]];
+    }
     [items addObject:[UIAction actionWithTitle:IVLLoc(@"recognize") image:[UIImage systemImageNamed:@"shazam.logo"] identifier:nil handler:^(UIAction *a) { [ws openRecognizer]; }]];
     NSString *sleep = [IVLSleepTimer shared].active ? [NSString stringWithFormat:@"%@（%@）", IVLLoc(@"sleep_timer"), [[IVLSleepTimer shared] statusText]] : IVLLoc(@"sleep_timer");
     [items addObject:[UIAction actionWithTitle:sleep image:[UIImage systemImageNamed:@"moon.zzz"] identifier:nil handler:^(UIAction *a) { [ws openSleepTimer]; }]];
@@ -758,7 +785,22 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     return found;
 }
 
+- (void)setHeaderPlaying:(BOOL)playing {
+    _shownHeaderPlaying = playing;
+    UIImageSymbolConfiguration *sc = [UIImageSymbolConfiguration configurationWithPointSize:16 weight:UIImageSymbolWeightBold];
+    [_playButton setImage:[UIImage systemImageNamed:(playing ? @"pause.fill" : @"play.fill") withConfiguration:sc] forState:UIControlStateNormal];
+}
+
+- (void)headerPlayTapped {
+    [[UIImpactFeedbackGenerator new] impactOccurred];
+    BOOL next = ![IVLRemoteControl isPlaying];
+    [IVLRemoteControl togglePlayPause];
+    [self setHeaderPlaying:next];
+}
+
 - (void)tick {
+    BOOL playing = [IVLRemoteControl isPlaying];
+    if (playing != _shownHeaderPlaying) [self setHeaderPlaying:playing];
     if (_showPlayer) [_panel refresh];
     if (!_synced || !_lines.count || _table.hidden) return;
     NSInteger t = [[IVLPlaybackManager shared] currentTimeMs];

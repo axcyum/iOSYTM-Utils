@@ -433,14 +433,12 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
     interval.format = ^NSString *(double v) {
         return v < 15 ? [NSString stringWithFormat:IVLLoc(@"discord_interval_danger_fmt"), v] : [NSString stringWithFormat:IVLLoc(@"discord_interval_fmt"), v];
     };
-    IVLRow *name = [IVLRow type:IVLRowText key:IVLKeyDiscordName title:IVLLoc(@"discord_name")];
-    name.placeholder = @"YouTube Music iOS";
     IVLRow *songButton = [IVLRow type:IVLRowSwitch key:IVLKeyDiscordSongButton title:IVLLoc(@"discord_song_button")];
     IVLRow *githubButton = [IVLRow type:IVLRowSwitch key:IVLKeyDiscordGitHubButton title:IVLLoc(@"discord_github_button")];
     return @[
         [IVLSection title:nil footer:IVLLoc(@"footer_discord") rows:account],
         [IVLSection title:nil footer:nil rows:@[share, cover]],
-        [IVLSection title:IVLLoc(@"discord_display") footer:IVLLoc(@"footer_discord_display") rows:@[name, songButton, githubButton]],
+        [IVLSection title:IVLLoc(@"discord_display") footer:IVLLoc(@"footer_discord_display") rows:@[songButton, githubButton]],
         [IVLSection title:IVLLoc(@"discord_interval") footer:IVLLoc(@"footer_discord_interval") rows:@[interval]],
         [IVLSection title:nil footer:nil rows:@[logs]],
     ];

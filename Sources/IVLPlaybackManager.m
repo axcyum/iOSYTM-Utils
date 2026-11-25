@@ -24,6 +24,8 @@ NSNotificationName const IVLLyricsDidChangeNotification = @"IVLLyricsDidChangeNo
     CFTimeInterval _lastRawChange;
     BOOL _playing;
     NSString *_lastPlayerVid;
+    NSString *_committedPlayerVid;
+    NSString *_committedNPKey;
     NSDictionary *_npInfo;
     CFTimeInterval _npStamp;
     NSString *_npKey;
@@ -47,7 +49,7 @@ NSNotificationName const IVLLyricsDidChangeNotification = @"IVLLyricsDidChangeNo
 - (void)settingsChanged:(NSNotification *)n {
     NSString *key = n.object;
     if ([key isEqualToString:IVLKeyEnabled]) {
-        if ([IVLSettings boolForKey:IVLKeyEnabled] && !self.track) [self scheduleResolve];
+        if ([IVLSettings boolForKey:IVLKeyEnabled] && !self.track) [self resolveImmediately];
         return;
     }
     if ([key isEqualToString:IVLKeyTranslation] || [key isEqualToString:IVLKeyTranslationLang] || [key isEqualToString:IVLKeyPronunciation]) {
@@ -61,9 +63,6 @@ NSNotificationName const IVLLyricsDidChangeNotification = @"IVLLyricsDidChangeNo
 }
 
 #pragma mark - Track detection
-// Two independent sources:
-//  1. YTPlayerViewController (videoID, exact position, seek) - private, may change between app versions
-//  2. MPNowPlayingInfoCenter (title, artist, duration, artwork, elapsed) - public API, always available
 
 static NSString *IVLStr(id v) { return [v isKindOfClass:[NSString class]] ? v : nil; }
 
@@ -82,19 +81,21 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
     return h;
 }
 
-- (void)scheduleResolve {
+- (void)resolveImmediately {
     if (![IVLSettings boolForKey:IVLKeyEnabled]) return;
-    NSUInteger gen = ++_generation;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    void (^run)(void) = ^{
+        NSUInteger gen = ++self->_generation;
         [self resolveTrackAttempt:0 generation:gen];
-    });
+    };
+    if (NSThread.isMainThread) run();
+    else dispatch_async(dispatch_get_main_queue(), run);
 }
 
 - (void)playerDidActivateVideo:(UIViewController *)player {
     _activateCount++;
     if (player) self.player = player;
     _lastPlayerVid = [self playerVideoID];
-    [self scheduleResolve];
+    [self resolveImmediately];
 }
 
 - (void)playerHeartbeat:(UIViewController *)player {
@@ -104,7 +105,7 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
     NSString *vid = [self playerVideoID];
     if (!vid.length || [vid isEqualToString:_lastPlayerVid]) return;
     _lastPlayerVid = vid;
-    [self scheduleResolve];
+    [self resolveImmediately];
 }
 
 - (void)nowPlayingInfoDidChange:(NSDictionary *)info {
@@ -116,10 +117,34 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
         self->_npInfo = copy;
         self->_npStamp = stamp;
         NSString *title = IVLStr(copy[MPMediaItemPropertyTitle]);
-        NSString *key = [NSString stringWithFormat:@"%@\n%@", title ?: @"", IVLStr(copy[MPMediaItemPropertyArtist]) ?: @""];
-        if (title.length && ![key isEqualToString:self->_npKey]) {
+        NSString *artist = IVLStr(copy[MPMediaItemPropertyArtist]) ?: @"";
+        NSString *key = [NSString stringWithFormat:@"%@\n%@", title ?: @"", artist];
+        if (!title.length) return;
+
+        // If the track was already resolved instantly from YTPlayerViewController, fill in any missing
+        // MPMediaItemArtwork when system NowPlaying catches up without restarting lyric loading.
+        if (self.track && ![key isEqualToString:self->_committedNPKey ?: @""] && IVLLooseEqual(self.track.title, title)) {
             self->_npKey = key;
-            [self scheduleResolve];
+            self->_committedNPKey = key;
+            if (!self.track.artworkImage) {
+                id art = copy[MPMediaItemPropertyArtwork];
+                if ([art isKindOfClass:[MPMediaItemArtwork class]] && ![[IVLLockScreen shared] isRenderedArtwork:art]) {
+                    @try { self.track.artworkImage = [(MPMediaItemArtwork *)art imageWithSize:CGSizeMake(600, 600)]; } @catch (__unused NSException *e) {}
+                    if (self.track.artworkImage) {
+                        [[NSNotificationCenter defaultCenter] postNotificationName:IVLTrackDidChangeNotification object:self];
+                    }
+                }
+            }
+            if (self.track.duration <= 0) {
+                double nDur = [copy[MPMediaItemPropertyPlaybackDuration] doubleValue];
+                if (nDur > 0) self.track.duration = nDur;
+            }
+            return;
+        }
+
+        if (![key isEqualToString:self->_npKey]) {
+            self->_npKey = key;
+            [self resolveImmediately];
         }
     };
     if (NSThread.isMainThread) apply(); else dispatch_async(dispatch_get_main_queue(), apply);
@@ -130,7 +155,7 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
         NSDictionary *info = ([IVLLockScreen shared].originalInfo ?: [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo);
         if (info.count) [self nowPlayingInfoDidChange:info];
     }
-    if (!self.track) [self scheduleResolve];
+    if (!self.track) [self resolveImmediately];
 }
 
 - (NSString *)diagnostics {
@@ -150,15 +175,7 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
     return vid;
 }
 
-- (void)resolveTrackAttempt:(NSInteger)attempt generation:(NSUInteger)gen {
-    if (gen != _generation) return;
-    void (^retry)(void) = ^{
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [self resolveTrackAttempt:attempt + 1 generation:gen];
-        });
-    };
-
-    // --- player side
+- (void)readPlayerTitle:(NSString **)outTitle artist:(NSString **)outArtist vid:(NSString **)outVid thumb:(NSString **)outThumb duration:(CGFloat *)outDur {
     YTPlayerViewController *p = (YTPlayerViewController *)self.player;
     NSString *pVid = [self playerVideoID];
     YTIVideoDetails *details = nil;
@@ -177,40 +194,142 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
         if ([details respondsToSelector:@selector(videoId)]) {
             NSString *dv = IVLStr(details.videoId);
             if (!pVid.length) pVid = dv;
-            else if (dv.length && ![dv isEqualToString:pVid]) pTitle = nil;   // response still from the previous song
+            else if (dv.length && ![dv isEqualToString:pVid]) {
+                // playerResponse still belongs to the previous video; ignore its stale metadata
+                pTitle = nil; pArtist = nil; pThumb = nil;
+            }
         }
         if ([p respondsToSelector:@selector(currentVideoTotalMediaTime)]) pDuration = p.currentVideoTotalMediaTime;
-        if ([details respondsToSelector:@selector(thumbnail)]) {
+        if (pTitle.length && [details respondsToSelector:@selector(thumbnail)]) {
             YTIThumbnailDetails_Thumbnail *thumb = [details.thumbnail.thumbnailsArray lastObject];
             if ([thumb respondsToSelector:@selector(URL)]) pThumb = IVLStr(thumb.URL);
         }
     } @catch (__unused NSException *e) {}
+    if (outTitle) *outTitle = pTitle;
+    if (outArtist) *outArtist = pArtist;
+    if (outVid) *outVid = pVid;
+    if (outThumb) *outThumb = pThumb;
+    if (outDur) *outDur = pDuration;
+}
 
-    // --- system now playing side
+/// If we committed immediately from NowPlaying before YTPlayerViewController flipped its videoID,
+/// upgrade the track in-place once the player catches up (within ~1s).
+- (void)upgradeVideoIDForTrack:(IVLTrack *)target attempt:(NSInteger)attempt {
+    if (self.track != target || target.youtubeVideoID.length == 11 || attempt >= 12) return;
+    NSString *pTitle = nil, *pArtist = nil, *pVid = nil, *pThumb = nil;
+    CGFloat pDuration = 0;
+    [self readPlayerTitle:&pTitle artist:&pArtist vid:&pVid thumb:&pThumb duration:&pDuration];
+    BOOL sameLen = pDuration > 0 && target.duration > 0 && fabs(pDuration - target.duration) < 2.0;
+    if (pVid.length && (IVLLooseEqual(pTitle, target.title) || (pTitle.length && sameLen))) {
+        _committedPlayerVid = pVid;
+        target.videoID = pVid;
+        target.youtubeVideoID = pVid;
+        if (pThumb.length) {
+            target.artworkURL = [pThumb stringByReplacingOccurrencesOfString:@"w\\d+-h\\d+" withString:@"w720-h720" options:NSRegularExpressionSearch range:NSMakeRange(0, pThumb.length)];
+        }
+        [[NSNotificationCenter defaultCenter] postNotificationName:IVLTrackDidChangeNotification object:self];
+        if (self.state == IVLLyricsStateNotFound || self.state == IVLLyricsStateError) [self loadLyricsIgnoringCache:NO];
+        return;
+    }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.08 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [self upgradeVideoIDForTrack:target attempt:attempt + 1];
+    });
+}
+
+- (void)resolveTrackAttempt:(NSInteger)attempt generation:(NSUInteger)gen {
+    if (gen != _generation) return;
+    void (^retryFast)(void) = ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self resolveTrackAttempt:attempt + 1 generation:gen];
+        });
+    };
+
+    NSString *pTitle = nil, *pArtist = nil, *pVid = nil, *pThumb = nil;
+    CGFloat pDuration = 0;
+    [self readPlayerTitle:&pTitle artist:&pArtist vid:&pVid thumb:&pThumb duration:&pDuration];
+
     NSDictionary *np = _npInfo ?: ([IVLLockScreen shared].originalInfo ?: [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo);
     NSString *nTitle = IVLStr(np[MPMediaItemPropertyTitle]);
     NSString *nArtist = IVLStr(np[MPMediaItemPropertyArtist]);
     double nDuration = [np[MPMediaItemPropertyPlaybackDuration] doubleValue];
+    NSString *npKey = nTitle.length ? [NSString stringWithFormat:@"%@\n%@", nTitle, nArtist ?: @""] : nil;
 
-    NSString *title, *artist, *vid = nil;
-    double duration;
-    if (nTitle.length) {
+    BOOL pIsNew = pVid.length > 0 && ![pVid isEqualToString:_committedPlayerVid ?: @""];
+    BOOL npIsNew = npKey.length > 0 && ![npKey isEqualToString:_committedNPKey ?: @""];
+    BOOL sameLength = pDuration > 0 && nDuration > 0 && fabs(pDuration - nDuration) < 2.0;
+    BOOL bothMatch = pVid.length && nTitle.length && (IVLLooseEqual(pTitle, nTitle) || (pTitle.length && sameLength));
+
+    NSString *title = nil, *artist = nil, *vid = nil;
+    double duration = 0;
+    BOOL useNPArt = NO;
+
+    if (bothMatch) {
         title = nTitle;
         artist = nArtist.length ? nArtist : (pArtist ?: @"");
         duration = nDuration > 0 ? nDuration : pDuration;
-        BOOL sameLength = pDuration > 0 && nDuration > 0 && fabs(pDuration - nDuration) < 1.5;
-        if (pVid.length && (IVLLooseEqual(pTitle, nTitle) || (pTitle.length && sameLength))) vid = pVid;
-        else if (p && attempt < 6) { retry(); return; }   // give the player a moment to catch up
+        vid = pVid;
+        useNPArt = YES;
+        _committedPlayerVid = pVid;
+        _committedNPKey = npKey;
+    } else if (pIsNew && !npIsNew) {
+        // Player switched to a new track while MPNowPlayingInfoCenter still holds the old song!
+        // Never wait for stale NowPlaying — switch immediately as soon as playerDetails is ready.
+        if (pTitle.length) {
+            title = pTitle;
+            artist = pArtist ?: @"";
+            duration = pDuration > 0 ? pDuration : 0;
+            vid = pVid;
+            useNPArt = NO;
+            _committedPlayerVid = pVid;
+        } else if (attempt < 16) {
+            retryFast();
+            return;
+        } else {
+            return;
+        }
+    } else if (npIsNew) {
+        // System NowPlaying switched first; give YTPlayerViewController 1 fast 50ms tick to flip its videoID,
+        // then commit immediately so the UI never lags behind on skip.
+        if (self.player && attempt < 1) {
+            retryFast();
+            return;
+        }
+        title = nTitle;
+        artist = nArtist ?: @"";
+        duration = nDuration > 0 ? nDuration : pDuration;
+        vid = nil;
+        useNPArt = YES;
+        _committedNPKey = npKey;
+    } else if (nTitle.length) {
+        title = nTitle;
+        artist = nArtist.length ? nArtist : (pArtist ?: @"");
+        duration = nDuration > 0 ? nDuration : pDuration;
+        vid = bothMatch ? pVid : nil;
+        useNPArt = YES;
+        _committedNPKey = npKey;
+        if (vid.length) _committedPlayerVid = vid;
     } else if (pVid.length && pTitle.length) {
-        if (pDuration <= 0 && attempt < 8) { retry(); return; }
-        title = pTitle; artist = pArtist ?: @""; duration = pDuration; vid = pVid;
+        title = pTitle;
+        artist = pArtist ?: @"";
+        duration = pDuration;
+        vid = pVid;
+        _committedPlayerVid = pVid;
     } else {
-        if (attempt < 20) retry();
+        if (attempt < 25) retryFast();
         return;
     }
 
     NSString *key = vid.length ? vid : IVLSyntheticKey(title, artist);
-    if ([self.track.videoID isEqualToString:key]) return;
+    if ([self.track.videoID isEqualToString:key] || (vid.length && [self.track.youtubeVideoID isEqualToString:vid])) {
+        if (useNPArt && !self.track.artworkImage) {
+            id art = np[MPMediaItemPropertyArtwork];
+            if ([art isKindOfClass:[MPMediaItemArtwork class]] && ![[IVLLockScreen shared] isRenderedArtwork:art]) {
+                @try { self.track.artworkImage = [(MPMediaItemArtwork *)art imageWithSize:CGSizeMake(600, 600)]; } @catch (__unused NSException *e) {}
+                if (self.track.artworkImage) [[NSNotificationCenter defaultCenter] postNotificationName:IVLTrackDidChangeNotification object:self];
+            }
+        }
+        return;
+    }
 
     IVLTrack *t = [IVLTrack new];
     t.videoID = key;
@@ -218,19 +337,28 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
     t.title = title;
     t.artist = artist;
     t.duration = duration;
-    id art = np[MPMediaItemPropertyArtwork];
-    if (nTitle.length && [art isKindOfClass:[MPMediaItemArtwork class]] && ![[IVLLockScreen shared] isRenderedArtwork:art]) {
-        @try { t.artworkImage = [(MPMediaItemArtwork *)art imageWithSize:CGSizeMake(600, 600)]; } @catch (__unused NSException *e) {}
+    if (useNPArt) {
+        id art = np[MPMediaItemPropertyArtwork];
+        if ([art isKindOfClass:[MPMediaItemArtwork class]] && ![[IVLLockScreen shared] isRenderedArtwork:art]) {
+            @try { t.artworkImage = [(MPMediaItemArtwork *)art imageWithSize:CGSizeMake(600, 600)]; } @catch (__unused NSException *e) {}
+        }
     }
-    if (vid && pThumb.length) {
-        // request a larger square artwork from googleusercontent ("w120-h120")
+    if (vid.length && pThumb.length) {
         t.artworkURL = [pThumb stringByReplacingOccurrencesOfString:@"w\\d+-h\\d+" withString:@"w720-h720" options:NSRegularExpressionSearch range:NSMakeRange(0, pThumb.length)];
     }
 
+    _lastRaw = 0;
+    _lastRawChange = CACurrentMediaTime();
     self.track = t;
     self.lyrics = nil;
     [[NSNotificationCenter defaultCenter] postNotificationName:IVLTrackDidChangeNotification object:self];
     [self loadLyricsIgnoringCache:NO];
+
+    if (!vid.length && self.player) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.08 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self upgradeVideoIDForTrack:t attempt:0];
+        });
+    }
 }
 
 #pragma mark - Lyrics
@@ -243,9 +371,9 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
     self.lyrics = nil;
     [[NSNotificationCenter defaultCenter] postNotificationName:IVLLyricsDidChangeNotification object:self];
 
-    NSString *vid = t.videoID;
+    __weak IVLTrack *weakTrack = t;
     [[IVLLyricsService shared] lyricsForTrack:t completion:^(IVLLyrics *ly, NSError *err) {
-        if (![self.track.videoID isEqualToString:vid]) return;
+        if (self.track != weakTrack) return;
         self.lyrics = ly;
         self.state = ly ? IVLLyricsStateLoaded : (err ? IVLLyricsStateError : IVLLyricsStateNotFound);
         [self refreshExtras];
@@ -287,7 +415,6 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
 - (NSInteger)rawTimeMs {
     YTPlayerViewController *p = (YTPlayerViewController *)self.player;
     if (![p respondsToSelector:@selector(currentVideoMediaTime)]) {
-        // system now-playing fallback: elapsed + (now - when it was set) * rate
         if (!_npInfo) return 0;
         double elapsed = [_npInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] doubleValue];
         id rateObj = _npInfo[MPNowPlayingInfoPropertyPlaybackRate];
@@ -304,7 +431,6 @@ static NSString *IVLSyntheticKey(NSString *title, NSString *artist) {
         _lastRawChange = now;
         return raw;
     }
-    // The player reports at a coarse interval: extrapolate between updates for smooth karaoke.
     CFTimeInterval since = now - _lastRawChange;
     if (since > 1.0) _playing = NO;
     if (_playing) return raw + (NSInteger)(MIN(since, 0.5) * 1000.0);

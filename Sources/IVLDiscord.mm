@@ -207,7 +207,7 @@ static NSString *CurrentVideoID(IVLTrack *t) {
     int payloadMode;
     NSTimeInterval nextAttempt, nextAuthAttempt, lastSend;
     NSDictionary *tokens;
-    NSString *lastFingerprint, *sampleFingerprint;
+    NSString *lastFingerprint, *sampleFingerprint, *lastSentSongKey;
     double sampleStart;
     NSTimer *timer;
 }
@@ -266,6 +266,7 @@ static NSString *CurrentVideoID(IVLTrack *t) {
         [NSRunLoop.mainRunLoop addTimer:timer forMode:NSRunLoopCommonModes];
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(resume) name:UIApplicationDidBecomeActiveNotification object:nil];
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(background) name:UIApplicationDidEnterBackgroundNotification object:nil];
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(tick) name:IVLTrackDidChangeNotification object:nil];
         [self resume];
     }
     return self;
@@ -422,25 +423,43 @@ static NSString *CurrentVideoID(IVLTrack *t) {
     }
     if (!ready) { if (!busy && now >= nextAuthAttempt) [self resume]; return; }
     NSDictionary *info = [self currentInfo];
+    IVLPlaybackManager *pm = [IVLPlaybackManager shared];
+    IVLTrack *track = pm.track;
     NSString *title = Text(info[MPMediaItemPropertyTitle]);
-    if (!title.length || ![self isPlaying:info]) { [self clear]; return; }
     NSString *artist = Text(info[MPMediaItemPropertyArtist]);
     NSString *album = Text(info[MPMediaItemPropertyAlbumTitle]);
     double duration = MAX(0, Number(info[MPMediaItemPropertyPlaybackDuration], 0));
     double elapsed = MAX(0, Number(info[MPNowPlayingInfoPropertyElapsedPlaybackTime], 0));
     double rate = Number(info[MPNowPlayingInfoPropertyPlaybackRate], 1);
+
+    // If YTPlayerViewController already switched tracks while MPNowPlayingInfoCenter is still stale,
+    // immediately prefer the fresh track model so Discord never lags one song behind.
+    BOOL titleMatchesTrack = title.length && track.title.length &&
+        ([title.lowercaseString containsString:track.title.lowercaseString] || [track.title.lowercaseString containsString:title.lowercaseString]);
+    if (track.title.length && track.youtubeVideoID.length > 0 && !titleMatchesTrack && [pm isPlaying]) {
+        title = track.title;
+        artist = track.artist ?: @"";
+        album = @"";
+        if (track.duration > 0) duration = track.duration;
+        elapsed = MAX(0, [pm rawTimeMs] / 1000.0);
+        rate = 1.0;
+    } else if (!title.length || ![self isPlaying:info]) {
+        [self clear];
+        return;
+    }
+
     NSString *fingerprint = [NSString stringWithFormat:@"%@\n%@\n%@\n%.1f\n%.2f", title, artist, album, duration, rate];
     if (![fingerprint isEqual:sampleFingerprint]) { sampleStart = now - elapsed / MAX(0.01, rate); sampleFingerprint = fingerprint; }
     double start = sampleStart;
+    NSString *songKey = [NSString stringWithFormat:@"%@\n%@", title, artist ?: @""];
+    BOOL songChanged = ![songKey isEqualToString:lastSentSongKey ?: @""];
     NSInteger interval = MAX(3, MIN(60, [IVLSettings integerForKey:IVLKeyDiscordInterval]));
-    if (inFlight || blockedPayload || now < nextAttempt || now - lastSend < interval) return;
+    NSTimeInterval minWait = songChanged ? 2.0 : (NSTimeInterval)interval;
+    if (inFlight || blockedPayload || now < nextAttempt || now - lastSend < minWait) return;
 
     NSString *image = ([self coverEnabled] && !omitArtwork) ? CoverURL(title) : nil;
-    IVLTrack *track = [IVLPlaybackManager shared].track;
-    NSString *vid = [track.title isEqualToString:title] ? CurrentVideoID(track) : nil;
+    NSString *vid = ([track.title isEqualToString:title] || (track.title.length && [title containsString:track.title])) ? CurrentVideoID(track) : nil;
     NSString *songURL = vid ? [NSString stringWithFormat:@"https://music.youtube.com/watch?v=%@", vid] : nil;
-    NSString *name = [[IVLSettings objectForKey:IVLKeyDiscordName] description];
-    if (!name.length) name = @"YouTube Music iOS";
     // Listening activities print the large image text as the album line, so the version goes on the
     // small YouTube Music badge instead, where it only shows on hover: "v1.0.0 iOS 26.0.1"
     NSString *tooltip = [NSString stringWithFormat:@"v%s iOS %@", IVL_VERSION, UIDevice.currentDevice.systemVersion];
@@ -448,13 +467,11 @@ static NSString *CurrentVideoID(IVLTrack *t) {
     NSString *github = @"https://github.com/axcyum/iOSYTM-Utils";
     BOOL githubButton = [IVLSettings boolForKey:IVLKeyDiscordGitHubButton];
     // everything that is shown is part of the fingerprint: changes (cover found later, settings) trigger a resend
-    fingerprint = [fingerprint stringByAppendingFormat:@"\n%@\n%@\n%@\n%d%d%@", image ?: @"", name, songURL ?: @"", songButton, githubButton, github ?: @""];
+    fingerprint = [fingerprint stringByAppendingFormat:@"\n%@\n%@\n%d%d%@", image ?: @"", songURL ?: @"", songButton, githubButton, github ?: @""];
     if (published && [fingerprint isEqual:lastFingerprint]) return;
 
     discordpp::Activity activity{};
     activity.SetType(payloadMode < 2 ? discordpp::ActivityTypes::Listening : discordpp::ActivityTypes::Playing);
-    // "Listening to <name>" (Discord shows the application name when the name is not accepted)
-    activity.SetName(UTF8(PresenceText(name)));
     activity.SetDetails(UTF8(PresenceText(title)));
     if (songURL && payloadMode == 0) activity.SetDetailsUrl(UTF8(songURL));
     if (PresenceText(artist).length) activity.SetState(UTF8(PresenceText(artist)));
@@ -493,8 +510,8 @@ static NSString *CurrentVideoID(IVLTrack *t) {
     auto revision = metadataRevision;
     YTMPLog(@"presence_send", @{ @"mode": @(payloadMode), @"details": PresenceText(title), @"state": PresenceText(artist),
                                  @"duration": @(duration), @"elapsed": @(elapsed), @"timestamps": @(withTimes), @"image": image ?: @"", @"image_source": gCoverReason ?: @"",
-                                 @"name": name, @"song_url": songURL ?: @"", @"buttons": @((songButton ? 1 : 0) + (githubButton ? 1 : 0)), @"interval": @(interval) });
-    inFlight = YES; lastSend = now;
+                                 @"song_url": songURL ?: @"", @"buttons": @((songButton ? 1 : 0) + (githubButton ? 1 : 0)), @"interval": @(interval) });
+    inFlight = YES; lastSend = now; lastSentSongKey = songKey;
     client->UpdateRichPresence(activity, [self, epoch, revision, fingerprint, image](auto result) {
         LogResult(@"presence_result", result);
         if (epoch != generation) return;
