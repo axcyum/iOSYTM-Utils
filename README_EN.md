@@ -13,7 +13,7 @@
 
 [日本語](README.md) · **English**
 
-[Features](#features) · [Lyrics Providers](#lyrics-providers) · [Installation](#installation) · [Building](#building) · [License](#license)
+[Screenshots](#screenshots) · [Features](#features) · [Lyrics Providers](#lyrics-providers) · [Installation](#installation) · [Building](#building) · [License](#license)
 
 </div>
 
@@ -32,6 +32,31 @@ It also unifies several companion tweaks and utilities under a single native set
 > [!IMPORTANT]
 > **Clean Policy**: This tweak focuses strictly on lyrics, playback UX, and ecosystem integrations. **It contains zero ad-blocking, Premium-unlocking, audio-downloading, or restriction-bypassing code.**
 > Only playback-state and metadata hooks are used.
+
+---
+
+## Screenshots
+
+<div align="center">
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <img src="assets/screenshot-player.jpg" width="240" alt="Internal Player" />
+    </td>
+    <td align="center" width="33%">
+      <img src="assets/screenshot-lyrics.jpg" width="240" alt="Apple Music-style Lyrics & Pronunciation" />
+    </td>
+    <td align="center" width="33%">
+      <img src="assets/screenshot-sources.jpg" width="240" alt="Lyrics Sources & Priority" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Internal Player</b><br>Ambient mesh · mini lyric · dynamic AirPods route</sub></td>
+    <td align="center"><sub><b>Apple Music-Style Lyrics (Experimental)</b><br>Optical blur · live translation & pronunciation</sub></td>
+    <td align="center"><sub><b>Lyrics Sources & Priority</b><br>7 parallel providers · drag-to-reorder</sub></td>
+  </tr>
+</table>
+</div>
 
 ---
 

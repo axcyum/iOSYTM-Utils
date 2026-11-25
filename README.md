@@ -13,7 +13,7 @@
 
 **日本語** · [English](README_EN.md)
 
-[主な機能](#主な機能) · [対応歌詞ソース](#対応歌詞ソース) · [インストール](#インストール) · [ビルド](#ビルド) · [ライセンス](#ライセンス)
+[スクリーンショット](#スクリーンショット) · [主な機能](#主な機能) · [対応歌詞ソース](#対応歌詞ソース) · [インストール](#インストール) · [ビルド](#ビルド) · [ライセンス](#ライセンス)
 
 </div>
 
@@ -32,6 +32,32 @@
 > [!IMPORTANT]
 > **クリーンポリシー**：本 Tweak は視聴体験・歌詞表示・外部サービス連携の向上のみを目的としています。**広告ブロック、YouTube Premium 機能の解放、音源ダウンロード等の制限回避機能は一切含みません。**
 > 再生状態とメタデータの取得フックのみを利用しています。
+
+---
+
+## スクリーンショット
+
+<div align="center">
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <img src="assets/screenshot-player.jpg" width="240" alt="内部プレイヤー" />
+    </td>
+    <td align="center" width="33%">
+      <img src="assets/screenshot-lyrics.jpg" width="240" alt="Apple Music 風の歌詞表示・発音" />
+    </td>
+    <td align="center" width="33%">
+      <img src="assets/screenshot-sources.jpg" width="240" alt="歌詞ソースと優先順" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>内部プレイヤー</b><br>アンビエント背景・ミニ歌詞・AirPods 動的表示</sub></td>
+    <td align="center"><sub><b>Apple Music 風 歌詞表示（試験的）</b><br>光学ブラー・リアルタイム翻訳＆発音表記</sub></td>
+    <td align="center"><sub><b>歌詞ソースと優先順</b><br>7 プロバイダーの並列検索・ドラッグ並び替え</sub></td>
+  </tr>
+</table>
+</div>
+
 ---
 
 ## 主な機能
