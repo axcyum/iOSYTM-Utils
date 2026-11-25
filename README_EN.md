@@ -2,7 +2,7 @@
 
 <img src="assets/icon.png" width="124" height="124" alt="iOSYTM-Utils Icon" />
 
-# iOSYTM-Utils
+# iOS YTMusic Utilities
 
 **All-in-one synced lyrics, immersive player & utility suite for YouTube Music on iOS**
 
@@ -31,7 +31,7 @@ It also unifies several companion tweaks and utilities under a single native set
 
 > [!IMPORTANT]
 > **Clean Policy**: This tweak focuses strictly on lyrics, playback UX, and ecosystem integrations. **It contains zero ad-blocking, Premium-unlocking, audio-downloading, or restriction-bypassing code.**
-> Only playback-state and metadata hooks are used, and it chains cleanly alongside [YTMusicUltimate](https://github.com/dayanch96/YTMusicUltimate).
+> Only playback-state and metadata hooks are used.
 
 ---
 
@@ -54,8 +54,10 @@ It also unifies several companion tweaks and utilities under a single native set
   - **Other Non-Latin Scripts**: Cyrillic, Thai, and more transliterated to Latin script
 - **Localized UI**: English / 日本語 / 한국어.
 
-### 3. Apple Music-Style Immersive Player & Lock Screen Lyrics
-- **Immersive Now Playing Sheet**: Tap the header artwork in the lyrics view (or set it as default) to switch to an **Apple Music (v27)** atmospheric player — full-bleed artwork extending behind the status bar and dissolving optically through progressive Gaussian blur into a color mesh (un-cropped full-width 16:9 music videos, knobless 6pt capsule scrubber & volume bars that swell on touch, spring-animated frameless transport controls, and AirPlay / queue / sleep-timer badges).
+### 3. Internal Player Sheet & Lock Screen Lyrics
+- **Now Playing Sheet**: Tap the header artwork in the lyrics view (or set it as default) to switch to a sleek internal player with knobless 6pt capsule scrubber & volume bars that swell on touch, spring-animated frameless transport controls, and AirPlay / queue / sleep-timer badges.
+  - **Standard Mode (Default)**: Displays clean framed `1:1` song covers or `16:9` video thumbnails over a blurred ambient color mesh.
+  - **Apple Music Full-Bleed Style (Experimental)**: Optional setting that extends artwork behind the status bar and dissolves it optically through progressive Gaussian blur into the background mesh.
 - **Lock Screen & Control Center Lyrics** (LockLyrics integrated):
   - Renders live synced lyrics (plus pronunciation/translation) onto the Lock Screen artwork canvas.
   - Upgraded with smooth slide + fade transitions, word-level karaoke fill, and configurable latency lead-time compensation.

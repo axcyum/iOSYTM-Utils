@@ -299,36 +299,45 @@ static NSString *IVLDuration(double sec) {
     return m >= 60 ? [NSString stringWithFormat:@"%ldh %02ldm", m / 60, m % 60] : [NSString stringWithFormat:@"%ldm", m];
 }
 
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return 5; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return 6; }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)s {
-    if (s == 0) return 4;
-    if (s == 1) return 1;
-    if (s == 2) return MAX(1, (NSInteger)[_sum[@"topSongs"] count]);
-    if (s == 3) return MAX(1, (NSInteger)[_sum[@"topArtists"] count]);
+    if (s == 0) return 1;
+    if (s == 1) return 4;
+    if (s == 2) return 1;
+    if (s == 3) return MAX(1, (NSInteger)[_sum[@"topSongs"] count]);
+    if (s == 4) return MAX(1, (NSInteger)[_sum[@"topArtists"] count]);
     return 1;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)s {
-    return @[IVLLoc(@"stats_overview"), IVLLoc(@"stats_clock"), IVLLoc(@"stats_top_songs"), IVLLoc(@"stats_top_artists"), @""][s];
+    return @[@"", IVLLoc(@"stats_overview"), IVLLoc(@"stats_clock"), IVLLoc(@"stats_top_songs"), IVLLoc(@"stats_top_artists"), @""][s];
 }
 
-- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)s { return s == 4 ? IVLLoc(@"footer_stats") : nil; }
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)s { return s == 5 ? IVLLoc(@"footer_stats") : nil; }
 
-- (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)ip { return ip.section == 1 ? 120 : UITableViewAutomaticDimension; }
+- (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)ip { return ip.section == 2 ? 120 : UITableViewAutomaticDimension; }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)ip {
-    UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:(ip.section >= 2 && ip.section <= 3) ? UITableViewCellStyleSubtitle : UITableViewCellStyleValue1 reuseIdentifier:nil];
+    UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:(ip.section >= 3 && ip.section <= 4) ? UITableViewCellStyleSubtitle : UITableViewCellStyleValue1 reuseIdentifier:nil];
     c.selectionStyle = UITableViewCellSelectionStyleNone;
     c.detailTextLabel.textColor = UIColor.secondaryLabelColor;
     if (ip.section == 0) {
+        c.textLabel.text = IVLLoc(@"stats_record");
+        UISwitch *sw = [UISwitch new];
+        sw.on = [IVLSettings boolForKey:IVLKeyStatsEnabled];
+        [sw addAction:[UIAction actionWithHandler:^(UIAction *a) {
+            [IVLSettings setBool:((UISwitch *)a.sender).on forKey:IVLKeyStatsEnabled];
+        }] forControlEvents:UIControlEventValueChanged];
+        c.accessoryView = sw;
+    } else if (ip.section == 1) {
         NSArray *rows = @[@[IVLLoc(@"stats_time"), IVLDuration([_sum[@"seconds"] doubleValue])],
                           @[IVLLoc(@"stats_plays"), [_sum[@"plays"] description]],
                           @[IVLLoc(@"stats_songs"), [_sum[@"songs"] description]],
                           @[IVLLoc(@"stats_artists"), [_sum[@"artists"] description]]];
         c.textLabel.text = rows[ip.row][0];
         c.detailTextLabel.text = rows[ip.row][1];
-    } else if (ip.section == 1) {
+    } else if (ip.section == 2) {
         // listening clock: 24 bars
         NSArray<NSNumber *> *hours = _sum[@"hours"];
         double maxv = 1;
@@ -350,13 +359,13 @@ static NSString *IVLDuration(double sec) {
             }
         }
         [c.contentView addSubview:chart];
-    } else if (ip.section == 2 || ip.section == 3) {
-        NSArray *list = _sum[ip.section == 2 ? @"topSongs" : @"topArtists"];
+    } else if (ip.section == 3 || ip.section == 4) {
+        NSArray *list = _sum[ip.section == 3 ? @"topSongs" : @"topArtists"];
         if (!list.count) { c.textLabel.text = IVLLoc(@"stats_empty"); c.textLabel.textColor = UIColor.secondaryLabelColor; return c; }
         NSDictionary *e = list[ip.row];
         c.textLabel.text = [NSString stringWithFormat:@"%ld. %@", (long)ip.row + 1, e[@"title"]];
         NSString *plays = [NSString stringWithFormat:IVLLoc(@"stats_plays_fmt"), (long)[e[@"count"] integerValue]];
-        c.detailTextLabel.text = ip.section == 2 ? [NSString stringWithFormat:@"%@ · %@", e[@"artist"], plays]
+        c.detailTextLabel.text = ip.section == 3 ? [NSString stringWithFormat:@"%@ · %@", e[@"artist"], plays]
                                                  : [NSString stringWithFormat:@"%@ · %@", IVLDuration([e[@"sec"] doubleValue]), plays];
     } else {
         c.textLabel.text = IVLLoc(@"stats_reset");
@@ -368,7 +377,7 @@ static NSString *IVLDuration(double sec) {
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tableView deselectRowAtIndexPath:ip animated:YES];
-    if (ip.section != 4) return;
+    if (ip.section != 5) return;
     UIAlertController *a = [UIAlertController alertControllerWithTitle:IVLLoc(@"stats_reset") message:IVLLoc(@"stats_reset_confirm") preferredStyle:UIAlertControllerStyleAlert];
     [a addAction:[UIAlertAction actionWithTitle:IVLLoc(@"cancel") style:UIAlertActionStyleCancel handler:nil]];
     [a addAction:[UIAlertAction actionWithTitle:IVLLoc(@"stats_reset") style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x) {

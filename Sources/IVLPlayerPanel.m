@@ -1,16 +1,11 @@
-// Apple Music (v27.0) immersive "Now Playing", built to the design specification:
-//
-//  1. Hero canvas 0–58%: the artwork full-bleed behind the status bar, no radius, no frame.
-//     (A wide video keeps its own 16:9 shape across the full width instead of being cropped.)
-//  2. Optical dissolve 48–65%: a progressive Gaussian blur (0 → 60) and a mesh of the artwork's
-//     own colours; no hard edge, no flat black gradient. The blurred artwork keeps bleeding
-//     behind the title (ambient colour bleed).
-//  3. Control deck 58–100%, 26pt side padding: title/artist + ☆ •••, knobless scrubber with
-//     tabular timestamps (-m:ss), frameless transport with 28–36pt margins, knobless volume bar,
-//     footer with lyrics · AirPlay · queue (+ state micro badge).
-//  Colour: white only, hierarchy by opacity (0.92 / 0.62 / 0.48 / inactive 0.22). No accent.
-//  Sliders: 6pt capsules without a thumb, swelling to 11pt while touched (spring).
-//  Buttons: no circle, no border; press = scale 0.88 spring + soft translucent glow.
+// Internal "Now Playing" sheet keeping the clean atmospheric design language:
+//  - Default mode: standard framed 1:1 rounded square cover (songs) or 16:9 rounded thumbnail
+//    (videos) floating over a soft blurred-artwork colour mesh background.
+//  - Experimental mode (IVLKeyImmersivePlayer): Apple Music (v27) full-bleed artwork behind the
+//    status bar dissolving optically through progressive Gaussian blur into the colour mesh.
+//  - Shared control deck: white opacity hierarchy (0.92 / 0.62 / 0.48 / 0.22), knobless 6pt
+//    capsule scrubber & volume bar that swell to 11pt while touched, frameless spring transport,
+//    star/more actions, and lyrics · AirPlay · queue footer with sleep-timer micro badge.
 
 #import "IVLPlayerPanel.h"
 #import "IVLPlaybackManager.h"
@@ -141,9 +136,11 @@ static NSString *IVLClock(double s) {
 #pragma mark - Panel
 
 @implementation IVLPlayerPanel {
-    // atmosphere
+    // atmosphere & artwork
     CAGradientLayer *_mesh;
-    UIImageView *_hero, *_heroBlur;
+    UIImageView *_heroBlur;
+    UIView *_artHost;
+    UIImageView *_hero;
     CAGradientLayer *_heroMask, *_blurMask;
     UIView *_grabber;
     // deck
@@ -173,19 +170,27 @@ static NSString *IVLClock(double s) {
         _mesh.colors = @[(id)[UIColor colorWithWhite:0.18 alpha:1].CGColor, (id)[UIColor colorWithWhite:0.08 alpha:1].CGColor];
         [self.layer addSublayer:_mesh];
 
-        _hero = [UIImageView new];
-        _hero.contentMode = UIViewContentModeScaleAspectFill;
-        _hero.clipsToBounds = YES;
-        _heroMask = [CAGradientLayer layer];
-        _hero.layer.mask = _heroMask;
-        [self addSubview:_hero];
-
+        // In default mode _heroBlur sits behind _artHost as a soft full-screen ambient backdrop;
+        // in experimental immersive mode it sits above _artHost with _blurMask for optical dissolve.
         _heroBlur = [UIImageView new];
         _heroBlur.contentMode = UIViewContentModeScaleAspectFill;
         _heroBlur.clipsToBounds = YES;
         _blurMask = [CAGradientLayer layer];
-        _heroBlur.layer.mask = _blurMask;
         [self addSubview:_heroBlur];
+
+        _artHost = [UIView new];
+        _artHost.layer.shadowColor = UIColor.blackColor.CGColor;
+        _artHost.layer.shadowRadius = 22;
+        _artHost.layer.shadowOffset = CGSizeMake(0, 12);
+        [self addSubview:_artHost];
+
+        _hero = [UIImageView new];
+        _hero.contentMode = UIViewContentModeScaleAspectFill;
+        _hero.clipsToBounds = YES;
+        _hero.layer.cornerCurve = kCACornerCurveContinuous;
+        _hero.backgroundColor = [UIColor colorWithWhite:1 alpha:0.06];
+        _heroMask = [CAGradientLayer layer];
+        [_artHost addSubview:_hero];
 
         _grabber = [UIView new];
         _grabber.backgroundColor = [UIColor colorWithWhite:1 alpha:0.35];
@@ -204,7 +209,7 @@ static NSString *IVLClock(double s) {
         _elapsed = [UILabel new];
         _remaining = [UILabel new];
         for (UILabel *l in @[_elapsed, _remaining]) {
-            l.font = [UIFont monospacedDigitSystemFontOfSize:12 weight:UIFontWeightMedium];   // tabular-nums
+            l.font = [UIFont monospacedDigitSystemFontOfSize:12 weight:UIFontWeightMedium];
             l.textColor = IVLTertiary;
         }
         _remaining.textAlignment = NSTextAlignmentRight;
@@ -231,12 +236,12 @@ static NSString *IVLClock(double s) {
         _volLow = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"speaker.fill" withConfiguration:small]];
         _volHigh = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"speaker.wave.3.fill" withConfiguration:small]];
         for (UIImageView *v in @[_volLow, _volHigh]) { v.tintColor = IVLTertiary; v.contentMode = UIViewContentModeCenter; }
-        // the system volume is driven through an MPVolumeView kept in the hierarchy but off-screen
         _systemVolume = [[MPVolumeView alloc] initWithFrame:CGRectMake(-2000, -2000, 10, 10)];
         _systemVolume.alpha = 0.01;
         for (UIView *v in _systemVolume.subviews) if ([v isKindOfClass:[UISlider class]]) _systemSlider = (UISlider *)v;
         [self addSubview:_systemVolume];
         [[AVAudioSession sharedInstance] addObserver:self forKeyPath:@"outputVolume" options:NSKeyValueObservingOptionNew context:NULL];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(settingsChanged:) name:IVLSettingsDidChangeNotification object:nil];
 
         _lyricsBtn = [IVLGlyphButton glyph:@"quote.bubble" size:20 color:IVLTertiary];
         [_lyricsBtn addTarget:self action:@selector(lyricsTapped) forControlEvents:UIControlEventTouchUpInside];
@@ -262,10 +267,20 @@ static NSString *IVLClock(double s) {
 }
 
 - (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
     @try { [[AVAudioSession sharedInstance] removeObserver:self forKeyPath:@"outputVolume"]; } @catch (__unused NSException *e) {}
 }
 
+- (void)settingsChanged:(NSNotification *)n {
+    if (!n.object || [n.object isEqual:IVLKeyImmersivePlayer]) {
+        [self setNeedsLayout];
+    }
+}
+
 - (void)setMoreMenu:(UIMenu *)menu { _moreMenu = menu; _more.menu = menu; }
+
+- (BOOL)isImmersive { return [IVLSettings boolForKey:IVLKeyImmersivePlayer]; }
+- (BOOL)isVideoShape { return _aspect > 1.12; }
 
 #pragma mark Atmosphere
 
@@ -278,13 +293,12 @@ static NSString *IVLClock(double s) {
     _aspect = fabs(a - 1) < 0.08 ? 1 : MAX(0.4, MIN(2.4, a));
     if (!image) { _heroBlur.image = nil; [self setNeedsLayout]; return; }
 
-    // progressive blur source (60) and the colour mesh, both derived from the artwork itself
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         UIImage *blurred = nil;
         @try {
             CIImage *ci = [CIImage imageWithCGImage:image.CGImage];
             if (ci) {
-                CGFloat scale = 360.0 / MAX(1, ci.extent.size.width);   // blur a small copy: cheap and smoother
+                CGFloat scale = 360.0 / MAX(1, ci.extent.size.width);
                 CIImage *small = [ci imageByApplyingTransform:CGAffineTransformMakeScale(scale, scale)];
                 CIImage *out = [[small imageByClampingToExtent] imageByApplyingGaussianBlurWithSigma:22];
                 CGImageRef cg = [[CIContext context] createCGImage:out fromRect:small.extent];
@@ -316,8 +330,10 @@ static NSString *IVLClock(double s) {
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGFloat W = self.bounds.size.width, H = self.bounds.size.height;
+    if (W <= 0 || H <= 0) return;
     UIEdgeInsets safe = self.safeAreaInsets;
     CGFloat inner = W - kPad * 2;
+    BOOL immersive = [self isImmersive];
 
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
@@ -333,65 +349,109 @@ static NSString *IVLClock(double s) {
     _queueBtn.frame = CGRectMake(kPad + third * 2 + (third - 44) / 2, y, 44, 44);
     _badge.frame = CGRectMake(CGRectGetMaxX(_queueBtn.frame) - 12, y + 9, 6, 6);
     y -= 22;
-    // volume: speaker icons at both ends of a knobless capsule
     CGFloat volH = 24;
     y -= volH;
     _volLow.frame = CGRectMake(kPad, y, 18, volH);
     _volHigh.frame = CGRectMake(W - kPad - 22, y, 22, volH);
     _volume.frame = CGRectMake(kPad + 26, y, inner - 26 - 30, volH);
-    y -= 32;                                                    // 28–36 margin
+    y -= 32;
     CGFloat transport = 60;
     y -= transport;
     CGFloat cx = W / 2;
     _play.frame = CGRectMake(cx - 32, y, 64, transport);
     _prev.frame = CGRectMake(cx - 32 - 44 - 56, y, 56, transport);
     _next.frame = CGRectMake(cx + 32 + 44, y, 56, transport);
-    y -= 30;                                                    // 28–36 margin
+    y -= 30;
     _elapsed.frame = CGRectMake(kPad, y - 15, inner / 2, 15);
     _remaining.frame = CGRectMake(kPad + inner / 2, y - 15, inner / 2, 15);
     y -= 15 + 5;
-    _seek.frame = CGRectMake(kPad, y - 22, inner, 22);          // 6pt capsule in a 22pt touch shell
+    _seek.frame = CGRectMake(kPad, y - 22, inner, 22);
     y -= 22 + 10;
     _lyric.frame = CGRectMake(kPad, y - 20, inner, 20);
     y -= 20 + 12;
     CGFloat actions = 34 * 2 + 4;
     _artist.frame = CGRectMake(kPad, y - 23, inner - actions - 8, 23);
-    y -= 23 + 3;                                                // 2–4pt between title and artist
+    y -= 23 + 3;
     _title.frame = CGRectMake(kPad, y - 27, inner - actions - 8, 27);
     _more.frame = CGRectMake(W - kPad - 34 + 6, y - 27 + 8, 34, 34);
     _star.frame = CGRectMake(CGRectGetMinX(_more.frame) - 36, y - 27 + 8, 34, 34);
     y -= 27;
     CGFloat deckTop = y;
 
-    // ---- hero canvas & optical dissolve, measured from where the deck begins
-    CGFloat dissolveStart = deckTop - H * 0.10, dissolveEnd = deckTop + H * 0.07;
-    CGRect hero;
-    if (_aspect > 1.05) {
-        // wide video: its own shape across the full width, just under the status bar
-        CGFloat h = W / _aspect;
-        hero = CGRectMake(0, MAX(safe.top + 24, (dissolveStart - h) / 2 + safe.top / 2), W, h);
+    if (immersive) {
+        // ---- Experimental: Apple Music (v27) full-bleed artwork + progressive optical dissolve
+        if ([self.subviews indexOfObject:_heroBlur] < [self.subviews indexOfObject:_artHost]) {
+            [self insertSubview:_heroBlur aboveSubview:_artHost];
+        }
+        _artHost.transform = CGAffineTransformIdentity;
+        _artHost.frame = self.bounds;
+        _artHost.layer.shadowOpacity = 0;
+
+        CGFloat dissolveStart = deckTop - H * 0.10, dissolveEnd = deckTop + H * 0.07;
+        CGRect hero;
+        if ([self isVideoShape]) {
+            CGFloat h = W / _aspect;
+            hero = CGRectMake(0, MAX(safe.top + 24, (dissolveStart - h) / 2 + safe.top / 2), W, h);
+        } else {
+            hero = CGRectMake(0, 0, W, MAX(dissolveEnd, W / MAX(0.4, _aspect)));
+        }
+        _hero.frame = hero;
+        _hero.layer.cornerRadius = 0;
+        _hero.layer.mask = _heroMask;
+        _heroMask.frame = _hero.bounds;
+        CGFloat hh = MAX(1, hero.size.height);
+        if ([self isVideoShape]) {
+            _heroMask.colors = @[(id)UIColor.clearColor.CGColor, (id)UIColor.blackColor.CGColor, (id)UIColor.blackColor.CGColor, (id)UIColor.clearColor.CGColor];
+            _heroMask.locations = @[@0, @0.06, @0.82, @1];
+        } else {
+            _heroMask.colors = @[(id)UIColor.blackColor.CGColor, (id)UIColor.blackColor.CGColor, (id)UIColor.clearColor.CGColor];
+            _heroMask.locations = @[@0, @(MIN(0.99, MAX(0, (dissolveStart - hero.origin.y) / hh))), @(MIN(1, MAX(0.01, (dissolveEnd - hero.origin.y) / hh)))];
+        }
+        _heroBlur.frame = self.bounds;
+        _heroBlur.alpha = 1.0;
+        _heroBlur.layer.mask = _blurMask;
+        _blurMask.frame = _heroBlur.bounds;
+        CGFloat bs = MAX(0, ([self isVideoShape] ? CGRectGetMaxY(hero) - hero.size.height * 0.35 : dissolveStart) / H);
+        _blurMask.colors = @[(id)UIColor.clearColor.CGColor, (id)UIColor.blackColor.CGColor, (id)[UIColor colorWithWhite:0 alpha:0.55].CGColor];
+        _blurMask.locations = @[@(MIN(0.98, bs)), @(MIN(0.99, MAX(bs + 0.01, dissolveEnd / H))), @1];
     } else {
-        // song cover (1:1) or tall: full-bleed from the very top down into the dissolve zone
-        hero = CGRectMake(0, 0, W, MAX(dissolveEnd, W / MAX(0.4, _aspect)));
+        // ---- Default: standard framed 1:1 cover (song) or 16:9 thumbnail (video)
+        if ([self.subviews indexOfObject:_heroBlur] > [self.subviews indexOfObject:_artHost]) {
+            [self insertSubview:_heroBlur belowSubview:_artHost];
+        }
+        _heroBlur.frame = self.bounds;
+        _heroBlur.alpha = 0.42;
+        _heroBlur.layer.mask = nil;
+        _hero.layer.mask = nil;
+
+        CGFloat top = safe.top + 22;
+        CGFloat bottom = deckTop - 20;
+        CGFloat availH = MAX(60, bottom - top);
+        CGRect card;
+        CGFloat radius;
+        if ([self isVideoShape]) {
+            // 16:9 video thumbnail card (ScaleAspectFill cleanly trims any 4:3 letterbox bars)
+            CGFloat videoAspect = 16.0 / 9.0;
+            CGFloat w = MIN(W - 36, availH * videoAspect);
+            CGFloat h = w / videoAspect;
+            card = CGRectMake((W - w) * 0.5, top + (availH - h) * 0.5, w, h);
+            radius = 12;
+        } else {
+            // 1:1 song album jacket
+            CGFloat side = MIN(inner, availH);
+            card = CGRectMake((W - side) * 0.5, top + (availH - side) * 0.5, side, side);
+            radius = 14;
+        }
+        _artHost.transform = CGAffineTransformIdentity;
+        _artHost.frame = card;
+        _hero.frame = _artHost.bounds;
+        _hero.layer.cornerRadius = radius;
+        _artHost.layer.shadowOpacity = (_shownPlaying || [self isVideoShape]) ? 0.42f : 0.18f;
+        _artHost.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:_artHost.bounds cornerRadius:radius].CGPath;
+        if (!_shownPlaying && ![self isVideoShape]) {
+            _artHost.transform = CGAffineTransformMakeScale(0.86, 0.86);
+        }
     }
-    _hero.frame = hero;
-    _heroMask.frame = _hero.bounds;
-    CGFloat hh = MAX(1, hero.size.height);
-    if (_aspect > 1.05) {
-        // a video dissolves on both edges so the frame floats in its own colour, no hard line
-        _heroMask.colors = @[(id)UIColor.clearColor.CGColor, (id)UIColor.blackColor.CGColor, (id)UIColor.blackColor.CGColor, (id)UIColor.clearColor.CGColor];
-        _heroMask.locations = @[@0, @0.06, @0.82, @1];
-    } else {
-        _heroMask.colors = @[(id)UIColor.blackColor.CGColor, (id)UIColor.blackColor.CGColor, (id)UIColor.clearColor.CGColor];
-        _heroMask.locations = @[@0, @(MIN(0.99, MAX(0, (dissolveStart - hero.origin.y) / hh))), @(MIN(1, MAX(0.01, (dissolveEnd - hero.origin.y) / hh)))];
-    }
-    // the blurred copy covers the page and fades IN through the dissolve zone, then keeps
-    // bleeding the artwork's light behind the deck
-    _heroBlur.frame = self.bounds;
-    _blurMask.frame = _heroBlur.bounds;
-    CGFloat bs = MAX(0, (_aspect > 1.05 ? CGRectGetMaxY(hero) - hero.size.height * 0.35 : dissolveStart) / H);
-    _blurMask.colors = @[(id)UIColor.clearColor.CGColor, (id)UIColor.blackColor.CGColor, (id)[UIColor colorWithWhite:0 alpha:0.55].CGColor];
-    _blurMask.locations = @[@(MIN(0.98, bs)), @(MIN(0.99, MAX(bs + 0.01, dissolveEnd / H))), @1];
     [CATransaction commit];
 
     _grabber.frame = CGRectMake((W - 36) / 2, safe.top + 6, 36, 4);
@@ -407,7 +467,7 @@ static NSString *IVLClock(double s) {
         _title.attributedText = [[NSAttributedString alloc] initWithString:title attributes:@{
             NSFontAttributeName: [UIFont systemFontOfSize:21 weight:UIFontWeightBold],
             NSForegroundColorAttributeName: IVLPrimary,
-            NSKernAttributeName: @(-0.42),   // -0.02em
+            NSKernAttributeName: @(-0.42),
         }];
     }
     _artist.text = t.artist;
@@ -429,9 +489,15 @@ static NSString *IVLClock(double s) {
     if (playing != _shownPlaying) {
         _shownPlaying = playing;
         [_play setSymbol:playing ? @"pause.fill" : @"play.fill" size:44];
+        if (![self isImmersive] && ![self isVideoShape]) {
+            [UIView animateWithDuration:0.45 delay:0 usingSpringWithDamping:0.72 initialSpringVelocity:0 options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState animations:^{
+                self->_artHost.transform = playing ? CGAffineTransformIdentity : CGAffineTransformMakeScale(0.86, 0.86);
+                self->_artHost.layer.shadowOpacity = playing ? 0.42f : 0.18f;
+            } completion:nil];
+        }
     }
     _star.hidden = ![IVLRemoteControl canLike];
-    _badge.hidden = ![IVLSleepTimer shared].active;   // state micro badge
+    _badge.hidden = ![IVLSleepTimer shared].active;
 }
 
 #pragma mark Volume
@@ -492,7 +558,6 @@ static NSString *IVLClock(double s) {
 
 - (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)g {
     if (g != _pan) return [super gestureRecognizerShouldBegin:g];
-    // only vertical drags that start above the deck (the hero) close the sheet
     CGPoint v = [_pan velocityInView:self];
     CGPoint p = [_pan locationInView:self];
     return v.y > fabs(v.x) && p.y < CGRectGetMinY(_title.frame);

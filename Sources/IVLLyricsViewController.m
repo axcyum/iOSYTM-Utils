@@ -44,6 +44,7 @@ void IVLPresentSettings(UIViewController *presenter) {
     UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:[IVLSettingsViewController new]];
     nav.modalPresentationStyle = UIModalPresentationPageSheet;
     nav.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    nav.view.tintColor = [UIColor colorWithRed:1.0 green:0.176 blue:0.333 alpha:1.0];
     [(presenter ?: IVLTopViewController()) presentViewController:nav animated:YES completion:nil];
 }
 

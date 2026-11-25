@@ -1,6 +1,6 @@
-// ivLyrics for YouTube Music — hooks
+// iOS YTMusic Utilities — hooks
 // Hook points follow dayanch96/YTMusicUltimate (SponsorBlock.x, SeekButtons.x, Settings.x).
-// This tweak only reads playback state / metadata and adds a lyrics UI.
+// This tweak only reads playback state / metadata and adds lyrics & player utilities.
 // It does not touch ads, Premium checks, downloads or any other app restriction.
 
 %config(generator=internal);
@@ -133,7 +133,7 @@ static UIImage *IVLMenuIcon(void) {
         return;
     }
     __weak UIView *weakSelf = self;
-    YTMAccountButton *button = [[buttonClass alloc] initWithTitle:@"ivLyrics" identifier:@"ivlyrics" icon:IVLMenuIcon() actionBlock:^(BOOL finished) {
+    YTMAccountButton *button = [[buttonClass alloc] initWithTitle:@"iOS YTMusic Utilities" identifier:@"ivlyrics" icon:IVLMenuIcon() actionBlock:^(BOOL finished) {
         UIView *view = weakSelf;
         UIViewController *vc = [view respondsToSelector:@selector(_viewControllerForAncestor)] ? [view _viewControllerForAncestor] : nil;
         IVLPresentSettings(vc ?: IVLTopViewController());

@@ -445,7 +445,7 @@ static NSString *CurrentVideoID(IVLTrack *t) {
     // small YouTube Music badge instead, where it only shows on hover: "v1.0.0 iOS 26.0.1"
     NSString *tooltip = [NSString stringWithFormat:@"v%s iOS %@", IVL_VERSION, UIDevice.currentDevice.systemVersion];
     BOOL songButton = [IVLSettings boolForKey:IVLKeyDiscordSongButton] && songURL;
-    NSString *github = @"https://github.com/axcyum/ivLyricsYTM";
+    NSString *github = @"https://github.com/axcyum/iOSYTM-Utils";
     BOOL githubButton = [IVLSettings boolForKey:IVLKeyDiscordGitHubButton];
     // everything that is shown is part of the fingerprint: changes (cover found later, settings) trigger a resend
     fingerprint = [fingerprint stringByAppendingFormat:@"\n%@\n%@\n%@\n%d%d%@", image ?: @"", name, songURL ?: @"", songButton, githubButton, github ?: @""];
@@ -477,7 +477,7 @@ static NSString *CurrentVideoID(IVLTrack *t) {
         }
         if (githubButton) {
             discordpp::ActivityButton b{};
-            b.SetLabel("ivLyrics on GitHub");
+            b.SetLabel("iOSYTM-Utils on GitHub");
             b.SetUrl(UTF8(github));
             activity.AddButton(b);
         }

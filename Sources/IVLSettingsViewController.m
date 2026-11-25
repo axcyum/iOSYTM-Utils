@@ -14,31 +14,88 @@
 #define IVL_VERSION "1.0.0"
 #endif
 
-typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStepper, IVLRowLink, IVLRowAction, IVLRowInfo, IVLRowText, IVLRowColor, IVLRowSlider };
+static NSString *const kIVLAuthorURL = @"https://github.com/axcyum";
+static NSString *const kIVLRepoURL   = @"https://github.com/axcyum/iOSYTM-Utils";
+
+static UIImage *IVLBadgeImage(NSString *symbol, NSString *fallback, NSString *hex) {
+    if (!symbol.length || !hex.length) return nil;
+    static NSCache<NSString *, UIImage *> *cache;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ cache = [NSCache new]; });
+    NSString *cacheKey = [NSString stringWithFormat:@"%@|%@|%@", symbol, fallback ?: @"", hex];
+    UIImage *cached = [cache objectForKey:cacheKey];
+    if (cached) return cached;
+
+    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(28, 28)];
+    UIImage *img = [renderer imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+        UIBezierPath *bg = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, 28, 28) cornerRadius:7.0];
+        [[IVLTheme colorFromHex:hex] setFill];
+        [bg fill];
+
+        UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:13.5 weight:UIImageSymbolWeightSemibold];
+        UIImage *sym = [UIImage systemImageNamed:symbol withConfiguration:cfg];
+        if (!sym && fallback.length) sym = [UIImage systemImageNamed:fallback withConfiguration:cfg];
+        if (!sym) sym = [UIImage systemImageNamed:@"gearshape.fill" withConfiguration:cfg];
+        sym = [sym imageWithTintColor:UIColor.whiteColor renderingMode:UIImageRenderingModeAlwaysOriginal];
+        CGSize sz = sym.size;
+        [sym drawInRect:CGRectMake((28.0 - sz.width) * 0.5, (28.0 - sz.height) * 0.5, sz.width, sz.height)];
+    }];
+    img = [img imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+    if (img) [cache setObject:img forKey:cacheKey];
+    return img;
+}
+
+typedef NS_ENUM(NSInteger, IVLRowType) {
+    IVLRowSwitch,
+    IVLRowSegment,   // rendered as a native iOS pull-down UIMenu button
+    IVLRowStepper,
+    IVLRowLink,
+    IVLRowAction,
+    IVLRowInfo,
+    IVLRowText,
+    IVLRowColor,
+    IVLRowSlider,
+    IVLRowPreview
+};
 
 @interface IVLRow : NSObject
 @property (nonatomic) IVLRowType type;
 @property (nonatomic, copy) NSString *key;
 @property (nonatomic, copy) NSString *title;
-@property (nonatomic, copy) NSArray *options;           // segment titles
-@property (nonatomic, copy) NSArray<NSNumber *> *values; // segment values (default 0..n-1)
+@property (nonatomic, copy) NSArray *options;
+@property (nonatomic, copy) NSArray<NSNumber *> *values;
 @property (nonatomic) double min, max, step;
 @property (nonatomic, copy) NSString *(^format)(double v);
+@property (nonatomic, copy) void (^onLive)(double v);
 @property (nonatomic, copy) void (^action)(UIViewController *vc);
 @property (nonatomic, copy) NSString *(^detail)(void);
-@property (nonatomic, copy) BOOL (^getBool)(void);           // custom switch (no settings key)
+@property (nonatomic, copy) BOOL (^getBool)(void);
 @property (nonatomic, copy) void (^setBool)(BOOL on);
 @property (nonatomic, assign) BOOL destructive;
-@property (nonatomic, copy) NSString *symbol;                 // SF Symbol for link rows
-@property (nonatomic, copy) NSString *placeholder;            // text rows
+@property (nonatomic, assign) BOOL external;
+@property (nonatomic, copy) NSString *symbol;
+@property (nonatomic, copy) NSString *fallbackSymbol;
+@property (nonatomic, copy) NSString *badgeHex;
+@property (nonatomic, copy) NSString *placeholder;
 @property (nonatomic) UIKeyboardType keyboard;
-@property (nonatomic) double danger;                          // slider rows: values below are shown in red
-@property (nonatomic) BOOL secure;                            // text rows stored in the keychain, never shown again
-@property (nonatomic, copy) void (^onText)(NSString *text);   // text rows without a settings key
+@property (nonatomic) double danger;
+@property (nonatomic) BOOL secure;
+@property (nonatomic, copy) void (^onText)(NSString *text);
 @end
+
 @implementation IVLRow
 + (instancetype)type:(IVLRowType)t key:(NSString *)k title:(NSString *)title {
-    IVLRow *r = [self new]; r.type = t; r.key = k; r.title = title; return r;
+    IVLRow *r = [self new];
+    r.type = t;
+    r.key = k;
+    r.title = title;
+    return r;
+}
+- (instancetype)withBadge:(NSString *)symbol fallback:(NSString *)fb hex:(NSString *)hex {
+    self.symbol = symbol;
+    self.fallbackSymbol = fb;
+    self.badgeHex = hex;
+    return self;
 }
 @end
 
@@ -46,15 +103,21 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
 @property (nonatomic, copy) NSString *title, *footer;
 @property (nonatomic, copy) NSArray<IVLRow *> *rows;
 @end
+
 @implementation IVLSection
 + (instancetype)title:(NSString *)t footer:(NSString *)f rows:(NSArray *)rows {
-    IVLSection *s = [self new]; s.title = t; s.footer = f; s.rows = rows; return s;
+    IVLSection *s = [self new];
+    s.title = t;
+    s.footer = f;
+    s.rows = rows;
+    return s;
 }
 @end
 
 @implementation IVLSettingsViewController {
     NSArray<IVLSection *> *_sections;
     NSString *_page;
+    __weak UILabel *_previewLabel;
 }
 
 - (instancetype)init { return [self initWithPage:nil]; }
@@ -66,12 +129,26 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = [_page isEqualToString:@"lock"] ? IVLLoc(@"sec_lock") : [_page isEqualToString:@"spotify"] ? @"Spotify"
-               : [_page isEqualToString:@"discord"] ? @"Discord Rich Presence" : [_page isEqualToString:@"wnp"] ? @"WebNowPlaying"
-               : [_page isEqualToString:@"extras"] ? IVLLoc(@"sec_extras") : [_page isEqualToString:@"accent"] ? IVLLoc(@"accent_color")
-               : [_page isEqualToString:@"bgcolor"] ? IVLLoc(@"bg_color") : [_page isEqualToString:@"scrobble"] ? IVLLoc(@"scrobble") : @"ivLyrics";
+    NSDictionary<NSString *, NSString *> *titles = @{
+        @"button": IVLLoc(@"sec_button"),
+        @"appearance": IVLLoc(@"sec_appearance"),
+        @"extras": IVLLoc(@"sec_appearance"),
+        @"display": IVLLoc(@"sec_display"),
+        @"translation": IVLLoc(@"sec_translation"),
+        @"sync": IVLLoc(@"sec_sync"),
+        @"lock": IVLLoc(@"sec_lock"),
+        @"spotify": @"Spotify",
+        @"discord": @"Discord Rich Presence",
+        @"wnp": @"WebNowPlaying",
+        @"accent": IVLLoc(@"accent_color"),
+        @"bgcolor": IVLLoc(@"bg_color"),
+        @"scrobble": IVLLoc(@"scrobble"),
+    };
+    self.title = _page ? (titles[_page] ?: @"iOS YTMusic Utilities") : @"iOS YTMusic Utilities";
     self.tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag;
-    if (!_page) self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(done)];
+    if (!_page) {
+        self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(done)];
+    }
     [self buildSections];
     NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
     [nc addObserver:self selector:@selector(rebuild) name:IVLSpotifyStateDidChangeNotification object:nil];
@@ -88,7 +165,111 @@ typedef NS_ENUM(NSInteger, IVLRowType) { IVLRowSwitch, IVLRowSegment, IVLRowStep
 
 - (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
 
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    [self rebuild];
+}
+
+- (void)done { [self dismissViewControllerAnimated:YES completion:nil]; }
+
 extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
+
+#pragma mark - Subpages
+
+- (NSArray<IVLSection *> *)buttonSections {
+    IVLRow *(^sw)(NSString *, NSString *) = ^(NSString *k, NSString *t) { return [IVLRow type:IVLRowSwitch key:k title:t]; };
+    return @[
+        [IVLSection title:nil footer:IVLLoc(@"footer_general") rows:@[
+            sw(IVLKeyShowButton, IVLLoc(@"show_button")),
+            sw(IVLKeyMiniLyric, IVLLoc(@"mini_lyric")),
+        ]],
+    ];
+}
+
+- (NSArray<IVLSection *> *)appearanceSections {
+    IVLRow *theme = [IVLRow type:IVLRowSegment key:IVLKeyBackground title:IVLLoc(@"theme")];
+    theme.options = @[IVLLoc(@"bg_artwork"), IVLLoc(@"bg_solid"), IVLLoc(@"bg_dynamic"), IVLLoc(@"bg_black")];
+
+    IVLRow *(^colorPage)(NSString *, NSString *, NSString *) = ^(NSString *pageID, NSString *title, NSString *key) {
+        IVLRow *r = [IVLRow type:IVLRowLink key:@"" title:title];
+        r.detail = ^NSString *{
+            NSString *hex = [IVLSettings objectForKey:key];
+            return hex.length ? [@"#" stringByAppendingString:hex] : IVLLoc(@"color_default");
+        };
+        r.action = ^(UIViewController *vc) { [vc.navigationController pushViewController:[[IVLSettingsViewController alloc] initWithPage:pageID] animated:YES]; };
+        return r;
+    };
+    IVLRow *accent = colorPage(@"accent", IVLLoc(@"accent_color"), IVLKeyAccentColor);
+    IVLRow *bg = colorPage(@"bgcolor", IVLLoc(@"bg_color"), IVLKeyBackgroundColor);
+    IVLRow *openPlayer = [IVLRow type:IVLRowSwitch key:IVLKeyOpenPlayer title:IVLLoc(@"open_player")];
+    IVLRow *immersive = [IVLRow type:IVLRowSwitch key:IVLKeyImmersivePlayer title:IVLLoc(@"immersive_player")];
+    return @[
+        [IVLSection title:IVLLoc(@"theme") footer:IVLLoc(@"footer_theme") rows:@[theme, accent, bg]],
+        [IVLSection title:IVLLoc(@"player_style") footer:IVLLoc(@"footer_player_style") rows:@[openPlayer, immersive]],
+    ];
+}
+
+- (NSArray<IVLSection *> *)displaySections {
+    IVLRow *(^sw)(NSString *, NSString *) = ^(NSString *k, NSString *t) { return [IVLRow type:IVLRowSwitch key:k title:t]; };
+    IVLRow *preview = [IVLRow type:IVLRowPreview key:@"" title:@""];
+
+    __weak typeof(self) weakSelf = self;
+    IVLRow *size = [IVLRow type:IVLRowSlider key:IVLKeyFontSize title:IVLLoc(@"text_size")];
+    size.min = 16; size.max = 52; size.step = 1;
+    size.format = ^NSString *(double v) { return [NSString stringWithFormat:@"%.0f pt", v]; };
+    size.onLive = ^(double v) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (strongSelf && strongSelf->_previewLabel) {
+            strongSelf->_previewLabel.font = [UIFont systemFontOfSize:v weight:UIFontWeightBold];
+        }
+    };
+
+    IVLRow *align = [IVLRow type:IVLRowSegment key:IVLKeyAlignment title:IVLLoc(@"alignment")];
+    align.options = @[IVLLoc(@"align_left"), IVLLoc(@"align_center")];
+
+    return @[
+        [IVLSection title:nil footer:nil rows:@[preview, size, align]],
+        [IVLSection title:nil footer:IVLLoc(@"footer_display") rows:@[
+            sw(IVLKeyKaraoke, IVLLoc(@"karaoke")),
+            sw(IVLKeyShowBreaks, IVLLoc(@"show_breaks")),
+            sw(IVLKeyKeepAwake, IVLLoc(@"keep_awake")),
+        ]],
+    ];
+}
+
+- (NSArray<IVLSection *> *)translationSections {
+    IVLRow *tr = [IVLRow type:IVLRowSwitch key:IVLKeyTranslation title:IVLLoc(@"translation")];
+    IVLRow *lang = [IVLRow type:IVLRowLink key:IVLKeyTranslationLang title:IVLLoc(@"translation_lang")];
+    lang.detail = ^NSString *{ return [IVLLanguagePickerViewController nameForCode:[IVLSettings objectForKey:IVLKeyTranslationLang]]; };
+    lang.action = ^(UIViewController *vc) { [vc.navigationController pushViewController:[IVLLanguagePickerViewController new] animated:YES]; };
+
+    IVLRow *pron = [IVLRow type:IVLRowSegment key:IVLKeyPronunciation title:IVLLoc(@"pronunciation")];
+    pron.options = @[IVLLoc(@"off"), IVLLoc(@"romaji"), IVLLoc(@"kana")];
+    return @[
+        [IVLSection title:nil footer:IVLLoc(@"footer_translation") rows:@[tr, lang, pron]],
+    ];
+}
+
+- (NSArray<IVLSection *> *)syncSections {
+    IVLRow *offset = [IVLRow type:IVLRowStepper key:IVLKeyGlobalOffset title:IVLLoc(@"global_offset")];
+    offset.min = -3000; offset.max = 3000; offset.step = 50;
+    offset.format = ^NSString *(double v) { return [NSString stringWithFormat:@"%+.2fs", v / 1000.0]; };
+
+    __weak typeof(self) weakSelf = self;
+    IVLRow *reset = [IVLRow type:IVLRowAction key:@"" title:IVLLoc(@"reset_offset")];
+    reset.action = ^(UIViewController *vc) {
+        [IVLSettings setObject:@0 forKey:IVLKeyGlobalOffset];
+        [weakSelf rebuild];
+    };
+
+    IVLRow *resume = [IVLRow type:IVLRowSegment key:IVLKeyAutoResume title:IVLLoc(@"auto_resume")];
+    resume.options = @[IVLLoc(@"off"), @"3s", @"5s", @"10s"];
+    resume.values = @[@0, @3, @5, @10];
+    return @[
+        [IVLSection title:nil footer:IVLLoc(@"footer_sync") rows:@[offset, reset]],
+        [IVLSection title:nil footer:nil rows:@[resume]],
+    ];
+}
 
 - (NSArray<IVLSection *> *)scrobbleSections {
     IVLScrobbler *sc = [IVLScrobbler shared];
@@ -180,48 +361,6 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
     return @[[IVLSection title:nil footer:nil rows:rows], [IVLSection title:nil footer:IVLLoc(@"footer_color_hex") rows:@[custom]]];
 }
 
-- (NSArray<IVLSection *> *)extrasSections {
-    IVLRow *(^seg)(NSString *, NSString *, NSArray *) = ^(NSString *k, NSString *t, NSArray *o) {
-        IVLRow *r = [IVLRow type:IVLRowSegment key:k title:t]; r.options = o; return r;
-    };
-    IVLRow *(^page)(NSString *, NSString *, NSString *(^)(void)) = ^(NSString *pageID, NSString *title, NSString *(^detail)(void)) {
-        IVLRow *r = [IVLRow type:IVLRowLink key:@"" title:title];
-        r.detail = detail;
-        r.action = ^(UIViewController *vc) { [vc.navigationController pushViewController:[[IVLSettingsViewController alloc] initWithPage:pageID] animated:YES]; };
-        return r;
-    };
-    IVLRow *theme = seg(IVLKeyBackground, IVLLoc(@"theme"), @[IVLLoc(@"bg_artwork"), IVLLoc(@"bg_solid"), IVLLoc(@"bg_dynamic"), IVLLoc(@"bg_black")]);
-    IVLRow *accent = page(@"accent", IVLLoc(@"accent_color"), ^NSString *{ return [[IVLSettings objectForKey:IVLKeyAccentColor] length] ? [@"#" stringByAppendingString:[IVLSettings objectForKey:IVLKeyAccentColor]] : IVLLoc(@"color_default"); });
-    IVLRow *bg = page(@"bgcolor", IVLLoc(@"bg_color"), ^NSString *{ return [[IVLSettings objectForKey:IVLKeyBackgroundColor] length] ? [@"#" stringByAppendingString:[IVLSettings objectForKey:IVLKeyBackgroundColor]] : IVLLoc(@"color_default"); });
-    IVLRow *sleep = [IVLRow type:IVLRowLink key:@"" title:IVLLoc(@"sleep_timer")];
-    sleep.symbol = @"moon.zzz";
-    sleep.detail = ^NSString *{ return [[IVLSleepTimer shared] statusText]; };
-    sleep.action = ^(UIViewController *vc) { [vc.navigationController pushViewController:[IVLSleepTimerViewController new] animated:YES]; };
-    IVLRow *statsOn = [IVLRow type:IVLRowSwitch key:IVLKeyStatsEnabled title:IVLLoc(@"stats_record")];
-    IVLRow *stats = [IVLRow type:IVLRowLink key:@"" title:IVLLoc(@"stats")];
-    stats.symbol = @"chart.bar.xaxis";
-    stats.action = ^(UIViewController *vc) { [vc.navigationController pushViewController:[IVLStatsViewController new] animated:YES]; };
-    IVLRow *recognize = [IVLRow type:IVLRowLink key:@"" title:IVLLoc(@"recognize")];
-    recognize.symbol = @"shazam.logo";
-    recognize.action = ^(UIViewController *vc) {
-        UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:[IVLRecognizerViewController new]];
-        [vc presentViewController:nav animated:YES completion:nil];
-    };
-    IVLRow *scrobble = [IVLRow type:IVLRowLink key:@"" title:IVLLoc(@"scrobble")];
-    scrobble.symbol = @"dot.radiowaves.left.and.right";
-    scrobble.detail = ^NSString *{ return [IVLScrobbler shared].lastfmLoggedIn ? @"Last.fm" : @""; };
-    scrobble.action = ^(UIViewController *vc) { [vc.navigationController pushViewController:[[IVLSettingsViewController alloc] initWithPage:@"scrobble"] animated:YES]; };
-    IVLRow *openPlayer = [IVLRow type:IVLRowSwitch key:IVLKeyOpenPlayer title:IVLLoc(@"open_player")];
-    return @[
-        [IVLSection title:IVLLoc(@"player_style") footer:IVLLoc(@"footer_player_style") rows:@[openPlayer]],
-        [IVLSection title:nil footer:IVLLoc(@"footer_recognize") rows:@[recognize]],
-        [IVLSection title:nil footer:IVLLoc(@"footer_scrobble_link") rows:@[scrobble]],
-        [IVLSection title:IVLLoc(@"theme") footer:IVLLoc(@"footer_theme") rows:@[theme, accent, bg]],
-        [IVLSection title:nil footer:IVLLoc(@"footer_sleep") rows:@[sleep]],
-        [IVLSection title:IVLLoc(@"stats") footer:IVLLoc(@"footer_stats") rows:@[statsOn, stats]],
-    ];
-}
-
 - (NSArray<IVLSection *> *)lockSections {
     IVLRow *(^sw)(NSString *, NSString *) = ^(NSString *k, NSString *t) { return [IVLRow type:IVLRowSwitch key:k title:t]; };
     IVLRow *lead = [IVLRow type:IVLRowStepper key:IVLKeyLockLead title:IVLLoc(@"lock_lead")];
@@ -275,9 +414,9 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
     logs.action = ^(UIViewController *vc) {
         NSArray *files = [[IVLDiscord shared] logFiles];
         if (!files.count) return;
-        UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:files applicationActivities:nil];
-        share.popoverPresentationController.sourceView = vc.view;
-        [vc presentViewController:share animated:YES completion:nil];
+        UIActivityViewController *act = [[UIActivityViewController alloc] initWithActivityItems:files applicationActivities:nil];
+        act.popoverPresentationController.sourceView = vc.view;
+        [vc presentViewController:act animated:YES completion:nil];
     };
     IVLRow *forget = [IVLRow type:IVLRowAction key:@"" title:IVLLoc(@"discord_forget")];
     forget.destructive = YES;
@@ -307,115 +446,177 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
     ];
 }
 
-- (void)viewWillAppear:(BOOL)animated {
-    [super viewWillAppear:animated];
-    [self rebuild];
-}
-
-- (void)done { [self dismissViewControllerAnimated:YES completion:nil]; }
+#pragma mark - Root 5-Section Layout
 
 - (void)buildSections {
+    if ([_page isEqualToString:@"button"]) { _sections = [self buttonSections]; return; }
+    if ([_page isEqualToString:@"appearance"] || [_page isEqualToString:@"extras"]) { _sections = [self appearanceSections]; return; }
+    if ([_page isEqualToString:@"display"]) { _sections = [self displaySections]; return; }
+    if ([_page isEqualToString:@"translation"]) { _sections = [self translationSections]; return; }
+    if ([_page isEqualToString:@"sync"]) { _sections = [self syncSections]; return; }
     if ([_page isEqualToString:@"lock"]) { _sections = [self lockSections]; return; }
     if ([_page isEqualToString:@"spotify"]) { _sections = [self spotifySections]; return; }
     if ([_page isEqualToString:@"discord"]) { _sections = [self discordSections]; return; }
     if ([_page isEqualToString:@"wnp"]) { _sections = [self wnpSections]; return; }
     if ([_page isEqualToString:@"scrobble"]) { _sections = [self scrobbleSections]; return; }
-    if ([_page isEqualToString:@"extras"]) { _sections = [self extrasSections]; return; }
     if ([_page isEqualToString:@"accent"]) { _sections = [self colorSectionsForKey:IVLKeyAccentColor includeDefault:IVLLoc(@"color_default")]; return; }
     if ([_page isEqualToString:@"bgcolor"]) { _sections = [self colorSectionsForKey:IVLKeyBackgroundColor includeDefault:IVLLoc(@"color_default")]; return; }
-    IVLRow *(^page)(NSString *, NSString *, NSString *, NSString *(^)(void)) = ^(NSString *pageID, NSString *title, NSString *symbol, NSString *(^detail)(void)) {
-        IVLRow *r = [IVLRow type:IVLRowLink key:@"" title:title];
-        r.symbol = symbol;
+
+    IVLRow *(^subpage)(NSString *, NSString *, NSString *, NSString *, NSString *, NSString *(^)(void)) =
+    ^(NSString *pageID, NSString *title, NSString *sym, NSString *fb, NSString *hex, NSString *(^detail)(void)) {
+        IVLRow *r = [[IVLRow type:IVLRowLink key:@"" title:title] withBadge:sym fallback:fb hex:hex];
         r.detail = detail;
-        r.action = ^(UIViewController *vc) { [vc.navigationController pushViewController:[[IVLSettingsViewController alloc] initWithPage:pageID] animated:YES]; };
+        r.action = ^(UIViewController *vc) {
+            [vc.navigationController pushViewController:[[IVLSettingsViewController alloc] initWithPage:pageID] animated:YES];
+        };
         return r;
     };
-    IVLRow *lockPage = page(@"lock", IVLLoc(@"sec_lock"), @"lock.fill", ^NSString *{ return IVLLoc([IVLSettings boolForKey:IVLKeyLockEnabled] ? @"on" : @"off"); });
-    IVLRow *spotifyPage = page(@"spotify", @"Spotify", @"music.note.list", ^NSString *{ return [IVLSpotify shared].loggedIn ? IVLLoc(@"spotify_logged_in") : IVLLoc(@"spotify_logged_out"); });
-    IVLRow *discordPage = page(@"discord", @"Discord Rich Presence", @"bubble.left.and.bubble.right.fill", ^NSString *{
+
+    // 1. ivLyrics (Compatible) — Master switch, Floating button, Appearance, Lyrics style
+    IVLRow *master = [[IVLRow type:IVLRowSwitch key:IVLKeyEnabled title:IVLLoc(@"enabled")]
+                      withBadge:@"music.quarternote.3" fallback:@"music.note" hex:@"FF2D55"];
+
+    IVLRow *btnPage = subpage(@"button", IVLLoc(@"floating_button"), @"pip.fill", @"rectangle.on.rectangle", @"FF6B4A", ^NSString *{
+        if (![IVLSettings boolForKey:IVLKeyShowButton]) return IVLLoc(@"off");
+        return [IVLSettings boolForKey:IVLKeyMiniLyric] ? IVLLoc(@"mini_lyric_short") : IVLLoc(@"on");
+    });
+
+    IVLRow *appearancePage = subpage(@"appearance", IVLLoc(@"sec_appearance"), @"paintbrush.fill", @"paintpalette.fill", @"AF52DE", ^NSString *{
+        NSArray *themes = @[IVLLoc(@"bg_artwork"), IVLLoc(@"bg_solid"), IVLLoc(@"bg_dynamic"), IVLLoc(@"bg_black")];
+        NSInteger idx = [IVLSettings integerForKey:IVLKeyBackground];
+        return (idx >= 0 && idx < (NSInteger)themes.count) ? themes[idx] : themes[0];
+    });
+
+    IVLRow *displayPage = subpage(@"display", IVLLoc(@"sec_display"), @"textformat.size", @"textformat", @"FF9F0A", ^NSString *{
+        return [NSString stringWithFormat:@"%.0f pt", [IVLSettings doubleForKey:IVLKeyFontSize]];
+    });
+
+    // 2. Lyrics & Language — Sources (with Spotify & Captions inside), Translation/Pronunciation, Sync
+    IVLRow *sourcesPage = [[IVLRow type:IVLRowLink key:IVLKeyProviderOrder title:IVLLoc(@"sec_sources")]
+                           withBadge:@"globe" fallback:@"network" hex:@"0A84FF"];
+    sourcesPage.detail = ^NSString *{
+        NSArray<NSString *> *enabled = [IVLSettings enabledProviderIDs];
+        if (!enabled.count) return IVLLoc(@"off");
+        NSString *first = [IVLSettings nameForProvider:enabled.firstObject];
+        if (enabled.count == 1) return first;
+        return [NSString stringWithFormat:IVLLoc(@"sources_more_fmt"), first, (unsigned long)(enabled.count - 1)];
+    };
+    sourcesPage.action = ^(UIViewController *vc) {
+        [vc.navigationController pushViewController:[IVLProvidersViewController new] animated:YES];
+    };
+
+    IVLRow *transPage = subpage(@"translation", IVLLoc(@"sec_translation"), @"character.bubble.fill", @"bubble.left.fill", @"32ADE6", ^NSString *{
+        BOOL trOn = [IVLSettings boolForKey:IVLKeyTranslation];
+        NSInteger pr = [IVLSettings integerForKey:IVLKeyPronunciation];
+        NSArray *prNames = @[IVLLoc(@"off"), IVLLoc(@"romaji"), IVLLoc(@"kana")];
+        NSString *prText = (pr > 0 && pr < (NSInteger)prNames.count) ? prNames[pr] : nil;
+        NSString *trText = trOn ? [IVLLanguagePickerViewController nameForCode:[IVLSettings objectForKey:IVLKeyTranslationLang]] : nil;
+        if (trText && prText) return [NSString stringWithFormat:@"%@ · %@", trText, prText];
+        return trText ?: prText ?: IVLLoc(@"off");
+    });
+
+    IVLRow *syncPage = subpage(@"sync", IVLLoc(@"sec_sync"), @"metronome.fill", @"timer", @"30D158", ^NSString *{
+        double ms = [IVLSettings doubleForKey:IVLKeyGlobalOffset];
+        NSInteger res = [IVLSettings integerForKey:IVLKeyAutoResume];
+        NSString *offStr = [NSString stringWithFormat:@"%+.2fs", ms / 1000.0];
+        return res > 0 ? [NSString stringWithFormat:@"%@ · %lds", offStr, (long)res] : offStr;
+    });
+
+    // 3. Tools — Lock Screen Lyrics, Sleep Timer, Song Recognition (ShazamKit)
+    IVLRow *lockPage = subpage(@"lock", IVLLoc(@"sec_lock"), @"lock.iphone", @"lock.fill", @"5E5CE6", ^NSString *{
+        return IVLLoc([IVLSettings boolForKey:IVLKeyLockEnabled] ? @"on" : @"off");
+    });
+
+    IVLRow *sleepPage = [[IVLRow type:IVLRowLink key:@"" title:IVLLoc(@"sleep_timer")]
+                         withBadge:@"moon.zzz.fill" fallback:@"moon.fill" hex:@"BF5AF2"];
+    sleepPage.detail = ^NSString *{ return [[IVLSleepTimer shared] statusText]; };
+    sleepPage.action = ^(UIViewController *vc) {
+        [vc.navigationController pushViewController:[IVLSleepTimerViewController new] animated:YES];
+    };
+
+    IVLRow *recognizeRow = [[IVLRow type:IVLRowLink key:@"" title:IVLLoc(@"recognize")]
+                            withBadge:@"shazam.logo.fill" fallback:@"waveform.badge.magnifyingglass" hex:@"007AFF"];
+    recognizeRow.action = ^(UIViewController *vc) {
+        UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:[IVLRecognizerViewController new]];
+        nav.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+        [vc presentViewController:nav animated:YES completion:nil];
+    };
+
+    // 4. Integrations & Stats — Discord, Scrobble, WebNowPlaying, Listening Stats
+    IVLRow *discordPage = subpage(@"discord", @"Discord Rich Presence", @"bubble.left.and.bubble.right.fill", @"message.fill", @"5865F2", ^NSString *{
         return [IVLDiscord available] ? ([[IVLDiscord shared] enabled] ? IVLLoc(@"on") : IVLLoc(@"off")) : IVLLoc(@"discord_na_short");
     });
 
-    IVLRow *wnpPage = page(@"wnp", @"WebNowPlaying", @"desktopcomputer", ^NSString *{ return IVLLoc([IVLSettings boolForKey:IVLKeyWNPEnabled] ? @"on" : @"off"); });
-    IVLRow *extrasPage = page(@"extras", IVLLoc(@"sec_extras"), @"sparkles", ^NSString *{ return [IVLSleepTimer shared].active ? [[IVLSleepTimer shared] statusText] : @""; });
-    IVLRow *(^sw)(NSString *, NSString *) = ^(NSString *k, NSString *t) { return [IVLRow type:IVLRowSwitch key:k title:t]; };
-    IVLRow *(^seg)(NSString *, NSString *, NSArray *) = ^(NSString *k, NSString *t, NSArray *o) {
-        IVLRow *r = [IVLRow type:IVLRowSegment key:k title:t]; r.options = o; return r;
+    IVLRow *scrobblePage = subpage(@"scrobble", IVLLoc(@"scrobble"), @"dot.radiowaves.left.and.right", @"antenna.radiowaves.left.and.right", @"FF3B30", ^NSString *{
+        BOOL lf = [IVLScrobbler shared].lastfmLoggedIn && [IVLSettings boolForKey:IVLKeyLastfmEnabled];
+        BOOL lb = [[IVLScrobbler shared].listenbrainzStatus length] > 0 && [IVLSettings boolForKey:IVLKeyListenBrainzEnabled] && ![[IVLScrobbler shared].listenbrainzStatus isEqualToString:IVLLoc(@"spotify_logged_out")];
+        if (lf && lb) return @"Last.fm · LB";
+        if (lf) return @"Last.fm";
+        if ([IVLScrobbler shared].lastfmLoggedIn) return IVLLoc(@"off");
+        return @"";
+    });
+
+    IVLRow *wnpPage = subpage(@"wnp", @"WebNowPlaying", @"desktopcomputer", @"display", @"30B0C7", ^NSString *{
+        return IVLLoc([IVLSettings boolForKey:IVLKeyWNPEnabled] ? @"on" : @"off");
+    });
+
+    IVLRow *statsPage = [[IVLRow type:IVLRowLink key:@"" title:IVLLoc(@"stats")]
+                         withBadge:@"chart.bar.fill" fallback:@"chart.bar.xaxis" hex:@"FF9500"];
+    statsPage.detail = ^NSString *{ return IVLLoc([IVLSettings boolForKey:IVLKeyStatsEnabled] ? @"on" : @"off"); };
+    statsPage.action = ^(UIViewController *vc) {
+        [vc.navigationController pushViewController:[IVLStatsViewController new] animated:YES];
     };
 
-    IVLRow *size = [IVLRow type:IVLRowStepper key:IVLKeyFontSize title:IVLLoc(@"text_size")];
-    size.min = 16; size.max = 52; size.step = 2;
-    size.format = ^NSString *(double v) { return [NSString stringWithFormat:@"%.0f pt", v]; };
-
-    IVLRow *lang = [IVLRow type:IVLRowLink key:IVLKeyTranslationLang title:IVLLoc(@"translation_lang")];
-    lang.detail = ^NSString *{ return [IVLLanguagePickerViewController nameForCode:[IVLSettings objectForKey:IVLKeyTranslationLang]]; };
-    lang.action = ^(UIViewController *vc) { [vc.navigationController pushViewController:[IVLLanguagePickerViewController new] animated:YES]; };
-
-    IVLRow *sources = [IVLRow type:IVLRowLink key:IVLKeyProviderOrder title:IVLLoc(@"sources_order")];
-    sources.detail = ^NSString *{
-        NSMutableArray *names = [NSMutableArray array];
-        for (NSString *pid in [IVLSettings enabledProviderIDs]) [names addObject:[IVLSettings nameForProvider:pid]];
-        return names.count ? [names componentsJoinedByString:@" › "] : IVLLoc(@"off");
-    };
-    sources.action = ^(UIViewController *vc) { [vc.navigationController pushViewController:[IVLProvidersViewController new] animated:YES]; };
-
-    IVLRow *captionLang = [IVLRow type:IVLRowLink key:IVLKeyCaptionLang title:IVLLoc(@"caption_lang")];
-    captionLang.detail = ^NSString *{
-        NSString *c = [IVLSettings objectForKey:IVLKeyCaptionLang];
-        return [c length] ? [IVLLanguagePickerViewController nameForCode:c] : IVLLoc(@"caption_auto");
-    };
-    captionLang.action = ^(UIViewController *vc) {
-        IVLLanguagePickerViewController *picker = [IVLLanguagePickerViewController new];
-        picker.settingsKey = IVLKeyCaptionLang;
-        [vc.navigationController pushViewController:picker animated:YES];
-    };
-
-    IVLRow *offset = [IVLRow type:IVLRowStepper key:IVLKeyGlobalOffset title:IVLLoc(@"global_offset")];
-    offset.min = -3000; offset.max = 3000; offset.step = 50;
-    offset.format = ^NSString *(double v) { return [NSString stringWithFormat:@"%+.2fs", v / 1000.0]; };
-
-    IVLRow *resume = seg(IVLKeyAutoResume, IVLLoc(@"auto_resume"), @[IVLLoc(@"off"), @"3s", @"5s", @"10s"]);
-    resume.values = @[@0, @3, @5, @10];
-
-    IVLRow *clear = [IVLRow type:IVLRowAction key:@"" title:IVLLoc(@"clear_cache")];
+    // 5. Data & About — Cache management, Developer (@axcyum), GitHub Repo, Version
+    IVLRow *clear = [[IVLRow type:IVLRowAction key:@"" title:IVLLoc(@"clear_cache")]
+                     withBadge:@"trash.fill" fallback:@"trash" hex:@"636366"];
     clear.detail = ^NSString *{
         return [NSByteCountFormatter stringFromByteCount:(long long)[[IVLLyricsService shared] cacheSize] countStyle:NSByteCountFormatterCountStyleFile];
     };
     clear.action = ^(UIViewController *vc) {
-        [[IVLLyricsService shared] clearCache];
-        [[IVLTranslator shared] clearCache];
-        [((UITableViewController *)vc).tableView reloadData];
+        UIAlertController *sheet = [UIAlertController alertControllerWithTitle:IVLLoc(@"clear_cache") message:IVLLoc(@"clear_cache_confirm") preferredStyle:UIAlertControllerStyleActionSheet];
+        [sheet addAction:[UIAlertAction actionWithTitle:IVLLoc(@"clear_cache") style:UIAlertActionStyleDestructive handler:^(UIAlertAction *a) {
+            [[IVLLyricsService shared] clearCache];
+            [[IVLTranslator shared] clearCache];
+            [((UITableViewController *)vc).tableView reloadData];
+        }]];
+        [sheet addAction:[UIAlertAction actionWithTitle:IVLLoc(@"cancel") style:UIAlertActionStyleCancel handler:nil]];
+        sheet.popoverPresentationController.sourceView = vc.view;
+        [vc presentViewController:sheet animated:YES completion:nil];
     };
 
-    IVLRow *version = [IVLRow type:IVLRowInfo key:@"" title:IVLLoc(@"version")];
+    IVLRow *devLink = [[IVLRow type:IVLRowLink key:@"" title:IVLLoc(@"developer")]
+                       withBadge:@"person.crop.circle.fill" fallback:@"person.fill" hex:@"3A3A3C"];
+    devLink.external = YES;
+    devLink.detail = ^NSString *{ return @"@axcyum"; };
+    devLink.action = ^(UIViewController *vc) {
+        NSURL *u = [NSURL URLWithString:kIVLAuthorURL];
+        if (u) [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
+    };
+
+    IVLRow *repoLink = [[IVLRow type:IVLRowLink key:@"" title:IVLLoc(@"github_repo")]
+                        withBadge:@"chevron.left.forwardslash.chevron.right" fallback:@"link" hex:@"24292F"];
+    repoLink.external = YES;
+    repoLink.detail = ^NSString *{ return @"axcyum/iOSYTM-Utils"; };
+    repoLink.action = ^(UIViewController *vc) {
+        NSURL *u = [NSURL URLWithString:kIVLRepoURL];
+        if (u) [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil];
+    };
+
+    IVLRow *version = [[IVLRow type:IVLRowInfo key:@"" title:IVLLoc(@"version")]
+                       withBadge:@"info.circle.fill" fallback:@"info.circle" hex:@"8E8E93"];
     version.detail = ^NSString *{ return @IVL_VERSION; };
 
     _sections = @[
-        [IVLSection title:IVLLoc(@"sec_general") footer:IVLLoc(@"footer_general") rows:@[
-            sw(IVLKeyEnabled, IVLLoc(@"enabled")),
-            sw(IVLKeyShowButton, IVLLoc(@"show_button")),
-            sw(IVLKeyMiniLyric, IVLLoc(@"mini_lyric")),
-            sw(IVLKeyKeepAwake, IVLLoc(@"keep_awake")),
-        ]],
-        [IVLSection title:IVLLoc(@"sec_integrations") footer:nil rows:@[lockPage, spotifyPage, discordPage, wnpPage]],
-        [IVLSection title:IVLLoc(@"sec_extras") footer:IVLLoc(@"footer_extras") rows:@[extrasPage]],
-        [IVLSection title:IVLLoc(@"sec_display") footer:IVLLoc(@"footer_display") rows:@[
-            size,
-            seg(IVLKeyAlignment, IVLLoc(@"alignment"), @[IVLLoc(@"align_left"), IVLLoc(@"align_center")]),
-            sw(IVLKeyKaraoke, IVLLoc(@"karaoke")),
-            sw(IVLKeyShowBreaks, IVLLoc(@"show_breaks")),
-        ]],
-        [IVLSection title:IVLLoc(@"sec_translation") footer:IVLLoc(@"footer_translation") rows:@[
-            sw(IVLKeyTranslation, IVLLoc(@"translation")),
-            lang,
-            seg(IVLKeyPronunciation, IVLLoc(@"pronunciation"), @[IVLLoc(@"off"), IVLLoc(@"romaji"), IVLLoc(@"kana")]),
-        ]],
-        [IVLSection title:IVLLoc(@"sec_sources") footer:IVLLoc(@"footer_sources") rows:@[sources, captionLang]],
-        [IVLSection title:IVLLoc(@"sec_sync") footer:IVLLoc(@"footer_sync") rows:@[offset, resume]],
-        [IVLSection title:IVLLoc(@"sec_data") footer:nil rows:@[clear]],
-        [IVLSection title:IVLLoc(@"sec_about") footer:IVLLoc(@"footer_about") rows:@[version]],
+        [IVLSection title:IVLLoc(@"sec_general") footer:nil rows:@[master, btnPage, appearancePage, displayPage]],
+        [IVLSection title:IVLLoc(@"sec_lyrics_lang") footer:nil rows:@[sourcesPage, transPage, syncPage]],
+        [IVLSection title:IVLLoc(@"sec_tools") footer:nil rows:@[lockPage, sleepPage, recognizeRow]],
+        [IVLSection title:IVLLoc(@"sec_integrations") footer:nil rows:@[discordPage, scrobblePage, wnpPage, statsPage]],
+        [IVLSection title:IVLLoc(@"sec_data") footer:IVLLoc(@"footer_about") rows:@[clear, devLink, repoLink, version]],
     ];
 }
+
+#pragma mark - UITableViewDataSource
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return _sections.count; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return _sections[section].rows.count; }
@@ -424,10 +625,40 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     IVLRow *row = _sections[indexPath.section].rows[indexPath.row];
+
+    if (row.type == IVLRowPreview) {
+        UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+        c.selectionStyle = UITableViewCellSelectionStyleNone;
+        c.backgroundColor = [UIColor colorWithWhite:0.09 alpha:1.0];
+        UILabel *lbl = [UILabel new];
+        lbl.text = IVLLoc(@"preview_sample");
+        lbl.numberOfLines = 2;
+        lbl.font = [UIFont systemFontOfSize:[IVLSettings doubleForKey:IVLKeyFontSize] weight:UIFontWeightBold];
+        lbl.textColor = [IVLTheme accentColor];
+        lbl.textAlignment = ([IVLSettings integerForKey:IVLKeyAlignment] == 1) ? NSTextAlignmentCenter : NSTextAlignmentLeft;
+        lbl.translatesAutoresizingMaskIntoConstraints = NO;
+        [c.contentView addSubview:lbl];
+        [NSLayoutConstraint activateConstraints:@[
+            [lbl.leadingAnchor constraintEqualToAnchor:c.contentView.layoutMarginsGuide.leadingAnchor],
+            [lbl.trailingAnchor constraintEqualToAnchor:c.contentView.layoutMarginsGuide.trailingAnchor],
+            [lbl.topAnchor constraintEqualToAnchor:c.contentView.topAnchor constant:20],
+            [lbl.bottomAnchor constraintEqualToAnchor:c.contentView.bottomAnchor constant:-20],
+            [c.contentView.heightAnchor constraintGreaterThanOrEqualToConstant:88],
+        ]];
+        _previewLabel = lbl;
+        return c;
+    }
+
     UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil];
     c.textLabel.text = row.title;
     c.textLabel.numberOfLines = 0;
     c.selectionStyle = UITableViewCellSelectionStyleNone;
+
+    if (row.badgeHex.length) {
+        c.imageView.image = IVLBadgeImage(row.symbol, row.fallbackSymbol, row.badgeHex);
+    } else if (row.symbol.length) {
+        c.imageView.image = [UIImage systemImageNamed:row.symbol];
+    }
 
     switch (row.type) {
         case IVLRowSwitch: {
@@ -443,18 +674,36 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
             break;
         }
         case IVLRowSegment: {
-            UISegmentedControl *sc = [[UISegmentedControl alloc] initWithItems:row.options];
+            NSArray *options = row.options ?: @[];
             NSArray<NSNumber *> *values = row.values;
             NSInteger cur = [IVLSettings integerForKey:row.key];
             NSInteger idx = values ? (NSInteger)[values indexOfObject:@(cur)] : cur;
-            sc.selectedSegmentIndex = (idx == NSNotFound || idx >= (NSInteger)row.options.count) ? 0 : idx;
+            if (idx == NSNotFound || idx < 0 || idx >= (NSInteger)options.count) idx = 0;
+
+            UIButtonConfiguration *cfg = [UIButtonConfiguration plainButtonConfiguration];
+            cfg.title = options.count ? options[idx] : @"";
+            cfg.image = [UIImage systemImageNamed:@"chevron.up.chevron.down" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:11 weight:UIImageSymbolWeightSemibold]];
+            cfg.imagePlacement = NSDirectionalRectEdgeTrailing;
+            cfg.imagePadding = 5;
+            cfg.contentInsets = NSDirectionalEdgeInsetsMake(4, 8, 4, 0);
+            cfg.baseForegroundColor = UIColor.secondaryLabelColor;
+
+            UIButton *btn = [UIButton buttonWithConfiguration:cfg primaryAction:nil];
+            btn.showsMenuAsPrimaryAction = YES;
             NSString *key = row.key;
-            [sc addAction:[UIAction actionWithHandler:^(UIAction *a) {
-                NSInteger i = ((UISegmentedControl *)a.sender).selectedSegmentIndex;
-                [IVLSettings setObject:(values ? values[i] : @(i)) forKey:key];
-            }] forControlEvents:UIControlEventValueChanged];
-            [sc sizeToFit];
-            c.accessoryView = sc;
+            __weak typeof(self) weakSelf = self;
+            NSMutableArray<UIAction *> *actions = [NSMutableArray arrayWithCapacity:options.count];
+            for (NSUInteger i = 0; i < options.count; i++) {
+                UIAction *act = [UIAction actionWithTitle:options[i] image:nil identifier:nil handler:^(UIAction *a) {
+                    [IVLSettings setObject:(values ? values[i] : @((NSInteger)i)) forKey:key];
+                    [weakSelf rebuild];
+                }];
+                act.state = ((NSInteger)i == idx) ? UIMenuElementStateOn : UIMenuElementStateOff;
+                [actions addObject:act];
+            }
+            btn.menu = [UIMenu menuWithTitle:@"" children:actions];
+            [btn sizeToFit];
+            c.accessoryView = btn;
             break;
         }
         case IVLRowStepper: {
@@ -480,14 +729,24 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
             c.accessoryView = wrap;
             break;
         }
-        case IVLRowLink:
-            if (row.symbol) c.imageView.image = [UIImage systemImageNamed:row.symbol];
-            c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        case IVLRowLink: {
             c.detailTextLabel.text = row.detail ? row.detail() : nil;
             c.selectionStyle = UITableViewCellSelectionStyleDefault;
+            if (row.external) {
+                UIImageView *ext = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"arrow.up.right" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:12 weight:UIImageSymbolWeightSemibold]]];
+                ext.tintColor = UIColor.tertiaryLabelColor;
+                c.accessoryView = ext;
+            } else {
+                c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            }
             break;
+        }
         case IVLRowAction:
-            c.textLabel.textColor = (row.destructive || [row.title isEqualToString:IVLLoc(@"clear_cache")]) ? UIColor.systemRedColor : UIColor.systemBlueColor;
+            if (row.badgeHex.length) {
+                c.textLabel.textColor = UIColor.labelColor;
+            } else {
+                c.textLabel.textColor = row.destructive ? UIColor.systemRedColor : self.view.tintColor;
+            }
             c.detailTextLabel.text = row.detail ? row.detail() : nil;
             c.selectionStyle = UITableViewCellSelectionStyleDefault;
             break;
@@ -520,7 +779,6 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
             break;
         }
         case IVLRowSlider: {
-            // full-width slider under the title; values below `danger` are the "danger zone"
             c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
             c.selectionStyle = UITableViewCellSelectionStyleNone;
             double v = MAX(row.min, MIN(row.max, [IVLSettings doubleForKey:row.key]));
@@ -530,6 +788,7 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
             UISlider *sl = [UISlider new];
             sl.minimumValue = row.min; sl.maximumValue = row.max; sl.value = v;
             NSString *(^fmt)(double) = row.format;
+            void (^onLive)(double) = row.onLive;
             double danger = row.danger, step = row.step > 0 ? row.step : 1;
             NSString *key = row.key;
             void (^paint)(double) = ^(double x) {
@@ -537,6 +796,7 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
                 value.text = fmt ? fmt(x) : @(x).stringValue;
                 value.textColor = hot ? UIColor.systemRedColor : UIColor.secondaryLabelColor;
                 sl.minimumTrackTintColor = hot ? UIColor.systemRedColor : nil;
+                if (onLive) onLive(x);
             };
             paint(v);
             [sl addAction:[UIAction actionWithHandler:^(UIAction *a) {
@@ -580,6 +840,8 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
             c.selectionStyle = UITableViewCellSelectionStyleDefault;
             break;
         }
+        case IVLRowPreview:
+            break;
     }
     return c;
 }
@@ -593,7 +855,7 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
 
 @end
 
-#pragma mark - Providers
+#pragma mark - Providers (with unified Spotify & Subtitle Language section)
 
 @implementation IVLProvidersViewController {
     NSMutableArray<NSString *> *_ids;
@@ -606,7 +868,15 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
     self.title = IVLLoc(@"sec_sources");
     _ids = [[IVLSettings providerIDs] mutableCopy];
     self.tableView.editing = YES;
-    self.tableView.allowsSelectionDuringEditing = NO;
+    self.tableView.allowsSelectionDuringEditing = YES;
+    [[NSNotificationCenter defaultCenter] addObserver:self.tableView selector:@selector(reloadData) name:IVLSpotifyStateDidChangeNotification object:nil];
+}
+
+- (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self.tableView]; }
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    [self.tableView reloadData];
 }
 
 + (NSString *)detailFor:(NSString *)pid {
@@ -619,11 +889,41 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
     return IVLLoc(@"src_lrclib");
 }
 
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return _ids.count; }
-- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section { return IVLLoc(@"footer_sources_order"); }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return 2; }
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    return section == 0 ? _ids.count : 2;
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    return section == 0 ? IVLLoc(@"sources_order") : IVLLoc(@"sec_provider_options");
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
+    return section == 0 ? IVLLoc(@"footer_sources_order") : nil;
+}
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    if (indexPath.section == 1) {
+        UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil];
+        c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        c.editingAccessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        c.selectionStyle = UITableViewCellSelectionStyleDefault;
+        if (indexPath.row == 0) {
+            c.imageView.image = IVLBadgeImage(@"music.note.list", @"music.note", @"1DB954");
+            c.textLabel.text = @"Spotify";
+            c.detailTextLabel.text = [IVLSpotify shared].loggedIn ? IVLLoc(@"spotify_logged_in") : IVLLoc(@"spotify_logged_out");
+        } else {
+            c.imageView.image = IVLBadgeImage(@"captions.bubble.fill", @"text.bubble.fill", @"0A84FF");
+            c.textLabel.text = IVLLoc(@"caption_lang");
+            NSString *code = [IVLSettings objectForKey:IVLKeyCaptionLang];
+            c.detailTextLabel.text = code.length ? [IVLLanguagePickerViewController nameForCode:code] : IVLLoc(@"caption_auto");
+        }
+        return c;
+    }
+
     UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
+    c.selectionStyle = UITableViewCellSelectionStyleNone;
     NSString *pid = _ids[indexPath.row];
     c.textLabel.text = [NSString stringWithFormat:@"%ld. %@", (long)indexPath.row + 1, [IVLSettings nameForProvider:pid]];
     c.textLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
@@ -634,21 +934,44 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
     UISwitch *sw = [UISwitch new];
     NSString *key = [IVLSettings enableKeyForProvider:pid];
     sw.on = [IVLSettings boolForKey:key];
-    [sw addAction:[UIAction actionWithHandler:^(UIAction *a) { [IVLSettings setBool:((UISwitch *)a.sender).on forKey:key]; }] forControlEvents:UIControlEventValueChanged];
+    [sw addAction:[UIAction actionWithHandler:^(UIAction *a) {
+        [IVLSettings setBool:((UISwitch *)a.sender).on forKey:key];
+    }] forControlEvents:UIControlEventValueChanged];
     c.editingAccessoryView = sw;
     return c;
 }
 
+- (BOOL)tableView:(UITableView *)tableView canEditRowAtIndexPath:(NSIndexPath *)indexPath { return indexPath.section == 0; }
 - (UITableViewCellEditingStyle)tableView:(UITableView *)tableView editingStyleForRowAtIndexPath:(NSIndexPath *)indexPath { return UITableViewCellEditingStyleNone; }
 - (BOOL)tableView:(UITableView *)tableView shouldIndentWhileEditingRowAtIndexPath:(NSIndexPath *)indexPath { return NO; }
-- (BOOL)tableView:(UITableView *)tableView canMoveRowAtIndexPath:(NSIndexPath *)indexPath { return YES; }
+- (BOOL)tableView:(UITableView *)tableView canMoveRowAtIndexPath:(NSIndexPath *)indexPath { return indexPath.section == 0; }
+
+- (NSIndexPath *)tableView:(UITableView *)tableView targetIndexPathForMoveFromRowAtIndexPath:(NSIndexPath *)sourceIndexPath toProposedIndexPath:(NSIndexPath *)proposedDestinationIndexPath {
+    if (proposedDestinationIndexPath.section != 0) {
+        return [NSIndexPath indexPathForRow:MAX(0, (NSInteger)_ids.count - 1) inSection:0];
+    }
+    return proposedDestinationIndexPath;
+}
 
 - (void)tableView:(UITableView *)tableView moveRowAtIndexPath:(NSIndexPath *)from toIndexPath:(NSIndexPath *)to {
+    if (from.section != 0 || to.section != 0) return;
     NSString *pid = _ids[from.row];
     [_ids removeObjectAtIndex:from.row];
     [_ids insertObject:pid atIndex:to.row];
     [IVLSettings setProviderIDs:_ids];
-    dispatch_async(dispatch_get_main_queue(), ^{ [tableView reloadData]; });   // renumber
+    dispatch_async(dispatch_get_main_queue(), ^{ [tableView reloadData]; });
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (indexPath.section != 1) return;
+    if (indexPath.row == 0) {
+        [self.navigationController pushViewController:[[IVLSettingsViewController alloc] initWithPage:@"spotify"] animated:YES];
+    } else {
+        IVLLanguagePickerViewController *picker = [IVLLanguagePickerViewController new];
+        picker.settingsKey = IVLKeyCaptionLang;
+        [self.navigationController pushViewController:picker animated:YES];
+    }
 }
 
 @end

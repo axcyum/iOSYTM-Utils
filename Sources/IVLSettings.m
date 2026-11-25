@@ -43,6 +43,7 @@ NSString *const IVLKeyLastfmKey = @"lastfmKey";
 NSString *const IVLKeyLastfmUser = @"lastfmUser";
 NSString *const IVLKeyListenBrainzEnabled = @"listenbrainzEnabled";
 NSString *const IVLKeyOpenPlayer = @"openPlayer";
+NSString *const IVLKeyImmersivePlayer = @"immersivePlayer";
 NSString *const IVLKeyWNPEnabled = @"wnpEnabled";
 NSString *const IVLKeyWNPHost = @"wnpHost";
 NSString *const IVLKeyWNPPort = @"wnpPort";
@@ -102,11 +103,12 @@ static NSString *IVLLocCaptionsName(void) {
             IVLKeyDiscordName: @"YouTube Music iOS",
             IVLKeyDiscordSongButton: @YES,
             IVLKeyDiscordGitHubButton: @YES,
-            IVLKeyDiscordGitHubURL: @"https://github.com/axcyum/ivLyricsYTM",
+            IVLKeyDiscordGitHubURL: @"https://github.com/axcyum/iOSYTM-Utils",
             IVLKeyLastfmEnabled: @YES,
             IVLKeyLastfmKey: @"",
             IVLKeyListenBrainzEnabled: @YES,
             IVLKeyOpenPlayer: @NO,
+            IVLKeyImmersivePlayer: @NO,
             IVLKeyWNPEnabled: @NO,
             IVLKeyWNPHost: @"",
             IVLKeyWNPPort: @8974,
