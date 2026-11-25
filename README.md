@@ -2,7 +2,7 @@
 
 <img src="assets/icon.png" width="124" height="124" alt="iOSYTM-Utils Icon" />
 
-# iOSYTM-Utils
+# iOS YTMusic Utilities
 
 **iOS 版 YouTube Music のためのオールインワン歌詞・プレイヤー拡張ユーティリティ**
 
@@ -31,8 +31,7 @@
 
 > [!IMPORTANT]
 > **クリーンポリシー**：本 Tweak は視聴体験・歌詞表示・外部サービス連携の向上のみを目的としています。**広告ブロック、YouTube Premium 機能の解放、音源ダウンロード等の制限回避機能は一切含みません。**
-> 再生状態とメタデータの取得フックのみを利用しており、[YTMusicUltimate](https://github.com/dayanch96/YTMusicUltimate) との同時注入にも対応しています。
-
+> 再生状態とメタデータの取得フックのみを利用しています。
 ---
 
 ## 主な機能
