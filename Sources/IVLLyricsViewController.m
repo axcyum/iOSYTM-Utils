@@ -752,7 +752,7 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
         [items addObject:[UIAction actionWithTitle:(inAMLyrics ? IVLLoc(@"show_player") : IVLLoc(@"show_lyrics"))
                                              image:[UIImage systemImageNamed:(inAMLyrics ? @"play.square" : @"quote.bubble")]
                                         identifier:nil
-                                           handler:^(UIAction *a) { [ws->_panel toggleLyricsMode]; }]];
+                                           handler:^(UIAction *a) { __strong typeof(ws) ss = ws; if (ss) [ss->_panel toggleLyricsMode]; }]];
     } else {
         [items addObject:[UIAction actionWithTitle:(_showPlayer ? IVLLoc(@"show_lyrics") : IVLLoc(@"show_player"))
                                              image:[UIImage systemImageNamed:(_showPlayer ? @"quote.bubble" : @"play.square")]
