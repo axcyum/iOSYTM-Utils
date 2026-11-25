@@ -144,8 +144,9 @@ static void TokenDelete(void) { SecItemDelete((__bridge CFDictionaryRef)TokenQue
 
 /// Cover from the shared track model: only when it belongs to the song that is being reported.
 static NSString *gCoverReason = @"";
-static NSMutableDictionary<NSString *, NSString *> *gSearchedIDs;   // "title
-artist" -> video id ("" = none)
+static NSMutableDictionary<NSString *, NSString *> *gSearchedIDs;   // "title|artist" -> video id ("" = none)
+
+static NSString *CoverKey(IVLTrack *t) { return [NSString stringWithFormat:@"%@|%@", t.title ?: @"", t.artist ?: @""]; }
 
 /// Short, stable cover URL for Discord. Discord limits image URLs to 256 characters and
 /// fetches them through its media proxy, so signed thumbnail URLs are avoided.
@@ -171,8 +172,7 @@ static NSString *CoverURL(NSString *title) {
     if (vid.length != 11) vid = [m captionVideoIDForTrack:t];
     if (vid.length != 11) {
         if (!gSearchedIDs) gSearchedIDs = [NSMutableDictionary dictionary];
-        NSString *key = [NSString stringWithFormat:@"%@
-%@", t.title ?: @"", t.artist ?: @""];
+        NSString *key = CoverKey(t);
         NSString *cached = gSearchedIDs[key];
         if (cached.length == 11) vid = cached;
         else if (!cached) {
@@ -183,8 +183,7 @@ static NSString *CoverURL(NSString *title) {
         }
     }
     if (vid.length == 11) { gCoverReason = @"video thumbnail"; return [NSString stringWithFormat:@"https://i.ytimg.com/vi/%@/hqdefault.jpg", vid]; }
-    gCoverReason = gSearchedIDs[[NSString stringWithFormat:@"%@
-%@", t.title ?: @"", t.artist ?: @""]] ? @"no video id (searching or not found)" : @"no video id";
+    gCoverReason = gSearchedIDs[CoverKey(t)] ? @"no video id (searching or not found)" : @"no video id";
     return nil;
 }
 
