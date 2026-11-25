@@ -723,7 +723,7 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
                 for (id item in (NSArray *)json) {
                     if (![item isKindOfClass:[NSDictionary class]]) continue;
                     NSDictionary *rel = item;
-                    if ([rel[@"draft"] boolValue]) continue;
+                    if ([rel[@"draft"] boolValue] || [rel[@"prerelease"] boolValue]) continue;
                     NSString *tag = [rel[@"tag_name"] isKindOfClass:[NSString class]] ? rel[@"tag_name"] : @"";
                     if (!tag.length || [tag isEqualToString:@"build-inputs"]) continue;
                     latestReleaseTag = tag;
@@ -785,7 +785,7 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
 
         BOOL hasNewRelease = latestReleaseTag.length > 0 && IVLCompareSemver(latestReleaseTag, @IVL_VERSION) == NSOrderedDescending;
         NSString *localCommit = @IVL_COMMIT;
-        BOOL hasNewCommit = !hasNewRelease && IVLHasRealCommit() && latestMainSHA.length >= 7
+        BOOL hasNewCommit = !latestReleaseTag.length && IVLHasRealCommit() && latestMainSHA.length >= 7
             && ![latestMainSHA.lowercaseString isEqualToString:[localCommit substringToIndex:MIN((NSUInteger)7, localCommit.length)].lowercaseString];
 
         if (hasNewRelease || hasNewCommit) {
