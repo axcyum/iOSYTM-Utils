@@ -490,17 +490,29 @@ static NSString *CurrentVideoID(IVLTrack *t) {
     } else if (!title.length || ![self isPlaying:info]) {
         [self clear];
         return;
+    } else if (titleMatchesTrack && pm.player) {
+        double live = MAX(0, [pm rawTimeMs] / 1000.0);
+        if (duration <= 0 || live <= duration + 1.0) elapsed = live;
     }
 
     NSString *fingerprint = [NSString stringWithFormat:@"%@\n%@\n%@\n%.1f\n%.2f", title, artist, album, duration, rate];
-    if (![fingerprint isEqual:sampleFingerprint]) { sampleStart = now - elapsed / MAX(0.01, rate); sampleFingerprint = fingerprint; }
+    double computedStart = now - elapsed / MAX(0.01, rate);
+    BOOL timestampShifted = NO;
+    if (![fingerprint isEqual:sampleFingerprint]) {
+        sampleStart = computedStart;
+        sampleFingerprint = fingerprint;
+    } else if (fabs(computedStart - sampleStart) > 2.5) {
+        sampleStart = computedStart;
+        timestampShifted = YES;
+        lastFingerprint = nil;
+    }
     double start = sampleStart;
     NSString *songKey = [NSString stringWithFormat:@"%@\n%@", title, artist ?: @""];
     BOOL songChanged = ![songKey isEqualToString:lastSentSongKey ?: @""];
     NSInteger interval = MAX(3, MIN(60, [IVLSettings integerForKey:IVLKeyDiscordInterval]));
     // Kick off square cover resolution immediately even while waiting on cooldown so it's ready in cache
     NSString *preResolvedImage = ([self coverEnabled] && !omitArtwork) ? CoverURL(title) : nil;
-    NSTimeInterval minWait = (songChanged || gCoverJustResolved) ? 2.0 : (NSTimeInterval)interval;
+    NSTimeInterval minWait = (songChanged || gCoverJustResolved || timestampShifted) ? 2.0 : (NSTimeInterval)interval;
     if (inFlight || blockedPayload || now < nextAttempt || now - lastSend < minWait) return;
     gCoverJustResolved = NO;
 

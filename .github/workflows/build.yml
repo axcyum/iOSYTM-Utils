@@ -16,6 +16,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 jobs:
   build:
     # arm64 macOS runners kept timing out in the queue ("job was not acquired")
