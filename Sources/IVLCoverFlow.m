@@ -272,15 +272,15 @@ static NSCache<NSString *, UIImage *> *IVLCFImageCache(void) {
     _scroll.frame = CGRectMake(0, scrollY, w, scrollH);
     _spinner.center = CGPointMake(w * 0.5, scrollY + _cardSize * 0.5);
 
-    CGFloat hudY = h - 86.0;
-    _titleLabel.frame = CGRectMake(safeX + 20.0, hudY, w - (safeX + 20.0) * 2.0, 24.0);
-    _artistLabel.frame = CGRectMake(safeX + 20.0, hudY + 24.0, w - (safeX + 20.0) * 2.0, 19.0);
+    CGFloat hudY = h - 98.0;
+    _titleLabel.frame = CGRectMake(safeX + 20.0, hudY, w - (safeX + 20.0) * 2.0, 23.0);
+    _artistLabel.frame = CGRectMake(safeX + 20.0, hudY + 23.0, w - (safeX + 20.0) * 2.0, 18.0);
 
-    CGFloat ctrlY = hudY + 48.0;
+    CGFloat ctrlY = hudY + 44.0;
     CGFloat cx = w * 0.5;
-    _playBtn.frame = CGRectMake(cx - 24.0, ctrlY, 48.0, 34.0);
-    _prevBtn.frame = CGRectMake(cx - 88.0, ctrlY, 44.0, 34.0);
-    _nextBtn.frame = CGRectMake(cx + 44.0, ctrlY, 44.0, 34.0);
+    _playBtn.frame = CGRectMake(cx - 24.0, ctrlY, 48.0, 32.0);
+    _prevBtn.frame = CGRectMake(cx - 88.0, ctrlY, 44.0, 32.0);
+    _nextBtn.frame = CGRectMake(cx + 44.0, ctrlY, 44.0, 32.0);
 
     [self layoutCards];
     [self scrollToIndex:_currentIndex animated:NO];
@@ -427,6 +427,148 @@ static NSCache<NSString *, UIImage *> *IVLCFImageCache(void) {
     }] resume];
 }
 
+#pragma mark - Queue helpers (real YTMusic YTIPlaylistPanelRenderer extractor + rotate previous to back)
+
+static NSString *IVLCFFormattedString(id fs) {
+    if (!fs) return @"";
+    if ([fs isKindOfClass:[NSString class]]) return fs;
+    @try {
+        if ([fs respondsToSelector:@selector(simpleText)]) {
+            id st = [fs performSelector:@selector(simpleText)];
+            if ([st isKindOfClass:[NSString class]] && [st length]) return st;
+        }
+        if ([fs respondsToSelector:@selector(runsArray)]) {
+            id runs = [fs performSelector:@selector(runsArray)];
+            if ([runs isKindOfClass:[NSArray class]]) {
+                NSMutableString *m = [NSMutableString string];
+                for (id r in (NSArray *)runs) {
+                    if ([r respondsToSelector:@selector(text)]) {
+                        id t = [r performSelector:@selector(text)];
+                        if ([t isKindOfClass:[NSString class]]) [m appendString:t];
+                    }
+                }
+                if (m.length) return m;
+            }
+        }
+    } @catch (__unused NSException *e) {}
+    return @"";
+}
+
+static NSString *IVLCFUpgradeCoverURL(NSString *u) {
+    if (!u.length) return @"";
+    NSURLComponents *comp = [NSURLComponents componentsWithString:u];
+    NSString *host = comp.host.lowercaseString ?: @"";
+    if ([comp.scheme isEqualToString:@"https"] && ([host hasSuffix:@"googleusercontent.com"] || [host hasSuffix:@"ggpht.com"])) {
+        NSString *path = comp.percentEncodedPath ?: @"";
+        NSRange eq = [path rangeOfString:@"=" options:NSBackwardsSearch];
+        if (eq.location != NSNotFound) path = [path substringToIndex:eq.location];
+        return [NSString stringWithFormat:@"https://%@%@=w544-h544-l90-rj", comp.host, path];
+    }
+    return u;
+}
+
+static NSArray<NSDictionary *> *IVLCFExtractFromPanel(id panel, NSString **outPlaylistID) {
+    if (!panel) return @[];
+    NSMutableArray<NSDictionary *> *items = [NSMutableArray array];
+    NSMutableSet<NSString *> *seen = [NSMutableSet set];
+    @try {
+        if (outPlaylistID && [panel respondsToSelector:@selector(playlistId)]) {
+            id pid = [panel performSelector:@selector(playlistId)];
+            if ([pid isKindOfClass:[NSString class]] && [pid length]) *outPlaylistID = pid;
+        }
+        if (![panel respondsToSelector:@selector(contentsArray)]) return @[];
+        id contents = [panel performSelector:@selector(contentsArray)];
+        if (![contents isKindOfClass:[NSArray class]]) return @[];
+
+        for (id entry in (NSArray *)contents) {
+            id vr = nil;
+            if ([entry respondsToSelector:@selector(playlistPanelVideoRenderer)]) {
+                vr = [entry performSelector:@selector(playlistPanelVideoRenderer)];
+            }
+            if (!vr && [entry respondsToSelector:@selector(playlistPanelVideoWrapperRenderer)]) {
+                id wrap = [entry performSelector:@selector(playlistPanelVideoWrapperRenderer)];
+                if (wrap && [wrap respondsToSelector:@selector(primaryRenderer)]) {
+                    id prim = [wrap performSelector:@selector(primaryRenderer)];
+                    if (prim && [prim respondsToSelector:@selector(playlistPanelVideoRenderer)]) {
+                        vr = [prim performSelector:@selector(playlistPanelVideoRenderer)];
+                    }
+                }
+            }
+            if (!vr) continue;
+            NSString *vid = nil;
+            if ([vr respondsToSelector:@selector(videoId)]) {
+                id v = [vr performSelector:@selector(videoId)];
+                if ([v isKindOfClass:[NSString class]]) vid = v;
+            }
+            if (!vid.length || [seen containsObject:vid]) continue;
+            [seen addObject:vid];
+
+            NSString *title = [vr respondsToSelector:@selector(title)] ? IVLCFFormattedString([vr performSelector:@selector(title)]) : @"";
+            NSString *artist = @"";
+            if ([vr respondsToSelector:@selector(shortBylineText)]) {
+                artist = IVLCFFormattedString([vr performSelector:@selector(shortBylineText)]);
+            }
+            if (!artist.length && [vr respondsToSelector:@selector(longBylineText)]) {
+                artist = IVLCFFormattedString([vr performSelector:@selector(longBylineText)]);
+            }
+            // Strip " • 3:27" duration suffix if present in byline
+            NSRange dot = [artist rangeOfString:@" • "];
+            if (dot.location != NSNotFound) artist = [artist substringToIndex:dot.location];
+
+            NSString *cover = @"";
+            if ([vr respondsToSelector:@selector(thumbnail)]) {
+                id td = [vr performSelector:@selector(thumbnail)];
+                if (td && [td respondsToSelector:@selector(thumbnailsArray)]) {
+                    id arr = [td performSelector:@selector(thumbnailsArray)];
+                    if ([arr isKindOfClass:[NSArray class]] && [(NSArray *)arr count]) {
+                        id last = [(NSArray *)arr lastObject];
+                        if ([last respondsToSelector:@selector(URL)]) {
+                            id u = [last performSelector:@selector(URL)];
+                            if ([u isKindOfClass:[NSString class]]) cover = IVLCFUpgradeCoverURL(u);
+                        }
+                    }
+                }
+            }
+            [items addObject:@{
+                @"videoId": vid,
+                @"title": title ?: @"",
+                @"artist": artist ?: @"",
+                @"artworkURL": cover ?: @"",
+            }];
+            if (items.count >= 60) break;
+        }
+    } @catch (__unused NSException *e) {}
+    return items;
+}
+
+/// Rotates queue so the currently playing track is at index 0, upcoming tracks follow to the right,
+/// and previously played tracks wrap around to the back (end) of the list.
+static NSArray<NSDictionary *> *IVLRotateQueueForTrack(NSArray<NSDictionary *> *items, IVLTrack *track) {
+    if (items.count <= 1 || !track) return items ?: @[];
+    NSString *vid = track.youtubeVideoID ?: @"";
+    NSString *title = track.title.lowercaseString ?: @"";
+    NSInteger matchIdx = NSNotFound;
+    for (NSUInteger i = 0; i < items.count; i++) {
+        NSDictionary *it = items[i];
+        if (vid.length && [vid isEqualToString:it[@"videoId"]]) { matchIdx = (NSInteger)i; break; }
+    }
+    if (matchIdx == NSNotFound && title.length) {
+        for (NSUInteger i = 0; i < items.count; i++) {
+            NSString *t = [items[i][@"title"] lowercaseString] ?: @"";
+            if ([t isEqualToString:title]) { matchIdx = (NSInteger)i; break; }
+        }
+    }
+    if (matchIdx == NSNotFound || matchIdx == 0) return items;
+    NSRange tail = NSMakeRange((NSUInteger)matchIdx, items.count - (NSUInteger)matchIdx);
+    NSRange head = NSMakeRange(0, (NSUInteger)matchIdx);
+    return [[items subarrayWithRange:tail] arrayByAddingObjectsFromArray:[items subarrayWithRange:head]];
+}
+
+@interface IVLCoverFlowManager ()
+@property (nonatomic, copy) NSArray<NSDictionary *> *capturedQueue;
+@property (nonatomic, copy, nullable) NSString *capturedPlaylistID;
+@end
+
 #pragma mark - Queue loading
 
 - (void)reloadQueue {
@@ -435,6 +577,29 @@ static NSCache<NSString *, UIImage *> *IVLCFImageCache(void) {
         _items = @[];
         [self rebuildCards];
         return;
+    }
+
+    // 1. Prefer the real active queue captured directly from YouTube Music's YTIPlaylistPanelRenderer
+    NSArray<NSDictionary *> *captured = [IVLCoverFlowManager shared].capturedQueue;
+    if (captured.count) {
+        NSString *vid = track.youtubeVideoID ?: @"";
+        NSString *lt = track.title.lowercaseString ?: @"";
+        BOOL containsCurrent = NO;
+        for (NSDictionary *it in captured) {
+            if ((vid.length && [vid isEqualToString:it[@"videoId"]]) ||
+                (lt.length && [lt isEqualToString:[it[@"title"] lowercaseString]])) {
+                containsCurrent = YES;
+                break;
+            }
+        }
+        if (containsCurrent) {
+            [_spinner stopAnimating];
+            _loadedVideoID = vid.length ? vid : track.videoID;
+            _items = IVLRotateQueueForTrack(captured, track);
+            _currentIndex = 0;
+            [self rebuildCards];
+            return;
+        }
     }
 
     // Immediate fallback card for current track while playlist loads
@@ -449,16 +614,7 @@ static NSCache<NSString *, UIImage *> *IVLCFImageCache(void) {
         [self rebuildCards];
     }
 
-    // Try reading current playlistId from YTPlayerViewController if available
-    NSString *playlistID = nil;
-    UIViewController *player = [IVLPlaybackManager shared].player;
-    @try {
-        if (player && [player respondsToSelector:NSSelectorFromString(@"contentPlaylistID")]) {
-            id pl = [player valueForKey:@"contentPlaylistID"];
-            if ([pl isKindOfClass:[NSString class]] && [pl length]) playlistID = pl;
-        }
-    } @catch (__unused NSException *e) {}
-
+    NSString *playlistID = [IVLCoverFlowManager shared].capturedPlaylistID;
     [_spinner startAnimating];
     NSString *reqID = track.youtubeVideoID ?: track.videoID;
     __weak typeof(self) weakSelf = self;
@@ -468,26 +624,13 @@ static NSCache<NSString *, UIImage *> *IVLCFImageCache(void) {
         [ss->_spinner stopAnimating];
         if (!items.count) return;
         ss->_loadedVideoID = reqID;
-        ss->_items = items;
-        ss->_currentIndex = selIdx;
+        ss->_items = IVLRotateQueueForTrack(items, track);
+        ss->_currentIndex = 0;
         [ss rebuildCards];
     }];
 }
 
 - (void)trackDidChange {
-    IVLTrack *t = [IVLPlaybackManager shared].track;
-    NSString *vid = t.youtubeVideoID ?: @"";
-    if (vid.length && _items.count) {
-        for (NSUInteger i = 0; i < _items.count; i++) {
-            if ([_items[i][@"videoId"] isEqualToString:vid]) {
-                for (IVLCoverFlowCard *c in _cards) {
-                    c.playingDot.hidden = (c.index != (NSInteger)i);
-                }
-                [self scrollToIndex:(NSInteger)i animated:YES];
-                return;
-            }
-        }
-    }
     [self reloadQueue];
 }
 
@@ -585,6 +728,21 @@ static NSCache<NSString *, UIImage *> *IVLCFImageCache(void) {
 
 + (BOOL)shouldBlockNativeFullscreen {
     return [IVLSettings boolForKey:IVLKeyCoverFlow];
+}
+
+- (void)capturePlaylistPanel:(id)panel {
+    static __thread BOOL inCapture = NO;
+    if (inCapture || !panel) return;
+    inCapture = YES;
+    NSString *plID = nil;
+    NSArray<NSDictionary *> *extracted = IVLCFExtractFromPanel(panel, &plID);
+    inCapture = NO;
+    if (!extracted.count) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self.capturedQueue = extracted;
+        if (plID.length) self.capturedPlaylistID = plID;
+        if (self->_window && !self->_window.hidden) [self->_vc reloadQueue];
+    });
 }
 
 - (void)start {

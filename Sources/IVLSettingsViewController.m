@@ -225,6 +225,7 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
         [IVLSection title:nil footer:IVLLoc(@"footer_general") rows:@[
             sw(IVLKeyShowButton, IVLLoc(@"show_button")),
             sw(IVLKeyMiniLyric, IVLLoc(@"mini_lyric")),
+            sw(IVLKeyHomeBarLyrics, IVLLoc(@"home_bar_lyrics")),
         ]],
     ];
 }

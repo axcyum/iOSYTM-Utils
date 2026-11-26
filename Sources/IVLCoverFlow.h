@@ -8,6 +8,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)start;
 /// YES when Cover Flow is enabled in settings (used by hooks to block YouTube Music's forced landscape fullscreen).
 + (BOOL)shouldBlockNativeFullscreen;
+/// Captures the real active queue directly from YouTube Music's YTIPlaylistPanelRenderer instance.
+- (void)capturePlaylistPanel:(nullable id)panel;
 @end
 
 NS_ASSUME_NONNULL_END

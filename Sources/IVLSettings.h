@@ -8,6 +8,7 @@ extern NSNotificationName const IVLSettingsDidChangeNotification;
 extern NSString *const IVLKeyEnabled;            // BOOL
 extern NSString *const IVLKeyShowButton;         // BOOL  floating button on Now Playing
 extern NSString *const IVLKeyMiniLyric;          // BOOL  current line inside the floating button
+extern NSString *const IVLKeyHomeBarLyrics;      // BOOL  live lyrics strip underneath home screen mini player bar
 extern NSString *const IVLKeyKeepAwake;          // BOOL
 extern NSString *const IVLKeyFontSize;           // double (pt)
 extern NSString *const IVLKeyAlignment;          // 0 = left, 1 = center

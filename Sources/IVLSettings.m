@@ -5,6 +5,7 @@ NSNotificationName const IVLSettingsDidChangeNotification = @"IVLSettingsDidChan
 NSString *const IVLKeyEnabled = @"enabled";
 NSString *const IVLKeyShowButton = @"showButton";
 NSString *const IVLKeyMiniLyric = @"miniLyric";
+NSString *const IVLKeyHomeBarLyrics = @"homeBarLyrics";
 NSString *const IVLKeyKeepAwake = @"keepAwake";
 NSString *const IVLKeyFontSize = @"fontSize";
 NSString *const IVLKeyAlignment = @"alignment";
@@ -79,6 +80,7 @@ static NSString *IVLLocCaptionsName(void) {
             IVLKeyEnabled: @YES,
             IVLKeyShowButton: @YES,
             IVLKeyMiniLyric: @YES,
+            IVLKeyHomeBarLyrics: @NO,
             IVLKeyKeepAwake: @YES,
             IVLKeyFontSize: @28.0,
             IVLKeyAlignment: @0,

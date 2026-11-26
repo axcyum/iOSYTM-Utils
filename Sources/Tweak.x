@@ -21,6 +21,7 @@
 #import "IVLExtras.h"
 #import "IVLScrobbler.h"
 #import "IVLCoverFlow.h"
+#import "IVLHomeBarLyrics.h"
 
 static const void *kIVLButtonKey = &kIVLButtonKey;
 
@@ -52,7 +53,7 @@ static const void *kIVLButtonKey = &kIVLButtonKey;
 %end
 %end
 
-#pragma mark - Cover Flow native landscape fullscreen blocker
+#pragma mark - Cover Flow native landscape fullscreen blocker & real queue capture
 
 %group WatchFullscreenBlock
 %hook YTMWatchViewController
@@ -65,6 +66,20 @@ static const void *kIVLButtonKey = &kIVLButtonKey;
 - (BOOL)shouldAutorotate {
     if ([IVLCoverFlowManager shouldBlockNativeFullscreen]) return NO;
     return %orig;
+}
+
+%end
+%end
+
+%group PlaylistQueueCapture
+%hook YTIPlaylistPanelRenderer
+
+- (id)contentsArray {
+    id arr = %orig;
+    if ([arr isKindOfClass:[NSArray class]] && [(NSArray *)arr count] > 0) {
+        [[IVLCoverFlowManager shared] capturePlaylistPanel:self];
+    }
+    return arr;
 }
 
 %end
@@ -193,9 +208,11 @@ static UIImage *IVLMenuIcon(void) {
             [IVLSleepTimer shared];
             [[IVLScrobbler shared] start];
             [[IVLCoverFlowManager shared] start];
+            [[IVLHomeBarLyricsManager shared] start];
         });
         if (objc_getClass("YTPlayerViewController")) %init(Player);
         if (objc_getClass("YTMWatchViewController")) %init(WatchFullscreenBlock);
+        if (objc_getClass("YTIPlaylistPanelRenderer")) %init(PlaylistQueueCapture);
         if (objc_getClass("YTMNowPlayingViewController")) %init(NowPlaying);
         if (objc_getClass("YTMAvatarAccountView")) %init(AccountMenu);
     }
