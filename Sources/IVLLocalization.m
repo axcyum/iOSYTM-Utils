@@ -294,7 +294,7 @@ static NSDictionary<NSString *, NSString *> *IVLStringsEN(void) {
         @"discord_song_button": @"Song link button",
         @"discord_github_button": @"GitHub button",
         @"discord_github_url": @"GitHub URL",
-        @"footer_discord_display": @"Choose what appears after "Listening to". Buttons are visible to others.",
+        @"footer_discord_display": @"Choose what appears after \"Listening to\". Buttons are visible to others.",
         @"recognize": @"Recognize Song",
         @"recognize_listening": @"Listening…\nPoint your iPhone at the music",
         @"recognize_found": @"Found it",
