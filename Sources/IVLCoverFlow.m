@@ -6,6 +6,11 @@
 #import "IVLLocalization.h"
 #import <QuartzCore/QuartzCore.h>
 
+@interface IVLCoverFlowManager ()
+@property (nonatomic, copy) NSArray<NSDictionary *> *capturedQueue;
+@property (nonatomic, copy, nullable) NSString *capturedPlaylistID;
+@end
+
 static NSCache<NSString *, UIImage *> *IVLCFImageCache(void) {
     static NSCache *c;
     static dispatch_once_t once;
@@ -563,11 +568,6 @@ static NSArray<NSDictionary *> *IVLRotateQueueForTrack(NSArray<NSDictionary *> *
     NSRange head = NSMakeRange(0, (NSUInteger)matchIdx);
     return [[items subarrayWithRange:tail] arrayByAddingObjectsFromArray:[items subarrayWithRange:head]];
 }
-
-@interface IVLCoverFlowManager ()
-@property (nonatomic, copy) NSArray<NSDictionary *> *capturedQueue;
-@property (nonatomic, copy, nullable) NSString *capturedPlaylistID;
-@end
 
 #pragma mark - Queue loading
 
