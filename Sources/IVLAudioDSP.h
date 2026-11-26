@@ -12,7 +12,8 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)presentQuickSheetFrom:(UIViewController *)vc;
 /// In-place PCM processing hooks called from ObjC audio player hooks.
 + (void)processPCMBuffer:(nullable AVAudioPCMBuffer *)buffer;
-+ (void)processSampleBuffer:(nullable CMSampleBufferRef)sampleBuffer;
++ (nullable CMSampleBufferRef)createProcessedSampleBuffer:(nullable CMSampleBufferRef)sampleBuffer CF_RETURNS_RETAINED;
++ (void)resetDecoder;
 + (void)attachTapToPlayerItem:(nullable AVPlayerItem *)item;
 @end
 

@@ -478,7 +478,8 @@ static void IVLRebindImage(const struct mach_header *header, intptr_t slide) {
             case 4: pName = @"AVAudioPlayerNode"; break;
             case 5: pName = @"SampleBuf PCM"; break;
             case 6: pName = @"AVPlayerTap"; break;
-            case 7: pName = @"SampleBuf (encoded)"; break;
+            case 7: pName = @"SampleBuf (passthrough)"; break;
+            case 8: pName = @"SampleBuf DSP"; break;
             default: break;
         }
         return [NSString stringWithFormat:@"Active (%@)", pName];
@@ -494,26 +495,241 @@ static void IVLRebindImage(const struct mach_header *header, intptr_t slide) {
     }
 }
 
-+ (void)processSampleBuffer:(CMSampleBufferRef)sampleBuffer {
-    if (!sampleBuffer) return;
+#pragma mark - Real-time AudioConverter decoder for encoded CMSampleBuffer (AAC/Opus -> Float32 PCM -> DSP)
+
+typedef struct {
+    AudioConverterRef converter;
+    AudioStreamBasicDescription inASBD;
+    AudioStreamBasicDescription outASBD;
+    CMFormatDescriptionRef outFmt;
+    void *cookie;
+    size_t cookieSize;
+} IVLSampleDecoder;
+
+static IVLSampleDecoder gDecoder = {0};
+static pthread_mutex_t gDecoderLock = PTHREAD_MUTEX_INITIALIZER;
+
+typedef struct {
+    const uint8_t *bytes;
+    size_t byteLen;
+    AudioStreamPacketDescription *pktDescs;
+    UInt32 numPackets;
+    UInt32 consumedPackets;
+    AudioStreamPacketDescription fallbackDesc;
+} IVLConverterFeed;
+
+static OSStatus IVLConverterInputProc(AudioConverterRef inAudioConverter,
+                                      UInt32 *ioNumberDataPackets,
+                                      AudioBufferList *ioData,
+                                      AudioStreamPacketDescription **outDataPacketDescription,
+                                      void *inUserData) {
+    IVLConverterFeed *feed = (IVLConverterFeed *)inUserData;
+    if (!feed || feed->consumedPackets >= feed->numPackets) {
+        *ioNumberDataPackets = 0;
+        return noErr;
+    }
+    UInt32 remaining = feed->numPackets - feed->consumedPackets;
+    UInt32 give = (*ioNumberDataPackets < remaining) ? *ioNumberDataPackets : remaining;
+
+    if (feed->pktDescs) {
+        AudioStreamPacketDescription *startDesc = &feed->pktDescs[feed->consumedPackets];
+        ioData->mNumberBuffers = 1;
+        ioData->mBuffers[0].mData = (void *)feed->bytes;
+        ioData->mBuffers[0].mDataByteSize = (UInt32)feed->byteLen;
+        if (outDataPacketDescription) *outDataPacketDescription = startDesc;
+        feed->consumedPackets += give;
+        *ioNumberDataPackets = give;
+    } else {
+        ioData->mNumberBuffers = 1;
+        ioData->mBuffers[0].mData = (void *)feed->bytes;
+        ioData->mBuffers[0].mDataByteSize = (UInt32)feed->byteLen;
+        if (outDataPacketDescription) {
+            feed->fallbackDesc.mStartOffset = 0;
+            feed->fallbackDesc.mVariableFramesInPacket = 0;
+            feed->fallbackDesc.mDataByteSize = (UInt32)feed->byteLen;
+            *outDataPacketDescription = &feed->fallbackDesc;
+        }
+        feed->consumedPackets = feed->numPackets;
+        *ioNumberDataPackets = remaining;
+    }
+    return noErr;
+}
+
+static BOOL IVLEnsureDecoderLocked(const AudioStreamBasicDescription *inASBD, CMFormatDescriptionRef fmtDesc) {
+    size_t cSize = 0;
+    const void *cPtr = CMAudioFormatDescriptionGetMagicCookie(fmtDesc, &cSize);
+
+    BOOL sameASBD = (gDecoder.converter != NULL &&
+                     memcmp(&gDecoder.inASBD, inASBD, sizeof(AudioStreamBasicDescription)) == 0 &&
+                     gDecoder.cookieSize == cSize &&
+                     (cSize == 0 || (gDecoder.cookie && cPtr && memcmp(gDecoder.cookie, cPtr, cSize) == 0)));
+    if (sameASBD) return YES;
+
+    if (gDecoder.converter) { AudioConverterDispose(gDecoder.converter); gDecoder.converter = NULL; }
+    if (gDecoder.outFmt) { CFRelease(gDecoder.outFmt); gDecoder.outFmt = NULL; }
+    if (gDecoder.cookie) { free(gDecoder.cookie); gDecoder.cookie = NULL; gDecoder.cookieSize = 0; }
+
+    AudioStreamBasicDescription outASBD;
+    memset(&outASBD, 0, sizeof(outASBD));
+    outASBD.mSampleRate = inASBD->mSampleRate > 0 ? inASBD->mSampleRate : 44100.0;
+    outASBD.mFormatID = kAudioFormatLinearPCM;
+    outASBD.mFormatFlags = kLinearPCMFormatFlagIsFloat | kLinearPCMFormatFlagIsPacked;
+    outASBD.mBitsPerChannel = 32;
+    outASBD.mChannelsPerFrame = 2;
+    outASBD.mBytesPerFrame = 2 * sizeof(float);
+    outASBD.mFramesPerPacket = 1;
+    outASBD.mBytesPerPacket = outASBD.mBytesPerFrame;
+
+    AudioConverterRef conv = NULL;
+    if (AudioConverterNew(inASBD, &outASBD, &conv) != noErr || !conv) return NO;
+    if (cPtr && cSize > 0) {
+        AudioConverterSetProperty(conv, kAudioConverterDecompressionMagicCookie, (UInt32)cSize, cPtr);
+        gDecoder.cookie = malloc(cSize);
+        if (gDecoder.cookie) { memcpy(gDecoder.cookie, cPtr, cSize); gDecoder.cookieSize = cSize; }
+    }
+    CMFormatDescriptionRef outFmt = NULL;
+    if (CMAudioFormatDescriptionCreate(kCFAllocatorDefault, &outASBD, 0, NULL, 0, NULL, NULL, &outFmt) != noErr || !outFmt) {
+        AudioConverterDispose(conv);
+        return NO;
+    }
+
+    gDecoder.converter = conv;
+    gDecoder.inASBD = *inASBD;
+    gDecoder.outASBD = outASBD;
+    gDecoder.outFmt = outFmt;
+    return YES;
+}
+
++ (void)resetDecoder {
+    pthread_mutex_lock(&gDecoderLock);
+    if (gDecoder.converter) AudioConverterReset(gDecoder.converter);
+    gGlobalLPState = 0.0f;
+    pthread_mutex_unlock(&gDecoderLock);
+}
+
++ (CMSampleBufferRef)createProcessedSampleBuffer:(CMSampleBufferRef)sampleBuffer {
+    if (!sampleBuffer) return NULL;
     CMFormatDescriptionRef fmt = CMSampleBufferGetFormatDescription(sampleBuffer);
     const AudioStreamBasicDescription *asbd = fmt ? CMAudioFormatDescriptionGetStreamBasicDescription(fmt) : NULL;
-    if (!asbd) return;
-    if (asbd->mFormatID != kAudioFormatLinearPCM) {
+    if (!asbd) return NULL;
+
+    // Linear PCM path (in-place)
+    if (asbd->mFormatID == kAudioFormatLinearPCM) {
+        CMBlockBufferRef blockBuf = NULL;
+        AudioBufferList abl;
+        OSStatus st = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+            sampleBuffer, NULL, &abl, sizeof(abl), NULL, NULL,
+            kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment, &blockBuf);
+        if (st == noErr) {
+            UInt32 frames = (UInt32)CMSampleBufferGetNumSamples(sampleBuffer);
+            if (frames > 0) IVLProcessAudioBufferList(&abl, frames, &gGlobalLPState, 5);
+        }
+        if (blockBuf) CFRelease(blockBuf);
+        return NULL;
+    }
+
+    // Encoded audio path (AAC / HE-AAC / Opus): zero-cost passthrough when both Karaoke & Boost are OFF
+    BOOL kOn = atomic_load_explicit(&gKaraokeOn, memory_order_relaxed);
+    BOOL bOn = atomic_load_explicit(&gBoostOn, memory_order_relaxed);
+    if (!kOn && !bOn) {
         atomic_fetch_add_explicit(&gProcessedCalls, 1, memory_order_relaxed);
         atomic_store_explicit(&gActivePath, 7, memory_order_relaxed);
-        return;
+        return NULL;
     }
-    CMBlockBufferRef blockBuf = NULL;
-    AudioBufferList abl;
-    OSStatus st = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
-        sampleBuffer, NULL, &abl, sizeof(abl), NULL, NULL,
-        kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment, &blockBuf);
-    if (st == noErr) {
-        UInt32 frames = (UInt32)CMSampleBufferGetNumSamples(sampleBuffer);
-        if (frames > 0) IVLProcessAudioBufferList(&abl, frames, &gGlobalLPState, 5);
+
+    CMBlockBufferRef inBB = CMSampleBufferGetDataBuffer(sampleBuffer);
+    if (!inBB) return NULL;
+    size_t totalLen = CMBlockBufferGetDataLength(inBB);
+    if (totalLen == 0) return NULL;
+
+    uint8_t *rawBytes = (uint8_t *)malloc(totalLen);
+    if (!rawBytes) return NULL;
+    if (CMBlockBufferCopyDataBytes(inBB, 0, totalLen, rawBytes) != kCMBlockBufferNoErr) {
+        free(rawBytes);
+        return NULL;
     }
-    if (blockBuf) CFRelease(blockBuf);
+
+    CMItemCount numSamples = CMSampleBufferGetNumSamples(sampleBuffer);
+    size_t pdSize = 0;
+    AudioStreamPacketDescription *pktDescs = NULL;
+    UInt32 numPackets = (UInt32)MAX(1, numSamples);
+    if (CMSampleBufferGetAudioStreamPacketDescriptions(sampleBuffer, 0, NULL, &pdSize) == noErr && pdSize > 0) {
+        pktDescs = (AudioStreamPacketDescription *)malloc(pdSize);
+        if (pktDescs) {
+            if (CMSampleBufferGetAudioStreamPacketDescriptions(sampleBuffer, pdSize, pktDescs, NULL) == noErr) {
+                numPackets = (UInt32)(pdSize / sizeof(AudioStreamPacketDescription));
+            } else {
+                free(pktDescs);
+                pktDescs = NULL;
+            }
+        }
+    }
+
+    UInt32 framesPerPkt = asbd->mFramesPerPacket > 0 ? asbd->mFramesPerPacket : 2048;
+    UInt32 maxOutFrames = MAX((UInt32)numSamples, numPackets * framesPerPkt) + 2048;
+    size_t outBytes = (size_t)maxOutFrames * 2 * sizeof(float);
+    float *pcmOut = (float *)malloc(outBytes);
+    if (!pcmOut) {
+        free(rawBytes);
+        if (pktDescs) free(pktDescs);
+        return NULL;
+    }
+
+    UInt32 totalDecoded = 0;
+    CMFormatDescriptionRef outFmtRetained = NULL;
+
+    pthread_mutex_lock(&gDecoderLock);
+    if (IVLEnsureDecoderLocked(asbd, fmt)) {
+        IVLConverterFeed feed = { rawBytes, totalLen, pktDescs, numPackets, 0 };
+        while (feed.consumedPackets < feed.numPackets && totalDecoded < maxOutFrames) {
+            UInt32 want = maxOutFrames - totalDecoded;
+            AudioBufferList outABL;
+            outABL.mNumberBuffers = 1;
+            outABL.mBuffers[0].mNumberChannels = 2;
+            outABL.mBuffers[0].mData = pcmOut + (totalDecoded * 2);
+            outABL.mBuffers[0].mDataByteSize = want * 2 * sizeof(float);
+            OSStatus st = AudioConverterFillComplexBuffer(gDecoder.converter, IVLConverterInputProc, &feed, &want, &outABL, NULL);
+            if (want > 0) totalDecoded += want;
+            if (st != noErr || want == 0) break;
+        }
+        if (totalDecoded > 0 && gDecoder.outFmt) {
+            AudioBufferList dspABL;
+            dspABL.mNumberBuffers = 1;
+            dspABL.mBuffers[0].mNumberChannels = 2;
+            dspABL.mBuffers[0].mData = pcmOut;
+            dspABL.mBuffers[0].mDataByteSize = totalDecoded * 2 * sizeof(float);
+            IVLProcessAudioBufferList(&dspABL, totalDecoded, &gGlobalLPState, 8);
+            outFmtRetained = (CMFormatDescriptionRef)CFRetain(gDecoder.outFmt);
+        }
+    }
+    pthread_mutex_unlock(&gDecoderLock);
+
+    free(rawBytes);
+    if (pktDescs) free(pktDescs);
+
+    if (totalDecoded == 0 || !outFmtRetained) {
+        free(pcmOut);
+        if (outFmtRetained) CFRelease(outFmtRetained);
+        return NULL;
+    }
+
+    size_t finalBytes = (size_t)totalDecoded * 2 * sizeof(float);
+    CMBlockBufferRef outBB = NULL;
+    OSStatus bbSt = CMBlockBufferCreateWithMemoryBlock(kCFAllocatorDefault, pcmOut, finalBytes, kCFAllocatorMalloc, NULL, 0, finalBytes, 0, &outBB);
+    if (bbSt != kCMBlockBufferNoErr || !outBB) {
+        free(pcmOut);
+        CFRelease(outFmtRetained);
+        return NULL;
+    }
+
+    CMTime pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
+
+    CMSampleBufferRef outSB = NULL;
+    OSStatus sbSt = CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+        kCFAllocatorDefault, outBB, outFmtRetained, totalDecoded, pts, NULL, &outSB);
+    CFRelease(outBB);
+    CFRelease(outFmtRetained);
+    return (sbSt == noErr) ? outSB : NULL;
 }
 
 static void IVLTapProcess(MTAudioProcessingTapRef tap,

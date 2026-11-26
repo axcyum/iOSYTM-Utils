@@ -117,7 +117,22 @@ static const void *kIVLButtonKey = &kIVLButtonKey;
 %hook AVSampleBufferAudioRenderer
 
 - (void)enqueueSampleBuffer:(CMSampleBufferRef)sampleBuffer {
-    [IVLAudioDSP processSampleBuffer:sampleBuffer];
+    CMSampleBufferRef processed = [IVLAudioDSP createProcessedSampleBuffer:sampleBuffer];
+    if (processed) {
+        %orig(processed);
+        CFRelease(processed);
+    } else {
+        %orig(sampleBuffer);
+    }
+}
+
+- (void)flush {
+    [IVLAudioDSP resetDecoder];
+    %orig;
+}
+
+- (void)flushFromSourceTime:(CMTime)time completionHandler:(id)completionHandler {
+    [IVLAudioDSP resetDecoder];
     %orig;
 }
 
