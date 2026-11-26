@@ -7,6 +7,7 @@
 #import "IVLExtras.h"
 #import "IVLPlayerPanel.h"
 #import "IVLRecognizer.h"
+#import "IVLAudioDSP.h"
 #import "IVLProviderPickerViewController.h"
 #import "IVLSettingsViewController.h"
 #import "IVLRemoteControl.h"
@@ -789,6 +790,10 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
                                         identifier:nil
                                            handler:^(UIAction *a) { [ws toggleShowPlayer]; }]];
     }
+    [items addObject:[UIAction actionWithTitle:IVLLoc(@"sec_audio") image:[UIImage systemImageNamed:@"music.mic"] identifier:nil handler:^(UIAction *a) {
+        __strong typeof(ws) ss = ws;
+        if (ss) [IVLAudioDSP presentQuickSheetFrom:ss];
+    }]];
     [items addObject:[UIAction actionWithTitle:IVLLoc(@"recognize") image:[UIImage systemImageNamed:@"shazam.logo"] identifier:nil handler:^(UIAction *a) { [ws openRecognizer]; }]];
     NSString *sleep = [IVLSleepTimer shared].active ? [NSString stringWithFormat:@"%@（%@）", IVLLoc(@"sleep_timer"), [[IVLSleepTimer shared] statusText]] : IVLLoc(@"sleep_timer");
     [items addObject:[UIAction actionWithTitle:sleep image:[UIImage systemImageNamed:@"moon.zzz"] identifier:nil handler:^(UIAction *a) { [ws openSleepTimer]; }]];

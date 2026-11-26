@@ -16,6 +16,8 @@
 #import "IVLSettings.h"
 #import "IVLLocalization.h"
 #import "IVLLyricCell.h"
+#import "IVLLyricsViewController.h"
+#import "IVLAudioDSP.h"
 #import <AVKit/AVKit.h>
 #import <AVFoundation/AVFoundation.h>
 #import <MediaPlayer/MediaPlayer.h>
@@ -958,6 +960,10 @@ static NSString *IVLClock(double s) {
             if (ws.onOpenProviderPicker) ws.onOpenProviderPicker();
         }]];
     }
+    [menuItems addObject:[UIAction actionWithTitle:IVLLoc(@"sec_audio") image:[UIImage systemImageNamed:@"music.mic"] identifier:nil handler:^(UIAction *a) {
+        UIViewController *top = IVLTopViewController();
+        if (top) [IVLAudioDSP presentQuickSheetFrom:top];
+    }]];
     _amTransBtn.menu = [UIMenu menuWithTitle:@"" children:menuItems];
 }
 

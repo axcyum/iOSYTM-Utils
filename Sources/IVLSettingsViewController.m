@@ -10,6 +10,7 @@
 #import "IVLExtras.h"
 #import "IVLScrobbler.h"
 #import "IVLRecognizer.h"
+#import "IVLAudioDSP.h"
 
 #ifndef IVL_VERSION
 #define IVL_VERSION "1.1.1"
@@ -519,9 +520,13 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
     bLvl.min = 100; bLvl.max = 250; bLvl.step = 10;
     bLvl.format = ^NSString *(double v) { return [NSString stringWithFormat:@"%.0f%%", v]; };
 
+    IVLRow *st = [IVLRow type:IVLRowInfo key:@"" title:IVLLoc(@"status")];
+    st.detail = ^NSString *{ return [IVLAudioDSP statusText]; };
+
     return @[
         [IVLSection title:IVLLoc(@"karaoke_mode") footer:IVLLoc(@"footer_karaoke_mode") rows:@[kOn, kStr]],
         [IVLSection title:IVLLoc(@"volume_boost") footer:IVLLoc(@"footer_volume_boost") rows:@[bOn, bLvl]],
+        [IVLSection title:nil footer:nil rows:@[st]],
     ];
 }
 
