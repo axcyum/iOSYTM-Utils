@@ -12,7 +12,7 @@
 #import "IVLRecognizer.h"
 
 #ifndef IVL_VERSION
-#define IVL_VERSION "1.1.0"
+#define IVL_VERSION "1.1.1"
 #endif
 
 #ifndef IVL_COMMIT

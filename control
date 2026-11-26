@@ -1,6 +1,6 @@
 Package: com.ivlis.ivlyricsytm
 Name: ivLyrics for YouTube Music
-Version: 1.1.0
+Version: 1.1.1
 Architecture: iphoneos-arm
 Description: Synced lyrics viewer with translation and pronunciation for YouTube Music (port of ivLyrics).
 Maintainer: ivLyricsYTM
