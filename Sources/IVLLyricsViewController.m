@@ -756,28 +756,42 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
 - (void)refreshMoreMenu {
     IVLPlaybackManager *m = [IVLPlaybackManager shared];
     __weak typeof(self) ws = self;
-    NSMutableArray *items = [NSMutableArray array];
-    [items addObject:[UIAction actionWithTitle:IVLLoc(@"choose_provider") image:[UIImage systemImageNamed:@"list.bullet.rectangle"] identifier:nil handler:^(UIAction *a) { [ws openProviderPicker]; }]];
-    [items addObject:[UIAction actionWithTitle:IVLLoc(@"search_lyrics") image:[UIImage systemImageNamed:@"magnifyingglass"] identifier:nil handler:^(UIAction *a) { [ws openSearch]; }]];
-    [items addObject:[UIAction actionWithTitle:IVLLoc(@"reload") image:[UIImage systemImageNamed:@"arrow.clockwise"] identifier:nil handler:^(UIAction *a) { [ws reload]; }]];
-    if (m.lyrics) {
-        [items addObject:[UIAction actionWithTitle:IVLLoc(@"copy_lyrics") image:[UIImage systemImageNamed:@"doc.on.doc"] identifier:nil handler:^(UIAction *a) {
-            UIPasteboard.generalPasteboard.string = [[IVLPlaybackManager shared].lyrics plainText];
-            [ws showToast:IVLLoc(@"copied")];
-        }]];
+
+    // 1. Top compact 3-tile bar (Apple Music / iOS 17+ HIG style)
+    UIAction *audioAct = [UIAction actionWithTitle:IVLLoc(@"menu_audio") image:[UIImage systemImageNamed:@"slider.horizontal.3"] identifier:nil handler:^(UIAction *a) {
+        __strong typeof(ws) ss = ws;
+        if (ss) [IVLAudioDSP presentQuickSheetFrom:ss];
+    }];
+    UIAction *tvAct = [UIAction actionWithTitle:IVLLoc(@"menu_tv") image:[UIImage systemImageNamed:@"airplayvideo"] identifier:nil handler:^(UIAction *a) {
+        __strong typeof(ws) ss = ws;
+        if (ss) [IVLExternalDisplayManager presentQuickSheetFrom:ss];
+    }];
+    if ([IVLExternalDisplayManager isConnected]) tvAct.state = UIMenuElementStateOn;
+
+    UIAction *timerAct = [UIAction actionWithTitle:IVLLoc(@"menu_timer") image:[UIImage systemImageNamed:@"moon.zzz"] identifier:nil handler:^(UIAction *a) {
+        [ws openSleepTimer];
+    }];
+    if ([IVLSleepTimer shared].active) timerAct.state = UIMenuElementStateOn;
+
+    UIMenu *quickGrid = [UIMenu menuWithTitle:@"" image:nil identifier:nil options:UIMenuOptionsDisplayInline children:@[audioAct, tvAct, timerAct]];
+    if (@available(iOS 16.0, *)) {
+        quickGrid.preferredElementSize = UIMenuElementSizeMedium;
     }
+
+    // 2. View switch section
+    NSMutableArray<UIMenuElement *> *viewChildren = [NSMutableArray array];
     BOOL useAMLyrics = [IVLSettings boolForKey:IVLKeyImmersivePlayer] || [IVLSettings boolForKey:IVLKeyAMLyrics];
     if (_showPlayer && useAMLyrics) {
         BOOL inAMLyrics = _panel.lyricsMode;
-        [items addObject:[UIAction actionWithTitle:(inAMLyrics ? IVLLoc(@"show_player") : IVLLoc(@"show_lyrics"))
-                                             image:[UIImage systemImageNamed:(inAMLyrics ? @"play.square" : @"quote.bubble")]
-                                        identifier:nil
-                                           handler:^(UIAction *a) { __strong typeof(ws) ss = ws; if (ss) [ss->_panel toggleLyricsMode]; }]];
+        [viewChildren addObject:[UIAction actionWithTitle:(inAMLyrics ? IVLLoc(@"menu_player") : IVLLoc(@"menu_lyrics"))
+                                                    image:[UIImage systemImageNamed:(inAMLyrics ? @"play.square" : @"quote.bubble")]
+                                               identifier:nil
+                                                  handler:^(UIAction *a) { __strong typeof(ws) ss = ws; if (ss) [ss->_panel toggleLyricsMode]; }]];
         if (![IVLSettings boolForKey:IVLKeyImmersivePlayer]) {
-            [items addObject:[UIAction actionWithTitle:IVLLoc(@"open_classic_lyrics")
-                                                 image:[UIImage systemImageNamed:@"text.justify.left"]
-                                            identifier:nil
-                                               handler:^(UIAction *a) {
+            [viewChildren addObject:[UIAction actionWithTitle:IVLLoc(@"menu_classic")
+                                                        image:[UIImage systemImageNamed:@"text.justify.left"]
+                                                   identifier:nil
+                                                      handler:^(UIAction *a) {
                 __strong typeof(ws) ss = ws;
                 if (ss) {
                     [ss->_panel setLyricsMode:NO animated:NO];
@@ -786,31 +800,39 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
             }]];
         }
     } else {
-        [items addObject:[UIAction actionWithTitle:(_showPlayer ? IVLLoc(@"show_lyrics") : IVLLoc(@"show_player"))
-                                             image:[UIImage systemImageNamed:(_showPlayer ? @"quote.bubble" : @"play.square")]
-                                        identifier:nil
-                                           handler:^(UIAction *a) { [ws toggleShowPlayer]; }]];
+        [viewChildren addObject:[UIAction actionWithTitle:(_showPlayer ? IVLLoc(@"menu_lyrics") : IVLLoc(@"menu_player"))
+                                                    image:[UIImage systemImageNamed:(_showPlayer ? @"quote.bubble" : @"play.square")]
+                                               identifier:nil
+                                                  handler:^(UIAction *a) { [ws toggleShowPlayer]; }]];
     }
-    [items addObject:[UIAction actionWithTitle:IVLLoc(@"sec_audio") image:[UIImage systemImageNamed:@"music.mic"] identifier:nil handler:^(UIAction *a) {
-        __strong typeof(ws) ss = ws;
-        if (ss) [IVLAudioDSP presentQuickSheetFrom:ss];
-    }]];
-    [items addObject:[UIAction actionWithTitle:IVLLoc(@"external_display") image:[UIImage systemImageNamed:@"airplayvideo"] identifier:nil handler:^(UIAction *a) {
-        __strong typeof(ws) ss = ws;
-        if (ss) [IVLExternalDisplayManager presentQuickSheetFrom:ss];
-    }]];
-    [items addObject:[UIAction actionWithTitle:IVLLoc(@"recognize") image:[UIImage systemImageNamed:@"shazam.logo"] identifier:nil handler:^(UIAction *a) { [ws openRecognizer]; }]];
-    NSString *sleep = [IVLSleepTimer shared].active ? [NSString stringWithFormat:@"%@（%@）", IVLLoc(@"sleep_timer"), [[IVLSleepTimer shared] statusText]] : IVLLoc(@"sleep_timer");
-    [items addObject:[UIAction actionWithTitle:sleep image:[UIImage systemImageNamed:@"moon.zzz"] identifier:nil handler:^(UIAction *a) { [ws openSleepTimer]; }]];
-    [items addObject:[UIAction actionWithTitle:IVLLoc(@"settings") image:[UIImage systemImageNamed:@"gearshape"] identifier:nil handler:^(UIAction *a) { [ws openSettings]; }]];
+    UIMenu *viewSection = [UIMenu menuWithTitle:@"" image:nil identifier:nil options:UIMenuOptionsDisplayInline children:viewChildren];
+
+    // 3. Lyrics actions section (active provider shown cleanly as subtitle)
+    NSMutableArray<UIMenuElement *> *lyricsChildren = [NSMutableArray array];
+    UIAction *srcAct = [UIAction actionWithTitle:IVLLoc(@"menu_source") image:[UIImage systemImageNamed:@"globe"] identifier:nil handler:^(UIAction *a) {
+        [ws openProviderPicker];
+    }];
     if (m.lyrics.source.length) {
-        NSString *info = [NSString stringWithFormat:IVLLoc(@"source_fmt"), m.lyrics.source,
-                          m.lyrics.karaoke ? IVLLoc(@"sync_word") : (m.lyrics.synced ? IVLLoc(@"sync_line") : IVLLoc(@"sync_none"))];
-        UIAction *src = [UIAction actionWithTitle:info image:[UIImage systemImageNamed:@"info.circle"] identifier:nil handler:^(UIAction *a) {}];
-        src.attributes = UIMenuElementAttributesDisabled;
-        [items addObject:[UIMenu menuWithTitle:@"" image:nil identifier:nil options:UIMenuOptionsDisplayInline children:@[src]]];
+        NSString *syncKind = m.lyrics.karaoke ? IVLLoc(@"sync_word") : (m.lyrics.synced ? IVLLoc(@"sync_line") : IVLLoc(@"sync_none"));
+        srcAct.subtitle = [NSString stringWithFormat:@"%@ · %@", m.lyrics.source, syncKind];
     }
-    _moreButton.menu = [UIMenu menuWithTitle:@"" children:items];
+    [lyricsChildren addObject:srcAct];
+    [lyricsChildren addObject:[UIAction actionWithTitle:IVLLoc(@"menu_search") image:[UIImage systemImageNamed:@"magnifyingglass"] identifier:nil handler:^(UIAction *a) { [ws openSearch]; }]];
+    [lyricsChildren addObject:[UIAction actionWithTitle:IVLLoc(@"menu_reload") image:[UIImage systemImageNamed:@"arrow.clockwise"] identifier:nil handler:^(UIAction *a) { [ws reload]; }]];
+    if (m.lyrics) {
+        [lyricsChildren addObject:[UIAction actionWithTitle:IVLLoc(@"menu_copy") image:[UIImage systemImageNamed:@"doc.on.doc"] identifier:nil handler:^(UIAction *a) {
+            UIPasteboard.generalPasteboard.string = [[IVLPlaybackManager shared].lyrics plainText];
+            [ws showToast:IVLLoc(@"copied")];
+        }]];
+    }
+    UIMenu *lyricsSection = [UIMenu menuWithTitle:@"" image:nil identifier:nil options:UIMenuOptionsDisplayInline children:lyricsChildren];
+
+    // 4. Tools & Settings section
+    UIAction *shazamAct = [UIAction actionWithTitle:IVLLoc(@"menu_shazam") image:[UIImage systemImageNamed:@"shazam.logo"] identifier:nil handler:^(UIAction *a) { [ws openRecognizer]; }];
+    UIAction *settingsAct = [UIAction actionWithTitle:IVLLoc(@"settings") image:[UIImage systemImageNamed:@"gearshape"] identifier:nil handler:^(UIAction *a) { [ws openSettings]; }];
+    UIMenu *sysSection = [UIMenu menuWithTitle:@"" image:nil identifier:nil options:UIMenuOptionsDisplayInline children:@[shazamAct, settingsAct]];
+
+    _moreButton.menu = [UIMenu menuWithTitle:@"" children:@[quickGrid, viewSection, lyricsSection, sysSection]];
     _panel.moreMenu = _moreButton.menu;
 }
 

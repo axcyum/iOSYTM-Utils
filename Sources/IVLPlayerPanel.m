@@ -953,23 +953,32 @@ static NSString *IVLClock(double s) {
         pa.state = ([o[1] integerValue] == pron) ? UIMenuElementStateOn : UIMenuElementStateOff;
         [pronChildren addObject:pa];
     }
-    UIMenu *pronMenu = [UIMenu menuWithTitle:IVLLoc(@"pronunciation") image:[UIImage systemImageNamed:@"textformat.abc"] identifier:nil options:UIMenuOptionsDisplayInline children:pronChildren];
+    UIMenu *pronMenu = [UIMenu menuWithTitle:IVLLoc(@"pronunciation") image:[UIImage systemImageNamed:@"textformat.abc"] identifier:nil options:0 children:pronChildren];
 
-    NSMutableArray *menuItems = [NSMutableArray arrayWithObjects:trAct, pronMenu, nil];
-    if (self.onOpenProviderPicker) {
-        [menuItems addObject:[UIAction actionWithTitle:IVLLoc(@"choose_provider") image:[UIImage systemImageNamed:@"list.bullet.rectangle"] identifier:nil handler:^(UIAction *a) {
-            if (ws.onOpenProviderPicker) ws.onOpenProviderPicker();
-        }]];
-    }
-    [menuItems addObject:[UIAction actionWithTitle:IVLLoc(@"sec_audio") image:[UIImage systemImageNamed:@"music.mic"] identifier:nil handler:^(UIAction *a) {
+    UIAction *audioAct = [UIAction actionWithTitle:IVLLoc(@"menu_audio") image:[UIImage systemImageNamed:@"slider.horizontal.3"] identifier:nil handler:^(UIAction *a) {
         UIViewController *top = IVLTopViewController();
         if (top) [IVLAudioDSP presentQuickSheetFrom:top];
-    }]];
-    [menuItems addObject:[UIAction actionWithTitle:IVLLoc(@"external_display") image:[UIImage systemImageNamed:@"airplayvideo"] identifier:nil handler:^(UIAction *a) {
+    }];
+    UIAction *tvAct = [UIAction actionWithTitle:IVLLoc(@"menu_tv") image:[UIImage systemImageNamed:@"airplayvideo"] identifier:nil handler:^(UIAction *a) {
         UIViewController *top = IVLTopViewController();
         if (top) [IVLExternalDisplayManager presentQuickSheetFrom:top];
-    }]];
-    _amTransBtn.menu = [UIMenu menuWithTitle:@"" children:menuItems];
+    }];
+    UIMenu *quickGrid = [UIMenu menuWithTitle:@"" image:nil identifier:nil options:UIMenuOptionsDisplayInline children:@[audioAct, tvAct]];
+    if (@available(iOS 16.0, *)) {
+        quickGrid.preferredElementSize = UIMenuElementSizeMedium;
+    }
+
+    NSMutableArray *langItems = [NSMutableArray arrayWithObjects:trAct, pronMenu, nil];
+    if (self.onOpenProviderPicker) {
+        UIAction *srcAct = [UIAction actionWithTitle:IVLLoc(@"menu_source") image:[UIImage systemImageNamed:@"globe"] identifier:nil handler:^(UIAction *a) {
+            if (ws.onOpenProviderPicker) ws.onOpenProviderPicker();
+        }];
+        NSString *srcName = [IVLPlaybackManager shared].lyrics.source;
+        if (srcName.length) srcAct.subtitle = srcName;
+        [langItems addObject:srcAct];
+    }
+    UIMenu *langSection = [UIMenu menuWithTitle:@"" image:nil identifier:nil options:UIMenuOptionsDisplayInline children:langItems];
+    _amTransBtn.menu = [UIMenu menuWithTitle:@"" children:@[quickGrid, langSection]];
 }
 
 - (void)reloadAMLyrics {

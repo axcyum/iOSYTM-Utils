@@ -10,6 +10,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)start;
 + (NSString *)statusText;
 + (void)presentQuickSheetFrom:(UIViewController *)vc;
++ (UIViewController *)createSettingsPageController;
 
 /// Renderer volume tracking & amplification hooks
 + (void)registerRenderer:(nullable id)renderer;

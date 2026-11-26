@@ -4,9 +4,10 @@
 
 # iOS YTMusic Utilities
 
-**iOS 版 YouTube Music のためのオールインワン歌詞・プレイヤー拡張ユーティリティ**
+**iOS 版 YouTube Music のためのオールインワン歌詞・オーディオ DSP・プレイヤー拡張ユーティリティ**
 
 [![Build](https://img.shields.io/github/actions/workflow/status/axcyum/iOSYTM-Utils/build.yml?branch=main&style=flat-square&label=Build&color=FF2D55)](https://github.com/axcyum/iOSYTM-Utils/actions/workflows/build.yml)
+![Version](https://img.shields.io/badge/Version-v1.2.0-FF375F?style=flat-square)
 ![Platform](https://img.shields.io/badge/Platform-iOS%2018%2B-1C1C1E?style=flat-square&logo=apple&logoColor=white)
 ![Injection](https://img.shields.io/badge/Works%20With-Sideload%20%C2%B7%20LiveContainer%20%C2%B7%20Jailbreak-2C2C2E?style=flat-square)
 [![License](https://img.shields.io/badge/License-GPL--3.0-FF3B30?style=flat-square)](LICENSE)
@@ -21,17 +22,18 @@
 
 ## 概要
 
-**iOSYTM-Utils**（`ivLyricsYTM.dylib`）は、Spicetify 向け歌詞拡張 **[ivLyrics](https://github.com/ivLis-Studio/ivLyrics)** をベースに、スマートフォンの片手操作に合わせて UI を一から再設計した iOS 版 YouTube Music 向け拡張 dylib です。
+**iOSYTM-Utils**（`ivLyricsYTM.dylib`）は、Spicetify 向け歌詞拡張 **[ivLyrics](https://github.com/ivLis-Studio/ivLyrics)** をベースに、Apple Human Interface Guidelines に沿った片手操作 UI・リアルタイム音声 DSP・外部ディスプレイ投影を統合した iOS 版 YouTube Music 向け拡張 dylib です。
 
-さらに以下のプロジェクト・機能を 1 つの設定画面へシームレスに統合しています。
+さらに以下のプロジェクト・機能を 1 つのネイティブ設定画面およびクイックメニューへシームレスに統合しています。
 
 - **[LockLyrics](https://github.com/axcyum/LockLyrics)** — ロック画面・コントロールセンターへのライブ歌詞描画
 - **[YTMusic-iOS-Presence](https://github.com/axcyum/YTMusic-iOS-Presence)** — 公式 SDK ベースの Discord Rich Presence 連携
+- **リアルタイム・オンデバイス Audio DSP** — カスタム 6 バンド EQ、ボーカル除去（カラオケ）、最大 300% の音量ブースト
+- **TV・AirPlay フルスクリーン歌詞ステージ** — HDMI / 画面ミラーリング向けの Apple TV 風 16:9 ライブ歌詞表示
 - **[SimpMusic](https://github.com/maxrave-dev/SimpMusic) インスパイア機能** — Apple Music 風イマーシブプレイヤー、Scrobble、楽曲認識、再生統計、WebNowPlaying 連携
 
 > [!IMPORTANT]
-> **クリーンポリシー**：本 Tweak は視聴体験・歌詞表示・外部サービス連携の向上のみを目的としています。**広告ブロック、YouTube Premium 機能の解放、音源ダウンロード等の制限回避機能は一切含みません。**
-> 再生状態とメタデータの取得フックのみを利用しています。
+> **クリーンポリシー**：本 Tweak は視聴体験・歌詞表示・音質カスタマイズ・外部サービス連携の向上のみを目的としています。**広告ブロック、YouTube Premium 機能の解放、音源ダウンロード等の制限回避機能は一切含みません。**
 
 ---
 
@@ -53,7 +55,7 @@
   <tr>
     <td align="center"><sub><b>内部プレイヤー</b><br>アンビエント背景・ミニ歌詞・AirPods 動的表示</sub></td>
     <td align="center"><sub><b>Apple Music 風 歌詞表示（試験的）</b><br>光学ブラー・リアルタイム翻訳＆発音表記</sub></td>
-    <td align="center"><sub><b>歌詞ソースと優先順</b><br>7 プロバイダーの並列検索・ドラッグ並び替え</sub></td>
+    <td align="center"><sub><b>歌詞ソースと優先順</b><br>11 系統の並列検索・ドラッグ並び替え</sub></td>
   </tr>
 </table>
 </div>
@@ -63,12 +65,12 @@
 ## 主な機能
 
 ### 1. フルスクリーン歌詞 & カラオケ同期
-- **単語単位のカラオケ描画**：TTML（Unison）や拡張 LRC のタイムスタンプに基づき、歌っている文字まで滑らかにハイライト。間奏アニメーション（`• • •`）やデュエット曲のパート振り分け（2 人目を右寄せ）にも対応。
-- **片手・タッチ最適化 UX**：
-  - **タップ**で該当箇所へシーク、**ピンチ操作**で文字サイズを自在に調整。
-  - **行の長押し**で「ここから再生」「この行に同期を合わせる」「テキストをコピー」「**歌詞カードの画像共有**」を実行。
-  - 親指の届く下部ツールバーに **翻訳 / 発音 / 文字サイズ / 同期補正（曲ごとに `±0.1s`・`±0.5s`） / 設定** を集約。
-- **フローティング ミニ歌詞ボタン**：再生画面上の好きな位置へドラッグ配置でき、ボタン内に現在の歌詞 1 行をリアルタイム表示（タップで歌詞画面、長押しで設定）。
+- **単語・文字単位のカラオケ描画**：TTML（Unison / SpicyLyrics）、プチリリ（`<wsy>` 文字同期）、拡張 LRC のタイムスタンプに基づき、歌っている箇所まで滑らかにハイライト。間奏アニメーション（`• • •`）やデュエット曲のパート振り分けにも対応。
+- **Apple HIG 準拠のクイックメニュー & 片手 UX**：
+  - `•••` メニュー上部に **オーディオ / TV出力 / タイマー** の 3 タイル・クイックバーを配置し、再生中でもワンタップでハーフシートを呼び出し可能。
+  - **タップ**で該当箇所へシーク、**ピンチ操作**で文字サイズ調整、**行の長押し**で「ここから再生」「同期補正」「コピー」「**歌詞カードの画像共有**」を実行。
+  - 下部ツールバーに **翻訳 / 発音 / 文字サイズ / 同期補正（曲ごとに `±0.1s`・`±0.5s`） / メニュー** を集約。
+- **フローティング ミニ歌詞ボタン & ホーム下部ミニ歌詞バー（試験的）**：再生画面上の好きな位置へドラッグ配置できるミニ歌詞ピルに加え、ホーム画面のミニプレイヤー直下に現在の歌詞を表示するスリムバーも選択可能。
 
 ### 2. リアルタイム翻訳 & 完全オンデバイス発音表記
 - **キー不要の歌詞翻訳**：Google 翻訳エンドポイントを利用し、API キー設定なしですぐに多言語翻訳を表示。
@@ -79,37 +81,47 @@
   - **その他非ラテン文字**：キリル文字・タイ文字などをラテン文字へ転写
 - **多言語 UI 対応**：日本語 / English / 한국어。
 
-### 3. 内部プレイヤーシート & ロック画面歌詞
-- **Now Playing プレイヤーシート**：歌詞画面のヘッダージャケットをタップ（または既定画面に設定）すると、アンビエントなカラーメッシュ背景の内部プレイヤーに切り替わります。
-  - **標準モード（既定）**：曲は `1:1` の角丸ジャケット、動画は `16:9` サムネイルとして端正に表示（タッチ中に膨らむノブレスの 6pt カプセル型シークバー＆音量バー、スプリング応答のフレームレス操作ボタン、AirPlay・キュー・スリープタイマーバッジ搭載）。
-  - **Apple Music 風フル画面表示（試験的）**：設定から有効化すると、ステータスバー裏まで広がるフルブリードのアートワークが段階的ブラーで背景へ溶け込む Apple Music (v27) スタイルに切り替わります。
-- **ロック画面・コントロールセンター歌詞**（LockLyrics 統合）：
-  - ジャケット領域に再生中の歌詞（および翻訳・発音）をライブ描画。
-  - スライド＋フェードによる滑らかな行切り替え、単語カラオケ塗り、ロック画面の描画遅延を補正する「先読み時間」調整に対応。
-- **テーマカスタマイズ**：アートワークぼかし / 動的カラーメッシュ / 単色 / 有機 EL 向けピュアブラックの 4 背景に加え、HEX カラーコードでアクセント色・背景色を指定可能。
+### 3. リアルタイム・オンデバイス Audio DSP（EQ・カラオケ・音量ブースト）
+YouTube Music の圧縮オーディオストリーム（Opus / AAC）を端末内の `AudioConverter` でリアルタイム展開し、Float32 ステレオ PCM 上で直接エフェクト処理を行います（すべて OFF のときは負荷ゼロでパススルー）。
+- **カスタム 6 バンド・イコライザー**：`60Hz`（ローシェルフ）/ `150Hz` / `400Hz` / `1kHz` / `2.4kHz` / `12kHz`（ハイシェルフ）の ±12 dB パラメトリック/グラフィック EQ。周波数カーブを直接タッチ＆ドラッグして自在に調整できるほか、**フラット / 低音強調 / 高音強調 / ボーカル / ロック / アコースティック** のプリセットを搭載（ダブルタップで単一バンドを 0 dB にリセット）。
+- **カラオケモード（リアルタイム・ボーカル除去）**：低音域（キック・ベース）と高音域（ハイハット・空気感）を保持したまま、中央定位のボーカル帯域のみを端末内でリアルタイム除去（0〜100% で強度調整可能）。
+- **音量ブースト（最大 300%）**：YouTube 側のラウドネス正規化による減衰を解除しつつ、`tanh` ソフトクリッパー保護付きで音割れを防ぎながら最大 300% まで増幅。
 
-### 4. 外部サービス連携 & 便利ツール
-- **Discord Rich Presence**（YTMusic-iOS-Presence 統合）：再生中の曲名・アーティスト・残り時間・カバー画像に加え、「YouTube Music で聴く」リンクボタンや GitHub ボタンをアクティビティに表示。カスタム表示名や更新間隔（3〜60 秒）も設定画面から変更でき、フレームワーク注入不要の `dlopen` 方式により **LiveContainer でもそのまま動作**します。
-- **WebNowPlaying（LAN 連携）**：同一 LAN 内の PC アダプター（[WebNowPlaying-Rainmeter](https://github.com/keifufu/WebNowPlaying-Rainmeter) 等、rev legacy / 1 / 2 / 3）へ曲情報・ジャケット・再生位置を送信し、PC 側からの再生・一時停止・スキップ・シーク操作にも対応。
-- **Scrobble（再生記録）**：**Last.fm** および **ListenBrainz** に対応。認証情報は iOS Keychain に安全に保存され、オフライン時は永続キューから自動再送します。
-- **周囲の曲を認識（ShazamKit）**：流れている音楽を Apple の ShazamKit で認識し、そのまま YouTube Music アプリ内で開きます。
-- **ローカル再生統計 & スリープタイマー**：端末内完結の再生統計（7 日 / 30 日 / 全期間、時間帯グラフ、よく聴く曲・アーティスト）と、分数指定または「この曲の終わりで停止」を選べるスリープタイマーを搭載。
+### 4. TV・AirPlay フルスクリーン表示 & プレイヤー外観
+- **HDMI / AirPlay 16:9 歌詞ステージ**：
+  - HDMI アダプタ接続や画面ミラーリング時に、ジャケット・プログレスバー・単語同期カラオケ歌詞を配した Apple TV 風の 16:9 フルスクリーンステージを外部ディスプレイへ出力。通常ミラーリング環境向けに端末側を横 16:9 ステージ化するモード（回転ロック中でも自動横向き）や AirPlay 出力先ピッカーも同梱。
+  - **スマート中央寄せアニメーション**：歌詞が存在しない楽曲ではジャケットと曲情報・プログレスバーがスプリングアニメーションで画面中央へ美しく移動し、次の曲に切り替わると自動で左カラムへ戻って「歌詞を探しています…」を表示します。
+- **内部プレイヤーシート & 試験的 UI モード**：
+  - **標準モード（既定）**：曲は `1:1` 角丸ジャケット、動画は `16:9` サムネイルで端正に表示。
+  - **Apple Music 風フル画面表示 & 歌詞表示（試験的）**：フルブリードのアートワークと光学ブラーを備えた Apple Music スタイル UI。
+  - **横画面 Cover Flow（試験的）**：端末を横向きにすると、実際の再生キューと連動した iOS 6 風 3D Cover Flow（反射・慣性スクロール対応）を表示。
+- **ロック画面・コントロールセンター歌詞**（LockLyrics 統合）& **4 種のテーマ / HEX カラー指定**。
+
+### 5. 外部サービス連携 & 便利ツール
+- **Discord Rich Presence**（YTMusic-iOS-Presence 統合）：曲名・アーティスト・残り時間・カバー画像・表示ステータス形式（Activity Name / Artist / Title）・リンクボタンを表示。`dlopen` スタブ方式により **LiveContainer でもそのまま動作**します。
+- **WebNowPlaying（LAN 連携）**：同一 LAN 内の PC アダプター（[WebNowPlaying-Rainmeter](https://github.com/keifufu/WebNowPlaying-Rainmeter) 等、rev legacy / 1 / 2 / 3）と双方向連携（指数バックオフ＆自動クリーンアップ対応）。
+- **Scrobble（再生記録）**：**Last.fm** および **ListenBrainz** に対応（Keychain 保存・オフライン永続再送キュー搭載）。
+- **周囲の曲を認識（ShazamKit）** / **ローカル再生統計** / **スリープタイマー**。
 
 ---
 
 ## 対応歌詞ソース
 
-有効なプロバイダーを並列検索し、**単語同期 ＞ 行同期 ＞ プレーンテキスト** の優先度（同じ同期精度なら設定の並び順）で自動採用します。曲ごとにプロバイダーを手動で固定することも可能です。
+有効なプロバイダーを並列検索し、**単語同期 ＞ 行同期 ＞ プレーンテキスト** の優先度（同じ同期精度なら設定の並び順）で自動採用します。曲ごとにプロバイダーを手動で固定したり、ローカルの `.lrc` / `.ttml` ファイルを直接読み込むことも可能です。
 
 | プロバイダー | 同期精度 | 概要・特徴 |
 | :--- | :---: | :--- |
 | **YouTube Music 公式** | 行同期 | アプリ標準「歌詞」タブと同一データ（InnerTube モバイル API から時間同期付きで取得） |
 | **Unison** | 単語同期 | TTML 形式のカラオケワイプ・間奏表示・デュエットパート分けに対応 |
 | **LyricsPlus** | 単語 / 行同期 | Apple Music・Musixmatch 系の高精度タイムスタンプ歌詞 |
-| **Lyrically** | 単語 / 行同期 | Apple Music カタログおよび KuGou ソースに対応 |
+| **Lyrically** | 単語 / 行同期 | Apple Music カタログおよび KuGou ソースに対応（アジア圏の楽曲に強力） |
+| **SpicyLyrics** | 単語 / 行同期 | 音節・単語同期に対応した高精度歌詞（設定の Spotify ログインと連携） |
+| **PetitLyrics（プチリリ）** | 文字 / 単語 / 行 | `<wsy>` 文字単位同期に対応。邦楽・アニメソング・ボカロ楽曲に特に強力 |
 | **Spotify** | 行同期 | 設定から `open.spotify.com` にログインして取得（認証情報は端末内 WebKit のみに保持） |
 | **LRCLIB** | 拡張 / 行同期 | キーワードによる手動検索・長押しプレビュー・曲ごとのピン留めに対応 |
-| **動画の字幕** | 行同期 | MV 等の字幕トラックを利用（言語自動推定・トラック選択に対応、自動生成字幕は除外） |
+| **Genius** | プレーンテキスト | 同期歌詞が見つからない洋楽・ヒップホップ等のフォールバックに最適 |
+| **GitHub LRC / ローカルファイル** | 単語 / 行同期 | 複数の GitHub リポジトリ登録・ファイル一覧ブラウザ、および「ファイル」アプリからの `.lrc` / `.ttml` 直接インポートに対応 |
+| **動画の字幕** | 行同期 | MV 等の公式字幕トラックを利用（言語自動推定・トラック選択に対応、自動生成字幕は除外） |
 
 > [!TIP]
 > `(Official Video)` や `- Topic`、`feat.` などの表記揺れは検索前に自動整形されます。また、日本語・韓国語・中国語の楽曲でローマ字化された歌詞が返ってきた場合は自動的に優先度を下げ、本来の文字の歌詞を優先します。
@@ -192,21 +204,27 @@ netsh interface portproxy add v4tov4 listenport=8974 listenaddress=0.0.0.0 conne
 
 ```text
 Sources/
-├── Tweak.x                             # メインフック（YTPlayerVC / YTMNowPlayingVC / YTMAvatarAccountView）
+├── Tweak.x                             # メインフック（YTPlayerVC / AVSampleBufferAudioRenderer 等）
 ├── YTMHeaders.h                        # YouTube Music プライベート API 宣言
 ├── IVLPlaybackManager.*                # 曲変更検出・再生位置補間・オフセット計算・シーク
-├── IVLLyricsService.*                  # 7 ソース並列検索・自動優先度判定・表記整形・キャッシュ
+├── IVLLyricsService.*                  # 複数ソース並列検索・自動優先度判定・表記整形・キャッシュ
 ├── IVLYouTubeProvider.m                # YouTube Music 公式同期歌詞（InnerTube browse）
 ├── IVLExtraProviders.m                 # LyricsPlus / Lyrically プロバイダー
+├── IVLMoreProviders.m                  # SpicyLyrics / PetitLyrics（プチリリ） / Genius プロバイダー
+├── IVLGitHubProvider.*                 # マルチリポジトリ対応 GitHub LRC プロバイダー & ブラウザ
 ├── IVLCaptionsProvider.m               # MV 字幕トラック取得・言語自動選択
-├── IVLSpotify.*                        # WebKit ログイン・Web Player 経由の Spotify 歌詞取得
+├── IVLSpotify.*                        # WebKit ログイン・Web Player 経由の Spotify トークン & 歌詞取得
 ├── IVLLyricsParser.*                   # LRC / 拡張 LRC / TTML / プレーンテキストパーサー
 ├── IVLTranslator.*                     # Google 翻訳 & オンデバイス発音生成（CFStringTokenizer / ICU）
-├── IVLLyricsViewController.*           # フルスクリーン歌詞 UI
-├── IVLPlayerPanel.*                    # Apple Music v27 スタイルのイマーシブプレイヤーシート
-├── IVLLyricCell.*                      # カラオケ 2 パス描画セル（TextKit クリップ描画）
+├── IVLAudioDSP.*                       # リアルタイム PCM デコード・6バンド EQ・カラオケ・音量ブースト
+├── IVLExternalDisplay.*                # HDMI / AirPlay 16:9 歌詞ステージ & フルスクリーン TV モード
+├── IVLCoverFlow.*                      # 実キュー連動 iOS 6 風 3D Cover Flow（試験的）
+├── IVLHomeBarLyrics.*                  # ホーム画面ミニプレイヤー下部ライブ歌詞バー（試験的）
+├── IVLLyricsViewController.*           # フルスクリーン歌詞 UI & Apple HIG クイックメニュー
+├── IVLPlayerPanel.*                    # 内部プレイヤーシート & Apple Music 風歌詞ビュー
+├── IVLLyricCell.*                      # カラオケ 2 パス描画セル（TextKit キャッシュ最適化済み）
 ├── IVLFloatingButton.*                 # ドラッグ可能なミニ歌詞フローティングボタン
-├── IVLProviderPickerViewController.*   # 曲別プロバイダー比較・固定ピッカー & 字幕トラック選択
+├── IVLProviderPickerViewController.*   # 曲別ソース比較・ローカル LRC 読込・字幕トラック選択
 ├── IVLSearchViewController.*           # LRCLIB キーワード手動検索・プレビュー
 ├── IVLLockScreen.*                     # ロック画面・コントロールセンター歌詞描画
 ├── IVLDiscord.* / IVLDiscordLog.*      # Discord Rich Presence（dlopen スタブ連携）
@@ -220,7 +238,8 @@ Sources/
 
 **利用している主なフックポイント**：
 - `-[YTPlayerViewController playbackController:didActivateVideo:withPlaybackData:]` / `singleVideo:currentVideoTimeDidChange:`
-- `currentVideoMediaTime` / `seekToTime:` / `playerResponse.playerData.videoDetails`
+- `-[YTIPlaylistPanelRenderer contentsArray]`（Cover Flow キュー同期）
+- `-[AVSampleBufferAudioRenderer enqueueSampleBuffer:]` / `setVolume:`（オンデバイス Audio DSP）
 - `-[YTMNowPlayingViewController viewDidLoad]` / `-[YTMAvatarAccountView setAccountMenuUpperButtons:lowerButtons:]`
 - `-[MPNowPlayingInfoCenter setNowPlayingInfo:]`（公開 API）
 
@@ -232,9 +251,9 @@ Sources/
 <summary><b>Spicetify 版 ivLyrics との違い・注意事項</b></summary>
 <br>
 
-- **未移植の機能**：API キーを要する外部 AI 翻訳／発音（ChatGPT / Claude / Gemini 等 — 発音はオンデバイス生成で代替）、動画背景、コミュニティ同期オフセット共有、マーケットプレイス、学習モード、同期データ作成ツール、Vinyl モードはモバイル UX や Spotify 固有仕様の都合上含めていません。
-- **イコライザー等について**：YouTube Music の再生パイプラインへ安全に音声処理を差し込む手段がないため、イコライザー・リバーブ・クロスフェードは搭載していません。
-- **非公開 API と免責事項**：YouTube Music 内部フック、Spotify Web API、Google 翻訳エンドポイントはいずれも非公式仕様のため、サービス側の変更により予告なく動作しなくなる場合があります。また、サイドロード時の署名プロファイルによっては ShazamKit が利用できない場合があります。歌詞および翻訳の著作権は各権利者に帰属します。
+- **iOS 版独自の拡張**：リアルタイム 6 バンド EQ・ボーカル除去（カラオケ）・音量ブースト、HDMI / AirPlay 16:9 歌詞ステージ、ロック画面歌詞描画、横画面 3D Cover Flow、ShazamKit 曲認識などを独自搭載しています。
+- **未移植の機能**：API キーを要する外部 AI 翻訳／発音（発音はオンデバイス生成で代替）、動画背景、コミュニティ同期オフセット共有、マーケットプレイス、学習モード、同期データ作成ツール、Vinyl モードはモバイル UX の都合上含めていません。
+- **非公開 API と免責事項**：YouTube Music 内部フック、各歌詞プロバイダー API、Google 翻訳エンドポイントはいずれも非公式仕様のため、サービス側の変更により予告なく動作しなくなる場合があります。また、サイドロード時の署名プロファイルによっては ShazamKit が利用できない場合があります。歌詞および翻訳の著作権は各権利者に帰属します。
 
 </details>
 
@@ -250,7 +269,7 @@ Sources/
 
 ### クレジット・謝辞
 - **[ivLyrics](https://github.com/ivLis-Studio/ivLyrics)** © ivLis STUDIO
-- **[LyricsPlus](https://github.com/ibratabian17/LyricsPlus)** / **Unison** / **Lyrically (Paxsenix)** / **[LRCLIB](https://lrclib.net/)**
+- **[LyricsPlus](https://github.com/ibratabian17/LyricsPlus)** / **Unison** / **Lyrically (Paxsenix)** / **SpicyLyrics** / **PetitLyrics** / **[LRCLIB](https://lrclib.net/)** / **Genius**
 - **[SimpMusic](https://github.com/maxrave-dev/SimpMusic)** / **[WebNowPlaying](https://github.com/keifufu/WebNowPlaying)** / **[YTMusicUltimate](https://github.com/dayanch96/YTMusicUltimate)**
 
 <details>

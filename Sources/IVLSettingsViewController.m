@@ -14,7 +14,7 @@
 #import "IVLExternalDisplay.h"
 
 #ifndef IVL_VERSION
-#define IVL_VERSION "1.1.1"
+#define IVL_VERSION "1.2.0"
 #endif
 
 #ifndef IVL_COMMIT
@@ -672,14 +672,18 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
         [IVLExternalDisplayManager presentQuickSheetFrom:vc];
     };
 
-    IVLRow *audioPage = subpage(@"audio", IVLLoc(@"sec_audio"), @"waveform.path.ecg", @"speaker.wave.3.fill", @"FF375F", ^NSString *{
-        BOOL k = [IVLSettings boolForKey:IVLKeyKaraokeMode];
-        BOOL b = [IVLSettings boolForKey:IVLKeyVolumeBoost];
-        if (k && b) return [NSString stringWithFormat:@"%@ · %.0f%%", IVLLoc(@"karaoke_short"), [IVLSettings doubleForKey:IVLKeyVolumeBoostLevel]];
-        if (k) return IVLLoc(@"karaoke_short");
-        if (b) return [NSString stringWithFormat:@"%.0f%%", [IVLSettings doubleForKey:IVLKeyVolumeBoostLevel]];
-        return IVLLoc(@"off");
-    });
+    IVLRow *audioPage = [[IVLRow type:IVLRowLink key:@"" title:IVLLoc(@"sec_audio")]
+                         withBadge:@"slider.horizontal.3" fallback:@"waveform.path.ecg" hex:@"FF375F"];
+    audioPage.detail = ^NSString *{
+        NSMutableArray<NSString *> *parts = [NSMutableArray array];
+        if ([IVLSettings boolForKey:IVLKeyEQEnabled]) [parts addObject:IVLLoc(@"eq_short")];
+        if ([IVLSettings boolForKey:IVLKeyKaraokeMode]) [parts addObject:IVLLoc(@"karaoke_short")];
+        if ([IVLSettings boolForKey:IVLKeyVolumeBoost]) [parts addObject:[NSString stringWithFormat:@"%.0f%%", [IVLSettings doubleForKey:IVLKeyVolumeBoostLevel]]];
+        return parts.count ? [parts componentsJoinedByString:@" · "] : IVLLoc(@"off");
+    };
+    audioPage.action = ^(UIViewController *vc) {
+        [vc.navigationController pushViewController:[IVLAudioDSP createSettingsPageController] animated:YES];
+    };
 
     IVLRow *sleepPage = [[IVLRow type:IVLRowLink key:@"" title:IVLLoc(@"sleep_timer")]
                          withBadge:@"moon.zzz.fill" fallback:@"moon.fill" hex:@"BF5AF2"];

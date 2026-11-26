@@ -17,11 +17,14 @@
 #import <string.h>
 #import <pthread.h>
 
+#import "IVLExtras.h"
+
 // Real-time lock-free DSP parameters (updated on main thread, read in audio render thread)
 static _Atomic BOOL gKaraokeOn = NO;
 static _Atomic float gKaraokeStrength = 0.85f;
 static _Atomic BOOL gBoostOn = NO;
 static _Atomic float gBoostGain = 1.84f;
+static _Atomic BOOL gEQOn = NO;
 static _Atomic uint64_t gProcessedCalls = 0;
 static _Atomic uint64_t gDecodedFramesTotal = 0;
 static _Atomic int gActivePath = 0;
@@ -30,11 +33,109 @@ static _Atomic uint32_t gLastFormatID = 0;
 static _Atomic int gLastStage = 0;      // 0=ok, 1=inBB, 2=convNew, 3=fillErr, 4=sbarFail
 static _Atomic int gLastError = 0;
 static _Atomic int gSBARFailCount = 0;
+static _Atomic int gSampleRateHz = 48000;
+
+#define kIVLEQBandCount 6
+static const double kIVLEQFreqs[kIVLEQBandCount] = { 60.0, 150.0, 400.0, 1000.0, 2400.0, 12000.0 };
+
+typedef struct {
+    float b0, b1, b2, a1, a2;
+} IVLBiquadCoeffs;
+
+typedef struct {
+    IVLBiquadCoeffs bands[kIVLEQBandCount];
+    float preamp;
+    int sampleRate;
+} IVLEQBank;
+
+static IVLEQBank gEQBanks[2];
+static _Atomic int gActiveEQBank = 0;
+static double gCurrentEQGainsDB[kIVLEQBandCount] = { 0, 0, 0, 0, 0, 0 };
 
 typedef struct {
     float lpLow;
     float lpHigh;
+    float z1L[kIVLEQBandCount];
+    float z2L[kIVLEQBandCount];
+    float z1R[kIVLEQBandCount];
+    float z2R[kIVLEQBandCount];
 } IVLFilterState;
+
+static void IVLBuildEQBank(IVLEQBank *bank, const double gainsDB[kIVLEQBandCount], double sr) {
+    if (sr < 8000.0) sr = 48000.0;
+    bank->sampleRate = (int)sr;
+    double maxPos = 0.0;
+    for (int i = 0; i < kIVLEQBandCount; i++) {
+        double g = gainsDB[i];
+        if (g > maxPos) maxPos = g;
+        if (fabs(g) < 0.05) {
+            bank->bands[i] = (IVLBiquadCoeffs){ 1.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+            continue;
+        }
+        double freq = fmin(kIVLEQFreqs[i], sr * 0.45);
+        double A = pow(10.0, g / 40.0);
+        double w0 = 2.0 * M_PI * freq / sr;
+        double cosw = cos(w0), sinw = sin(w0);
+        double b0, b1, b2, a0, a1, a2;
+
+        if (i == 0) {
+            // Low-shelf (60 Hz)
+            double alpha = sinw / (2.0 * 0.70710678);
+            double sq = 2.0 * sqrt(A) * alpha;
+            b0 = A * ((A + 1.0) - (A - 1.0) * cosw + sq);
+            b1 = 2.0 * A * ((A - 1.0) - (A + 1.0) * cosw);
+            b2 = A * ((A + 1.0) - (A - 1.0) * cosw - sq);
+            a0 = (A + 1.0) + (A - 1.0) * cosw + sq;
+            a1 = -2.0 * ((A - 1.0) + (A + 1.0) * cosw);
+            a2 = (A + 1.0) + (A - 1.0) * cosw - sq;
+        } else if (i == kIVLEQBandCount - 1) {
+            // High-shelf (12 kHz)
+            double alpha = sinw / (2.0 * 0.70710678);
+            double sq = 2.0 * sqrt(A) * alpha;
+            b0 = A * ((A + 1.0) + (A - 1.0) * cosw + sq);
+            b1 = -2.0 * A * ((A - 1.0) + (A + 1.0) * cosw);
+            b2 = A * ((A + 1.0) + (A - 1.0) * cosw - sq);
+            a0 = (A + 1.0) - (A - 1.0) * cosw + sq;
+            a1 = 2.0 * ((A - 1.0) - (A + 1.0) * cosw);
+            a2 = (A + 1.0) - (A - 1.0) * cosw - sq;
+        } else {
+            // Peaking EQ (Q = 1.1)
+            double alpha = sinw / (2.0 * 1.1);
+            b0 = 1.0 + alpha * A;
+            b1 = -2.0 * cosw;
+            b2 = 1.0 - alpha * A;
+            a0 = 1.0 + alpha / A;
+            a1 = -2.0 * cosw;
+            a2 = 1.0 - alpha / A;
+        }
+        bank->bands[i].b0 = (float)(b0 / a0);
+        bank->bands[i].b1 = (float)(b1 / a0);
+        bank->bands[i].b2 = (float)(b2 / a0);
+        bank->bands[i].a1 = (float)(a1 / a0);
+        bank->bands[i].a2 = (float)(a2 / a0);
+    }
+    // Gentle headroom trim when boosting bands heavily so peaks stay clean before soft-clip
+    bank->preamp = (maxPos > 2.5) ? powf(10.0f, (float)(-0.32 * (maxPos - 2.5) / 20.0)) : 1.0f;
+}
+
+static inline void IVLApplyEQSampleStereo(const IVLEQBank *bank, IVLFilterState *st, float *ioL, float *ioR) {
+    float l = (*ioL) * bank->preamp;
+    float r = (*ioR) * bank->preamp;
+    for (int b = 0; b < kIVLEQBandCount; b++) {
+        const IVLBiquadCoeffs c = bank->bands[b];
+        float yl = c.b0 * l + st->z1L[b];
+        st->z1L[b] = c.b1 * l - c.a1 * yl + st->z2L[b];
+        st->z2L[b] = c.b2 * l - c.a2 * yl;
+        l = yl;
+
+        float yr = c.b0 * r + st->z1R[b];
+        st->z1R[b] = c.b1 * r - c.a1 * yr + st->z2R[b];
+        st->z2R[b] = c.b2 * r - c.a2 * yr;
+        r = yr;
+    }
+    *ioL = l;
+    *ioR = r;
+}
 
 typedef struct {
     AudioUnit unit;
@@ -46,7 +147,7 @@ typedef struct {
 #define kIVLMaxUnits 32
 static IVLUnitEntry gUnits[kIVLMaxUnits];
 static pthread_mutex_t gUnitsLock = PTHREAD_MUTEX_INITIALIZER;
-static IVLFilterState gGlobalFilter = { 0.0f, 0.0f };
+static IVLFilterState gGlobalFilter = {0};
 
 #pragma mark - Renderer Volume Registry (AVSampleBufferAudioRenderer / AVPlayer / AVAudioPlayerNode / AVAudioPlayer)
 
@@ -69,17 +170,22 @@ static void IVLProcessAudioBufferList(AudioBufferList *ioData, UInt32 inNumberFr
 
     BOOL kOn = atomic_load_explicit(&gKaraokeOn, memory_order_relaxed);
     BOOL bOn = atomic_load_explicit(&gBoostOn, memory_order_relaxed);
-    if (!kOn && !bOn) return;
+    BOOL eqOn = atomic_load_explicit(&gEQOn, memory_order_relaxed);
+    if (!kOn && !bOn && !eqOn) return;
 
     float kStr = kOn ? atomic_load_explicit(&gKaraokeStrength, memory_order_relaxed) : 0.0f;
     float gain = bOn ? atomic_load_explicit(&gBoostGain, memory_order_relaxed) : 1.0f;
     if (kOn) gain *= 1.14f; // Subtle makeup gain for center energy removed with vocals
 
+    const IVLEQBank *eqBank = eqOn ? &gEQBanks[atomic_load_explicit(&gActiveEQBank, memory_order_acquire) & 1] : NULL;
+    IVLFilterState localFlt = {0};
+    IVLFilterState *st = fltPtr ?: &localFlt;
+
     // Band-limited vocal isolator: preserves bass/kick (< ~180 Hz) AND crisp hi-hats (> ~6.8 kHz)
     const float alphaLow = 0.023f;
     const float alphaHigh = 0.59f;
-    float lpLow = fltPtr ? fltPtr->lpLow : 0.0f;
-    float lpHigh = fltPtr ? fltPtr->lpHigh : 0.0f;
+    float lpLow = st->lpLow;
+    float lpHigh = st->lpHigh;
 
     // 1. Non-interleaved stereo Float32
     if (ioData->mNumberBuffers == 2 &&
@@ -100,12 +206,11 @@ static void IVLProcessAudioBufferList(AudioBufferList *ioData, UInt32 inNumberFr
                     l -= kStr * vocal;
                     r -= kStr * vocal;
                 }
-                l = IVLSoftClip(l * gain);
-                r = IVLSoftClip(r * gain);
-                L[i] = l;
-                R[i] = r;
+                if (eqBank) IVLApplyEQSampleStereo(eqBank, st, &l, &r);
+                L[i] = IVLSoftClip(l * gain);
+                R[i] = IVLSoftClip(r * gain);
             }
-            if (fltPtr) { fltPtr->lpLow = lpLow; fltPtr->lpHigh = lpHigh; }
+            st->lpLow = lpLow; st->lpHigh = lpHigh;
             return;
         }
     }
@@ -126,22 +231,25 @@ static void IVLProcessAudioBufferList(AudioBufferList *ioData, UInt32 inNumberFr
                     l -= kStr * vocal;
                     r -= kStr * vocal;
                 }
+                if (eqBank) IVLApplyEQSampleStereo(eqBank, st, &l, &r);
                 buf[i * 2] = IVLSoftClip(l * gain);
                 buf[i * 2 + 1] = IVLSoftClip(r * gain);
             }
-            if (fltPtr) { fltPtr->lpLow = lpLow; fltPtr->lpHigh = lpHigh; }
+            st->lpLow = lpLow; st->lpHigh = lpHigh;
             return;
         }
     }
 
-    // 3. Mono Float32 (Volume Boost still works on mono streams)
+    // 3. Mono Float32
     if (ioData->mNumberBuffers == 1 &&
         ioData->mBuffers[0].mNumberChannels == 1 &&
         ioData->mBuffers[0].mDataByteSize >= inNumberFrames * sizeof(float)) {
         float *buf = (float *)ioData->mBuffers[0].mData;
-        if (buf && bOn) {
+        if (buf && (bOn || eqBank)) {
             for (UInt32 i = 0; i < inNumberFrames; i++) {
-                buf[i] = IVLSoftClip(buf[i] * gain);
+                float m = buf[i], dummy = m;
+                if (eqBank) IVLApplyEQSampleStereo(eqBank, st, &m, &dummy);
+                buf[i] = IVLSoftClip(m * gain);
             }
             return;
         }
@@ -164,12 +272,13 @@ static void IVLProcessAudioBufferList(AudioBufferList *ioData, UInt32 inNumberFr
                     l -= kStr * vocal;
                     r -= kStr * vocal;
                 }
+                if (eqBank) IVLApplyEQSampleStereo(eqBank, st, &l, &r);
                 l = fmaxf(-1.0f, fminf(1.0f, IVLSoftClip(l * gain)));
                 r = fmaxf(-1.0f, fminf(1.0f, IVLSoftClip(r * gain)));
                 buf[i * 2] = (int16_t)(l * 32767.0f);
                 buf[i * 2 + 1] = (int16_t)(r * 32767.0f);
             }
-            if (fltPtr) { fltPtr->lpLow = lpLow; fltPtr->lpHigh = lpHigh; }
+            st->lpLow = lpLow; st->lpHigh = lpHigh;
         }
     }
 }
@@ -376,13 +485,239 @@ static void IVLRebindImage(const struct mach_header *header, intptr_t slide) {
     }
 }
 
-#pragma mark - Half-sheet Quick Audio DSP Controller
+#pragma mark - Interactive 6-Band Equalizer Graph + Audio DSP Controller
+
+static const double kIVLEQPresets[6][kIVLEQBandCount] = {
+    {  0.0,  0.0,  0.0,  0.0,  0.0,  0.0 }, // 0: Flat
+    {  6.5,  5.0,  1.5,  0.0,  0.0,  0.0 }, // 1: Bass Boost
+    {  0.0,  0.0,  0.0,  1.5,  4.5,  6.5 }, // 2: Treble Boost
+    { -2.0, -1.0,  2.0,  5.0,  3.5,  1.0 }, // 3: Vocal
+    {  5.5,  3.5, -1.5, -1.0,  3.5,  5.5 }, // 4: Rock / V
+    {  3.0,  2.0,  0.5,  1.5,  3.0,  3.5 }, // 5: Acoustic
+};
+
+static NSString *IVLEQPresetName(NSInteger idx) {
+    switch (idx) {
+        case 0: return IVLLoc(@"eq_flat");
+        case 1: return IVLLoc(@"eq_bass");
+        case 2: return IVLLoc(@"eq_treble");
+        case 3: return IVLLoc(@"eq_vocal");
+        case 4: return IVLLoc(@"eq_rock");
+        case 5: return IVLLoc(@"eq_acoustic");
+        default: return IVLLoc(@"eq_custom");
+    }
+}
+
+static void IVLReadEffectiveEQBands(double outBands[kIVLEQBandCount]) {
+    NSInteger preset = [IVLSettings integerForKey:IVLKeyEQPreset];
+    if (preset >= 0 && preset < 6) {
+        for (int i = 0; i < kIVLEQBandCount; i++) outBands[i] = kIVLEQPresets[preset][i];
+        return;
+    }
+    NSArray *arr = [IVLSettings objectForKey:IVLKeyEQBands];
+    for (int i = 0; i < kIVLEQBandCount; i++) {
+        double v = ([arr isKindOfClass:[NSArray class]] && i < (int)arr.count) ? [arr[i] doubleValue] : 0.0;
+        outBands[i] = fmax(-12.0, fmin(12.0, v));
+    }
+}
+
+@interface IVLEQGraphView : UIView
+@property (nonatomic, copy) void (^onBandsChanged)(BOOL finished);
+- (void)reloadFromSettings;
+@end
+
+@implementation IVLEQGraphView {
+    double _gains[kIVLEQBandCount];
+    int _activeBand;
+}
+
+- (instancetype)initWithFrame:(CGRect)frame {
+    if ((self = [super initWithFrame:frame])) {
+        self.backgroundColor = UIColor.clearColor;
+        self.contentMode = UIViewContentModeRedraw;
+        _activeBand = -1;
+        [self reloadFromSettings];
+
+        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
+        pan.delaysTouchesBegan = NO;
+        [self addGestureRecognizer:pan];
+
+        UITapGestureRecognizer *doubleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleDoubleTap:)];
+        doubleTap.numberOfTapsRequired = 2;
+        [self addGestureRecognizer:doubleTap];
+
+        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleTap:)];
+        [tap requireGestureRecognizerToFail:doubleTap];
+        [self addGestureRecognizer:tap];
+    }
+    return self;
+}
+
+- (void)reloadFromSettings {
+    IVLReadEffectiveEQBands(_gains);
+    [self setNeedsDisplay];
+}
+
+- (int)bandIndexForX:(CGFloat)x {
+    CGFloat w = self.bounds.size.width;
+    if (w <= 0) return 0;
+    int idx = (int)floor((x / w) * kIVLEQBandCount);
+    if (idx < 0) idx = 0;
+    if (idx >= kIVLEQBandCount) idx = kIVLEQBandCount - 1;
+    return idx;
+}
+
+- (double)gainForY:(CGFloat)y {
+    CGFloat topPad = 26.0, botPad = 26.0;
+    CGFloat trackH = MAX(40.0, self.bounds.size.height - topPad - botPad);
+    double norm = 1.0 - (double)((y - topPad) / trackH); // 1.0 = +12dB, 0.0 = -12dB
+    double db = (norm * 24.0) - 12.0;
+    db = round(fmax(-12.0, fmin(12.0, db)) * 2.0) / 2.0; // 0.5 dB steps
+    if (fabs(db) < 0.4) db = 0.0;
+    return db;
+}
+
+- (void)commitBandsFinished:(BOOL)finished {
+    if (![IVLSettings boolForKey:IVLKeyEQEnabled]) {
+        [IVLSettings setBool:YES forKey:IVLKeyEQEnabled];
+    }
+    NSMutableArray *arr = [NSMutableArray arrayWithCapacity:kIVLEQBandCount];
+    for (int i = 0; i < kIVLEQBandCount; i++) [arr addObject:@(_gains[i])];
+    [IVLSettings setObject:@6 forKey:IVLKeyEQPreset];
+    [IVLSettings setObject:arr forKey:IVLKeyEQBands];
+    [self setNeedsDisplay];
+    if (self.onBandsChanged) self.onBandsChanged(finished);
+}
+
+- (void)handlePan:(UIPanGestureRecognizer *)gr {
+    CGPoint pt = [gr locationInView:self];
+    if (gr.state == UIGestureRecognizerStateBegan) {
+        _activeBand = [self bandIndexForX:pt.x];
+    }
+    if (_activeBand >= 0 && _activeBand < kIVLEQBandCount) {
+        _gains[_activeBand] = [self gainForY:pt.y];
+        BOOL ended = (gr.state == UIGestureRecognizerStateEnded || gr.state == UIGestureRecognizerStateCancelled);
+        [self commitBandsFinished:ended];
+        if (ended) _activeBand = -1;
+    }
+}
+
+- (void)handleTap:(UITapGestureRecognizer *)gr {
+    CGPoint pt = [gr locationInView:self];
+    int b = [self bandIndexForX:pt.x];
+    _gains[b] = [self gainForY:pt.y];
+    [self commitBandsFinished:YES];
+}
+
+- (void)handleDoubleTap:(UITapGestureRecognizer *)gr {
+    CGPoint pt = [gr locationInView:self];
+    int b = [self bandIndexForX:pt.x];
+    _gains[b] = 0.0;
+    [self commitBandsFinished:YES];
+}
+
+- (void)drawRect:(CGRect)rect {
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    CGFloat w = self.bounds.size.width, h = self.bounds.size.height;
+    if (w <= 10 || h <= 40) return;
+
+    BOOL eqOn = [IVLSettings boolForKey:IVLKeyEQEnabled];
+    UIColor *accent = eqOn ? ([IVLTheme accentColor] ?: UIColor.systemPinkColor) : [UIColor colorWithWhite:0.55 alpha:0.7];
+    CGFloat topPad = 26.0, botPad = 26.0;
+    CGFloat trackH = h - topPad - botPad;
+    CGFloat midY = topPad + trackH * 0.5;
+    CGFloat colW = w / kIVLEQBandCount;
+
+    // 0 dB & ±12 dB reference lines
+    CGContextSetLineWidth(ctx, 1.0);
+    [[UIColor colorWithWhite:1 alpha:0.08] setStroke];
+    CGContextMoveToPoint(ctx, 8, topPad); CGContextAddLineToPoint(ctx, w - 8, topPad);
+    CGContextMoveToPoint(ctx, 8, topPad + trackH); CGContextAddLineToPoint(ctx, w - 8, topPad + trackH);
+    CGContextStrokePath(ctx);
+
+    [[UIColor colorWithWhite:1 alpha:0.18] setStroke];
+    CGFloat dash[2] = { 4.0, 4.0 };
+    CGContextSaveGState(ctx);
+    CGContextSetLineDash(ctx, 0, dash, 2);
+    CGContextMoveToPoint(ctx, 8, midY); CGContextAddLineToPoint(ctx, w - 8, midY);
+    CGContextStrokePath(ctx);
+    CGContextRestoreGState(ctx);
+
+    CGPoint pts[kIVLEQBandCount];
+    for (int i = 0; i < kIVLEQBandCount; i++) {
+        CGFloat cx = colW * (i + 0.5);
+        CGFloat norm = (CGFloat)((_gains[i] + 12.0) / 24.0);
+        CGFloat cy = topPad + trackH * (1.0 - norm);
+        pts[i] = CGPointMake(cx, cy);
+
+        // Vertical fader rail
+        UIBezierPath *rail = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(cx - 1.5, topPad, 3.0, trackH) cornerRadius:1.5];
+        [[UIColor colorWithWhite:1 alpha:0.12] setFill];
+        [rail fill];
+
+        // Active fill bar from 0 dB to thumb
+        CGFloat barTop = MIN(midY, cy), barH = fabs(cy - midY);
+        if (barH > 1.0) {
+            UIBezierPath *bar = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(cx - 2.0, barTop, 4.0, barH) cornerRadius:2.0];
+            [[accent colorWithAlphaComponent:0.65] setFill];
+            [bar fill];
+        }
+    }
+
+    // Smooth cubic response curve across the 6 bands
+    UIBezierPath *curve = [UIBezierPath bezierPath];
+    [curve moveToPoint:pts[0]];
+    for (int i = 0; i < kIVLEQBandCount - 1; i++) {
+        CGFloat midX = (pts[i].x + pts[i + 1].x) * 0.5;
+        [curve addCurveToPoint:pts[i + 1] controlPoint1:CGPointMake(midX, pts[i].y) controlPoint2:CGPointMake(midX, pts[i + 1].y)];
+    }
+    curve.lineWidth = 2.2;
+    [[accent colorWithAlphaComponent:0.9] setStroke];
+    [curve stroke];
+
+    // Thumb knobs + dB readout + Hz labels
+    static NSString *const kLabels[kIVLEQBandCount] = { @"60", @"150", @"400", @"1K", @"2.4K", @"12K" };
+    NSDictionary *valAttrs = @{
+        NSFontAttributeName: [UIFont monospacedDigitSystemFontOfSize:10.5 weight:UIFontWeightSemibold],
+        NSForegroundColorAttributeName: [UIColor colorWithWhite:1 alpha:(eqOn ? 0.85 : 0.45)]
+    };
+    NSDictionary *hzAttrs = @{
+        NSFontAttributeName: [UIFont systemFontOfSize:10.5 weight:UIFontWeightMedium],
+        NSForegroundColorAttributeName: [UIColor colorWithWhite:1 alpha:0.50]
+    };
+
+    for (int i = 0; i < kIVLEQBandCount; i++) {
+        CGPoint p = pts[i];
+        CGRect knob = CGRectMake(p.x - 8.5, p.y - 8.5, 17.0, 17.0);
+        [[UIColor colorWithWhite:0.12 alpha:1.0] setFill];
+        [[UIBezierPath bezierPathWithOvalInRect:CGRectInset(knob, -1.5, -1.5)] fill];
+        [(eqOn ? UIColor.whiteColor : [UIColor colorWithWhite:0.65 alpha:1.0]) setFill];
+        [[UIBezierPath bezierPathWithOvalInRect:knob] fill];
+        [accent setStroke];
+        UIBezierPath *ring = [UIBezierPath bezierPathWithOvalInRect:CGRectInset(knob, 1.5, 1.5)];
+        ring.lineWidth = 2.0;
+        [ring stroke];
+
+        NSString *dbStr = (fabs(_gains[i]) < 0.05) ? @"0" : [NSString stringWithFormat:@"%+.1f", _gains[i]];
+        CGSize dbSz = [dbStr sizeWithAttributes:valAttrs];
+        [dbStr drawAtPoint:CGPointMake(p.x - dbSz.width * 0.5, 6.0) withAttributes:valAttrs];
+
+        CGSize hzSz = [kLabels[i] sizeWithAttributes:hzAttrs];
+        [kLabels[i] drawAtPoint:CGPointMake(p.x - hzSz.width * 0.5, h - botPad + 7.0) withAttributes:hzAttrs];
+    }
+}
+
+@end
 
 @interface IVLAudioSheetViewController : UITableViewController
+@property (nonatomic, assign) BOOL pushedInSettings;
 @end
 
 @implementation IVLAudioSheetViewController {
     NSTimer *_statusTimer;
+    __weak IVLEQGraphView *_eqGraph;
+    __weak UIButton *_presetBtn;
+    __weak UISwitch *_eqSwitch;
 }
 
 - (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
@@ -391,7 +726,9 @@ static void IVLRebindImage(const struct mach_header *header, intptr_t slide) {
     [super viewDidLoad];
     self.title = IVLLoc(@"sec_audio");
     self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(close)];
+    if (!_pushedInSettings) {
+        self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(close)];
+    }
     _statusTimer = [NSTimer scheduledTimerWithTimeInterval:0.8 target:self selector:@selector(refreshStatus) userInfo:nil repeats:YES];
 }
 
@@ -404,31 +741,117 @@ static void IVLRebindImage(const struct mach_header *header, intptr_t slide) {
 - (void)close { [self dismissViewControllerAnimated:YES completion:nil]; }
 
 - (void)refreshStatus {
-    UITableViewCell *c = [self.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:2]];
+    UITableViewCell *c = [self.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:3]];
     if (c) c.detailTextLabel.text = [IVLAudioDSP statusText];
 }
 
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return 3; }
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return section == 2 ? 1 : 2; }
+- (void)rebuildPresetMenuOnButton:(UIButton *)btn {
+    if (!btn) return;
+    NSInteger cur = [IVLSettings integerForKey:IVLKeyEQPreset];
+    [btn setTitle:[NSString stringWithFormat:@"%@ ▾", IVLEQPresetName(cur)] forState:UIControlStateNormal];
+
+    __weak typeof(self) ws = self;
+    NSMutableArray<UIMenuElement *> *actions = [NSMutableArray array];
+    for (NSInteger i = 0; i <= 6; i++) {
+        if (i == 6 && cur != 6) continue;
+        UIAction *a = [UIAction actionWithTitle:IVLEQPresetName(i) image:nil identifier:nil handler:^(UIAction *act) {
+            __strong typeof(ws) ss = ws;
+            if (!ss) return;
+            [IVLSettings setObject:@(i) forKey:IVLKeyEQPreset];
+            if (i != 0 && ![IVLSettings boolForKey:IVLKeyEQEnabled]) {
+                [IVLSettings setBool:YES forKey:IVLKeyEQEnabled];
+                ss->_eqSwitch.on = YES;
+            }
+            [ss->_eqGraph reloadFromSettings];
+            [ss rebuildPresetMenuOnButton:ss->_presetBtn];
+        }];
+        a.state = (i == cur) ? UIMenuElementStateOn : UIMenuElementStateOff;
+        [actions addObject:a];
+    }
+    btn.menu = [UIMenu menuWithTitle:@"" children:actions];
+    btn.showsMenuAsPrimaryAction = YES;
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return 4; }
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return section == 3 ? 1 : 2; }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    if (section == 0) return IVLLoc(@"footer_karaoke_mode");
-    if (section == 1) return IVLLoc(@"footer_volume_boost");
+    if (section == 0) return IVLLoc(@"footer_equalizer");
+    if (section == 1) return IVLLoc(@"footer_karaoke_mode");
+    if (section == 2) return IVLLoc(@"footer_volume_boost");
     return nil;
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    if (indexPath.section == 2) {
+    if (indexPath.section == 3) {
         UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil];
         c.selectionStyle = UITableViewCellSelectionStyleNone;
         c.textLabel.text = IVLLoc(@"status");
         c.detailTextLabel.text = [IVLAudioDSP statusText];
         return c;
     }
+
+    // Section 0: Custom 6-Band Equalizer
+    if (indexPath.section == 0) {
+        if (indexPath.row == 0) {
+            UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+            c.selectionStyle = UITableViewCellSelectionStyleNone;
+            c.textLabel.text = IVLLoc(@"equalizer");
+
+            UIButton *pBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+            pBtn.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
+            [pBtn setTitleColor:([IVLTheme accentColor] ?: UIColor.systemPinkColor) forState:UIControlStateNormal];
+            _presetBtn = pBtn;
+            [self rebuildPresetMenuOnButton:pBtn];
+
+            UISwitch *sw = [UISwitch new];
+            sw.on = [IVLSettings boolForKey:IVLKeyEQEnabled];
+            _eqSwitch = sw;
+            __weak typeof(self) ws = self;
+            [sw addAction:[UIAction actionWithHandler:^(UIAction *a) {
+                [IVLSettings setBool:((UISwitch *)a.sender).on forKey:IVLKeyEQEnabled];
+                __strong typeof(ws) ss = ws;
+                if (ss) [ss->_eqGraph setNeedsDisplay];
+            }] forControlEvents:UIControlEventValueChanged];
+
+            UIStackView *acc = [[UIStackView alloc] initWithArrangedSubviews:@[pBtn, sw]];
+            acc.axis = UILayoutConstraintAxisHorizontal;
+            acc.spacing = 12;
+            acc.alignment = UIStackViewAlignmentCenter;
+            [acc sizeToFit];
+            c.accessoryView = acc;
+            return c;
+        }
+
+        UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+        c.selectionStyle = UITableViewCellSelectionStyleNone;
+        IVLEQGraphView *graph = [[IVLEQGraphView alloc] initWithFrame:CGRectZero];
+        graph.translatesAutoresizingMaskIntoConstraints = NO;
+        _eqGraph = graph;
+        __weak typeof(self) ws = self;
+        graph.onBandsChanged = ^(__unused BOOL finished) {
+            __strong typeof(ws) ss = ws;
+            if (!ss) return;
+            ss->_eqSwitch.on = [IVLSettings boolForKey:IVLKeyEQEnabled];
+            [ss rebuildPresetMenuOnButton:ss->_presetBtn];
+        };
+        [c.contentView addSubview:graph];
+        [NSLayoutConstraint activateConstraints:@[
+            [graph.leadingAnchor constraintEqualToAnchor:c.contentView.leadingAnchor constant:6],
+            [graph.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-6],
+            [graph.topAnchor constraintEqualToAnchor:c.contentView.topAnchor constant:4],
+            [graph.bottomAnchor constraintEqualToAnchor:c.contentView.bottomAnchor constant:-4],
+            [graph.heightAnchor constraintEqualToConstant:196],
+        ]];
+        return c;
+    }
+
+    // Sections 1 & 2: Karaoke & Volume Boost
+    BOOL isKaraoke = (indexPath.section == 1);
     if (indexPath.row == 0) {
         UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
         c.selectionStyle = UITableViewCellSelectionStyleNone;
-        NSString *key = (indexPath.section == 0) ? IVLKeyKaraokeMode : IVLKeyVolumeBoost;
-        c.textLabel.text = (indexPath.section == 0) ? IVLLoc(@"karaoke_mode") : IVLLoc(@"volume_boost");
+        NSString *key = isKaraoke ? IVLKeyKaraokeMode : IVLKeyVolumeBoost;
+        c.textLabel.text = isKaraoke ? IVLLoc(@"karaoke_mode") : IVLLoc(@"volume_boost");
         UISwitch *sw = [UISwitch new];
         sw.on = [IVLSettings boolForKey:key];
         [sw addAction:[UIAction actionWithHandler:^(UIAction *a) {
@@ -439,7 +862,6 @@ static void IVLRebindImage(const struct mach_header *header, intptr_t slide) {
     }
     UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
     c.selectionStyle = UITableViewCellSelectionStyleNone;
-    BOOL isKaraoke = (indexPath.section == 0);
     NSString *key = isKaraoke ? IVLKeyKaraokeStrength : IVLKeyVolumeBoostLevel;
     double minV = isKaraoke ? 0.0 : 100.0;
     double maxV = isKaraoke ? 100.0 : 300.0;
@@ -629,6 +1051,14 @@ static BOOL IVLEnsureDecoderLocked(const AudioStreamBasicDescription *inASBD, CM
     gDecoder.inASBD = *inASBD;
     gDecoder.outASBD = outASBD;
     gDecoder.outFmt = outFmt;
+
+    int newSR = (int)round(outASBD.mSampleRate);
+    if (newSR > 8000 && newSR != atomic_load_explicit(&gSampleRateHz, memory_order_relaxed)) {
+        atomic_store_explicit(&gSampleRateHz, newSR, memory_order_relaxed);
+        int nextIdx = (atomic_load_explicit(&gActiveEQBank, memory_order_relaxed) + 1) & 1;
+        IVLBuildEQBank(&gEQBanks[nextIdx], gCurrentEQGainsDB, outASBD.mSampleRate);
+        atomic_store_explicit(&gActiveEQBank, nextIdx, memory_order_release);
+    }
     return YES;
 }
 
@@ -654,6 +1084,8 @@ static NSString *IVLFourCCString(uint32_t fcc) {
     double _prevKaraokeStrength;
     BOOL _prevBoostOn;
     double _prevBoostLevel;
+    BOOL _prevEQOn;
+    double _prevEQBands[kIVLEQBandCount];
     uint64_t _reseekToken;
 }
 
@@ -735,7 +1167,7 @@ static NSString *IVLFourCCString(uint32_t fcc) {
     int err = atomic_load_explicit(&gLastError, memory_order_relaxed);
     NSString *codec = IVLFourCCString(atomic_load_explicit(&gLastFormatID, memory_order_relaxed));
 
-    if (stage != 0 && (atomic_load_explicit(&gKaraokeOn, memory_order_relaxed) || atomic_load_explicit(&gBoostOn, memory_order_relaxed))) {
+    if (stage != 0 && (atomic_load_explicit(&gKaraokeOn, memory_order_relaxed) || atomic_load_explicit(&gBoostOn, memory_order_relaxed) || atomic_load_explicit(&gEQOn, memory_order_relaxed))) {
         return [NSString stringWithFormat:@"Err s%d:%d (%@)", stage, err, codec.length ? codec : @"?"];
     }
     if (calls > 0) {
@@ -767,8 +1199,7 @@ static NSString *IVLFourCCString(uint32_t fcc) {
 + (void)resetDecoder {
     pthread_mutex_lock(&gDecoderLock);
     if (gDecoder.converter) AudioConverterReset(gDecoder.converter);
-    gGlobalFilter.lpLow = 0.0f;
-    gGlobalFilter.lpHigh = 0.0f;
+    memset(&gGlobalFilter, 0, sizeof(gGlobalFilter));
     pthread_mutex_unlock(&gDecoderLock);
 }
 
@@ -795,10 +1226,11 @@ static NSString *IVLFourCCString(uint32_t fcc) {
         return NULL;
     }
 
-    // Encoded audio path (Opus / AAC / HE-AAC): zero-cost passthrough when both Karaoke & Boost are OFF
+    // Encoded audio path (Opus / AAC / HE-AAC): zero-cost passthrough when EQ, Karaoke & Boost are all OFF
     BOOL kOn = atomic_load_explicit(&gKaraokeOn, memory_order_relaxed);
     BOOL bOn = atomic_load_explicit(&gBoostOn, memory_order_relaxed);
-    if (!kOn && !bOn) {
+    BOOL eqOn = atomic_load_explicit(&gEQOn, memory_order_relaxed);
+    if (!kOn && !bOn && !eqOn) {
         atomic_fetch_add_explicit(&gProcessedCalls, 1, memory_order_relaxed);
         atomic_store_explicit(&gActivePath, 7, memory_order_relaxed);
         return NULL;
@@ -996,6 +1428,12 @@ static void IVLTapProcess(MTAudioProcessingTapRef tap,
     objc_setAssociatedObject(item, kIVLTapAttachedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
++ (UIViewController *)createSettingsPageController {
+    IVLAudioSheetViewController *vc = [IVLAudioSheetViewController new];
+    vc.pushedInSettings = YES;
+    return vc;
+}
+
 + (void)presentQuickSheetFrom:(UIViewController *)vc {
     if (!vc) return;
     UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:[IVLAudioSheetViewController new]];
@@ -1003,7 +1441,7 @@ static void IVLTapProcess(MTAudioProcessingTapRef tap,
     nav.modalPresentationStyle = UIModalPresentationPageSheet;
     if (@available(iOS 15.0, *)) {
         UISheetPresentationController *sh = nav.sheetPresentationController;
-        sh.detents = @[UISheetPresentationControllerDetent.mediumDetent, UISheetPresentationControllerDetent.largeDetent];
+        sh.detents = @[UISheetPresentationControllerDetent.largeDetent, UISheetPresentationControllerDetent.mediumDetent];
         sh.prefersGrabberVisible = YES;
     }
     [vc presentViewController:nav animated:YES completion:nil];
@@ -1052,13 +1490,32 @@ static void IVLTapProcess(MTAudioProcessingTapRef tap,
     double bPct = [IVLSettings doubleForKey:IVLKeyVolumeBoostLevel];
     if (bPct < 100 || bPct > 300) bPct = 150.0;
 
-    BOOL toggleChanged = (!initial && (kOn != _prevKaraokeOn || bOn != _prevBoostOn));
-    BOOL sliderChanged = (!initial && (fabs(kStr - _prevKaraokeStrength) > 0.1 || fabs(bPct - _prevBoostLevel) > 0.1));
+    BOOL eqOn = [IVLSettings boolForKey:IVLKeyEQEnabled];
+    double eqBands[kIVLEQBandCount];
+    IVLReadEffectiveEQBands(eqBands);
+
+    BOOL eqBandsDiff = NO;
+    for (int i = 0; i < kIVLEQBandCount; i++) {
+        if (fabs(eqBands[i] - _prevEQBands[i]) > 0.05) { eqBandsDiff = YES; break; }
+    }
+
+    BOOL toggleChanged = (!initial && (kOn != _prevKaraokeOn || bOn != _prevBoostOn || eqOn != _prevEQOn));
+    BOOL sliderChanged = (!initial && (fabs(kStr - _prevKaraokeStrength) > 0.1 || fabs(bPct - _prevBoostLevel) > 0.1 || eqBandsDiff));
 
     _prevKaraokeOn = kOn;
     _prevKaraokeStrength = kStr;
     _prevBoostOn = bOn;
     _prevBoostLevel = bPct;
+    _prevEQOn = eqOn;
+    for (int i = 0; i < kIVLEQBandCount; i++) {
+        _prevEQBands[i] = eqBands[i];
+        gCurrentEQGainsDB[i] = eqBands[i];
+    }
+
+    int sr = atomic_load_explicit(&gSampleRateHz, memory_order_relaxed);
+    int nextIdx = (atomic_load_explicit(&gActiveEQBank, memory_order_relaxed) + 1) & 1;
+    IVLBuildEQBank(&gEQBanks[nextIdx], eqBands, (double)sr);
+    atomic_store_explicit(&gActiveEQBank, nextIdx, memory_order_release);
 
     // Exponential loudness curve: 150% -> 1.84x, 200% -> 2.83x, 250% -> 3.95x, 300% -> 5.20x
     float gain = (bPct <= 100.0) ? 1.0f : powf((float)(bPct / 100.0), 1.5f);
@@ -1067,6 +1524,7 @@ static void IVLTapProcess(MTAudioProcessingTapRef tap,
     atomic_store_explicit(&gKaraokeStrength, (float)(kStr / 100.0), memory_order_relaxed);
     atomic_store_explicit(&gBoostOn, bOn, memory_order_relaxed);
     atomic_store_explicit(&gBoostGain, gain, memory_order_relaxed);
+    atomic_store_explicit(&gEQOn, eqOn, memory_order_relaxed);
 
     if (toggleChanged) {
         atomic_store_explicit(&gSBARFailCount, 0, memory_order_relaxed);
@@ -1075,7 +1533,7 @@ static void IVLTapProcess(MTAudioProcessingTapRef tap,
 
     if (toggleChanged || sliderChanged) {
         [self reapplyVolumesToAllRenderers];
-        [self scheduleSBARFlushWithDelay:toggleChanged ? 0.04 : 0.30];
+        [self scheduleSBARFlushWithDelay:toggleChanged ? 0.04 : 0.28];
     }
 }
 

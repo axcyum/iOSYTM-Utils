@@ -61,6 +61,9 @@ NSString *const IVLKeyKaraokeMode = @"karaokeMode";
 NSString *const IVLKeyKaraokeStrength = @"karaokeStrength";
 NSString *const IVLKeyVolumeBoost = @"volumeBoost";
 NSString *const IVLKeyVolumeBoostLevel = @"volumeBoostLevel";
+NSString *const IVLKeyEQEnabled = @"eqEnabled";
+NSString *const IVLKeyEQPreset = @"eqPreset";
+NSString *const IVLKeyEQBands = @"eqBands";
 NSString *const IVLKeyWNPEnabled = @"wnpEnabled";
 NSString *const IVLKeyWNPHost = @"wnpHost";
 NSString *const IVLKeyWNPPort = @"wnpPort";
@@ -143,6 +146,9 @@ static NSString *IVLLocCaptionsName(void) {
             IVLKeyKaraokeStrength: @85.0,
             IVLKeyVolumeBoost: @NO,
             IVLKeyVolumeBoostLevel: @150.0,
+            IVLKeyEQEnabled: @NO,
+            IVLKeyEQPreset: @0,
+            IVLKeyEQBands: @[@0.0, @0.0, @0.0, @0.0, @0.0, @0.0],
             IVLKeyWNPEnabled: @NO,
             IVLKeyWNPHost: @"",
             IVLKeyWNPPort: @8974,

@@ -63,7 +63,10 @@ extern NSString *const IVLKeyExternalDisplay;    // BOOL  HDMI / AirPlay fullscr
 extern NSString *const IVLKeyKaraokeMode;        // BOOL  on-device center vocal removal (default NO)
 extern NSString *const IVLKeyKaraokeStrength;    // double 0..100 (default 85)
 extern NSString *const IVLKeyVolumeBoost;        // BOOL  soft-clipped volume boost (default NO)
-extern NSString *const IVLKeyVolumeBoostLevel;   // double 100..250 (default 150)
+extern NSString *const IVLKeyVolumeBoostLevel;   // double 100..300 (default 150)
+extern NSString *const IVLKeyEQEnabled;          // BOOL  6-band custom equalizer (default NO)
+extern NSString *const IVLKeyEQPreset;           // NSInteger 0=Flat,1=Bass,2=Treble,3=Vocal,4=Rock,5=Acoustic,6=Custom
+extern NSString *const IVLKeyEQBands;            // NSArray<NSNumber *> of 6 gains in dB (-12..+12)
 extern NSString *const IVLKeyDiscordInterval;    // NSInteger seconds between presence updates (3..60, default 15)
 extern NSString *const IVLKeyDiscordStatusDisplay; // NSInteger 0 = Activity Name, 1 = Artist Name, 2 = Song Title
 extern NSString *const IVLKeyDiscordName;        // NSString activity name ("Listening to <name>")

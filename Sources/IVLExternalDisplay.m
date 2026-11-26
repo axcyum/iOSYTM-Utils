@@ -85,6 +85,11 @@ static UIImage *IVLPreblurredStageBackground(UIImage *source) {
     NSUInteger _hudHideGen;
 
     UIImage *_lastSourceArt;
+    NSString *_lastTrackKey;
+    BOOL _awaitingLyricsForNewTrack;
+    BOOL _centeredLayout;
+    BOOL _hasLaidOutOnce;
+    CGSize _stageSize;
     UIColor *_cachedAccent;
     NSInteger _lastIdx;
     NSInteger _lastShownSec;
@@ -287,6 +292,91 @@ static UIImage *IVLPreblurredStageBackground(UIImage *source) {
     });
 }
 
+- (void)applyStageLayoutCentered:(BOOL)centered animated:(BOOL)animated {
+    CGFloat w = _stageSize.width, h = _stageSize.height;
+    if (w <= 0 || h <= 0) return;
+    _centeredLayout = centered;
+
+    CGFloat pad = floor(MIN(w, h) * 0.065);
+    CGFloat leftW = floor(w * 0.34);
+    CGFloat titleSize = MAX(17.0, floor(h * 0.035));
+    CGFloat artistSize = MAX(13.0, floor(h * 0.024));
+    CGFloat timeSize = MAX(11.0, floor(h * 0.020));
+
+    _titleLabel.font = [UIFont systemFontOfSize:titleSize weight:UIFontWeightBold];
+    _artistLabel.font = [UIFont systemFontOfSize:artistSize weight:UIFontWeightMedium];
+    _timeLeftLabel.font = [UIFont monospacedDigitSystemFontOfSize:timeSize weight:UIFontWeightMedium];
+    _timeRightLabel.font = [UIFont monospacedDigitSystemFontOfSize:timeSize weight:UIFontWeightMedium];
+
+    void (^layoutBlock)(void) = ^{
+        if (centered) {
+            CGFloat artSize = floor(MIN(w * 0.42, h * 0.54));
+            CGFloat artX = floor((w - artSize) * 0.5);
+            CGFloat artY = floor((h - artSize - 118.0) * 0.5);
+            self->_artShadow.frame = CGRectMake(artX, MAX(pad * 0.7, artY), artSize, artSize);
+            self->_artShadow.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:self->_artShadow.bounds cornerRadius:18.0].CGPath;
+            self->_artView.frame = self->_artShadow.bounds;
+
+            CGFloat textW = MAX(artSize, floor(w * 0.52));
+            CGFloat textX = floor((w - textW) * 0.5);
+            CGFloat infoY = CGRectGetMaxY(self->_artShadow.frame) + 18.0;
+            self->_titleLabel.textAlignment = NSTextAlignmentCenter;
+            self->_artistLabel.textAlignment = NSTextAlignmentCenter;
+            self->_titleLabel.frame = CGRectMake(textX, infoY, textW, titleSize * 2.4);
+            self->_artistLabel.frame = CGRectMake(textX, CGRectGetMaxY(self->_titleLabel.frame) + 3.0, textW, artistSize * 1.4);
+
+            CGFloat barW = MAX(artSize, floor(w * 0.36));
+            CGFloat barX = floor((w - barW) * 0.5);
+            self->_progTrack.frame = CGRectMake(barX, CGRectGetMaxY(self->_artistLabel.frame) + 12.0, barW, 6.0);
+            self->_timeLeftLabel.frame = CGRectMake(barX, CGRectGetMaxY(self->_progTrack.frame) + 6.0, barW * 0.5, timeSize * 1.3);
+            self->_timeRightLabel.frame = CGRectMake(barX + barW * 0.5, CGRectGetMaxY(self->_progTrack.frame) + 6.0, barW * 0.5, timeSize * 1.3);
+
+            self->_lyricsBox.alpha = 0.0;
+            self->_lyricsBox.transform = CGAffineTransformMakeTranslation(32.0, 0);
+        } else {
+            CGFloat artSize = floor(MIN(leftW, h * 0.52));
+            CGFloat artX = pad + floor((leftW - artSize) * 0.5);
+            CGFloat artY = floor((h - artSize - 115.0) * 0.5);
+            self->_artShadow.frame = CGRectMake(artX, MAX(pad, artY), artSize, artSize);
+            self->_artShadow.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:self->_artShadow.bounds cornerRadius:18.0].CGPath;
+            self->_artView.frame = self->_artShadow.bounds;
+
+            CGFloat infoY = CGRectGetMaxY(self->_artShadow.frame) + 18.0;
+            self->_titleLabel.textAlignment = NSTextAlignmentLeft;
+            self->_artistLabel.textAlignment = NSTextAlignmentLeft;
+            self->_titleLabel.frame = CGRectMake(artX, infoY, artSize, titleSize * 2.4);
+            self->_artistLabel.frame = CGRectMake(artX, CGRectGetMaxY(self->_titleLabel.frame) + 3.0, artSize, artistSize * 1.4);
+            self->_progTrack.frame = CGRectMake(artX, CGRectGetMaxY(self->_artistLabel.frame) + 12.0, artSize, 6.0);
+            self->_timeLeftLabel.frame = CGRectMake(artX, CGRectGetMaxY(self->_progTrack.frame) + 6.0, artSize * 0.5, timeSize * 1.3);
+            self->_timeRightLabel.frame = CGRectMake(artX + artSize * 0.5, CGRectGetMaxY(self->_progTrack.frame) + 6.0, artSize * 0.5, timeSize * 1.3);
+
+            self->_lyricsBox.alpha = 1.0;
+            self->_lyricsBox.transform = CGAffineTransformIdentity;
+        }
+
+        IVLPlaybackManager *pm = [IVLPlaybackManager shared];
+        IVLTrack *t = pm.track;
+        if (t.duration > 0) {
+            double p = MAX(0.0, MIN(1.0, ([pm rawTimeMs] / 1000.0) / t.duration));
+            CGFloat newW = self->_progTrack.bounds.size.width * p;
+            self->_lastProgWidth = newW;
+            self->_progFill.frame = CGRectMake(0, 0, newW, self->_progTrack.bounds.size.height);
+        }
+    };
+
+    if (animated && _hasLaidOutOnce) {
+        [UIView animateWithDuration:0.56
+                              delay:0
+             usingSpringWithDamping:0.84
+              initialSpringVelocity:0.0
+                            options:UIViewAnimationOptionCurveEaseInOut | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState
+                         animations:layoutBlock
+                         completion:nil];
+    } else {
+        layoutBlock();
+    }
+}
+
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     CGRect outer = self.view.bounds;
@@ -295,6 +385,7 @@ static UIImage *IVLPreblurredStageBackground(UIImage *source) {
     BOOL forceRotate = (_interactiveModal && outer.size.width < outer.size.height);
     CGFloat w = forceRotate ? outer.size.height : outer.size.width;
     CGFloat h = forceRotate ? outer.size.width : outer.size.height;
+    _stageSize = CGSizeMake(w, h);
 
     _stage.transform = CGAffineTransformIdentity;
     _stage.bounds = CGRectMake(0, 0, w, h);
@@ -307,32 +398,12 @@ static UIImage *IVLPreblurredStageBackground(UIImage *source) {
 
     CGFloat pad = floor(MIN(w, h) * 0.065);
     CGFloat leftW = floor(w * 0.34);
-    CGFloat artSize = floor(MIN(leftW, h * 0.52));
-    CGFloat artX = pad + floor((leftW - artSize) * 0.5);
-    CGFloat artY = floor((h - artSize - 115.0) * 0.5);
-    _artShadow.frame = CGRectMake(artX, MAX(pad, artY), artSize, artSize);
-    _artShadow.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:_artShadow.bounds cornerRadius:18.0].CGPath;
-    _artView.frame = _artShadow.bounds;
-
-    CGFloat titleSize = MAX(17.0, floor(h * 0.035));
-    CGFloat artistSize = MAX(13.0, floor(h * 0.024));
-    CGFloat timeSize = MAX(11.0, floor(h * 0.020));
-    _titleLabel.font = [UIFont systemFontOfSize:titleSize weight:UIFontWeightBold];
-    _artistLabel.font = [UIFont systemFontOfSize:artistSize weight:UIFontWeightMedium];
-    _timeLeftLabel.font = [UIFont monospacedDigitSystemFontOfSize:timeSize weight:UIFontWeightMedium];
-    _timeRightLabel.font = [UIFont monospacedDigitSystemFontOfSize:timeSize weight:UIFontWeightMedium];
-
-    CGFloat infoY = CGRectGetMaxY(_artShadow.frame) + 18.0;
-    _titleLabel.frame = CGRectMake(artX, infoY, artSize, titleSize * 2.4);
-    _artistLabel.frame = CGRectMake(artX, CGRectGetMaxY(_titleLabel.frame) + 3.0, artSize, artistSize * 1.4);
-    _progTrack.frame = CGRectMake(artX, CGRectGetMaxY(_artistLabel.frame) + 12.0, artSize, 6.0);
-    _timeLeftLabel.frame = CGRectMake(artX, CGRectGetMaxY(_progTrack.frame) + 6.0, artSize * 0.5, timeSize * 1.3);
-    _timeRightLabel.frame = CGRectMake(artX + artSize * 0.5, CGRectGetMaxY(_progTrack.frame) + 6.0, artSize * 0.5, timeSize * 1.3);
-
     CGFloat rightX = pad + leftW + pad * 0.75;
     CGFloat rightW = MAX(120.0, w - rightX - pad);
+    CGAffineTransform savedTx = _lyricsBox.transform;
     _lyricsBox.transform = CGAffineTransformIdentity;
     _lyricsBox.frame = CGRectMake(rightX, 0, rightW, h);
+    _lyricsBox.transform = savedTx;
 
     CGFloat mainPt = MAX(24.0, floor(h * 0.055));
     CGFloat sidePt = MAX(16.0, floor(h * 0.035));
@@ -355,18 +426,32 @@ static UIImage *IVLPreblurredStageBackground(UIImage *source) {
         _hudBar.frame = CGRectMake(w - pad - 92.0, MAX(18.0, pad * 0.65), 92.0, 42.0);
     }
 
+    [self applyStageLayoutCentered:_centeredLayout animated:NO];
+    _hasLaidOutOnce = YES;
     _lastIdx = NSNotFound;
     _lastProgWidth = -1.0;
     [self tick];
 }
 
 - (void)refreshTrack {
-    IVLTrack *t = [IVLPlaybackManager shared].track;
+    IVLPlaybackManager *pm = [IVLPlaybackManager shared];
+    IVLTrack *t = pm.track;
     _titleLabel.text = t.title.length ? t.title : IVLLoc(@"nothing_playing");
     _artistLabel.text = t.artist ?: @"";
     _cachedAccent = [IVLTheme accentColor] ?: UIColor.whiteColor;
     _curLabel.textColor = _cachedAccent;
     _curLabel.brightColor = _cachedAccent;
+
+    NSString *tk = t.videoID ?: (t.title ?: @"");
+    if (tk.length && ![tk isEqualToString:_lastTrackKey]) {
+        _lastTrackKey = [tk copy];
+        _awaitingLyricsForNewTrack = YES;
+        _lastIdx = NSNotFound;
+        // When a new song starts, slide back to the left and show "Searching for lyrics…"
+        if (_centeredLayout) {
+            [self applyStageLayoutCentered:NO animated:YES];
+        }
+    }
 
     UIImage *img = [t.artworkImage isKindOfClass:[UIImage class]] ? (UIImage *)t.artworkImage : nil;
     _artView.image = img;
@@ -386,12 +471,17 @@ static UIImage *IVLPreblurredStageBackground(UIImage *source) {
             });
         }
     }
+    [self tick];
 }
 
 - (void)refreshLyrics {
     _cachedAccent = [IVLTheme accentColor] ?: UIColor.whiteColor;
     _curLabel.textColor = _cachedAccent;
     _curLabel.brightColor = _cachedAccent;
+    IVLPlaybackManager *pm = [IVLPlaybackManager shared];
+    if (pm.lyrics.lines.count > 0 || pm.state == IVLLyricsStateNotFound || pm.state == IVLLyricsStateError) {
+        _awaitingLyricsForNewTrack = NO;
+    }
     _lastIdx = NSNotFound;
     [self tick];
 }
@@ -426,17 +516,34 @@ static UIImage *IVLPreblurredStageBackground(UIImage *source) {
 
     IVLLyrics *ly = pm.lyrics;
     if (!ly.lines.count) {
-        if (_lastIdx != -10) {
-            _lastIdx = -10;
+        BOOL searching = (t != nil) && (pm.state == IVLLyricsStateLoading || _awaitingLyricsForNewTrack);
+        if (pm.state == IVLLyricsStateNotFound || pm.state == IVLLyricsStateError) {
+            _awaitingLyricsForNewTrack = NO;
+            searching = NO;
+        }
+        BOOL wantCenter = !searching;
+        if (wantCenter != _centeredLayout) {
+            [self applyStageLayoutCentered:wantCenter animated:YES];
+        }
+
+        NSInteger emptyTag = searching ? -10 : -11;
+        if (_lastIdx != emptyTag) {
+            _lastIdx = emptyTag;
             _curLabel.karaokeActive = NO;
             _curLabel.words = nil;
+            _curLabel.attributedText = nil;
             _prevLabel.text = @"";
-            _curLabel.text = (pm.state == IVLLyricsStateLoading) ? IVLLoc(@"loading") : @"♪";
+            _curLabel.text = searching ? IVLLoc(@"loading") : @"";
             _subLabel.text = @"";
             _next1Label.text = @"";
             _next2Label.text = @"";
         }
         return;
+    }
+
+    _awaitingLyricsForNewTrack = NO;
+    if (_centeredLayout) {
+        [self applyStageLayoutCentered:NO animated:YES];
     }
 
     NSInteger nowMs = [pm currentTimeMs];

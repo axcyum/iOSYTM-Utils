@@ -102,8 +102,8 @@ jobs:
       - name: Build jailbreak packages
         run: |
           cd main
-          make clean package DEBUG=0 FINALPACKAGE=1 JAILBREAK=1
-          make clean package DEBUG=0 FINALPACKAGE=1 JAILBREAK=1 ROOTLESS=1
+          make clean package DEBUG=0 FINALPACKAGE=1 JAILBREAK=1 ${DISCORD_SDK:+DISCORD_SDK="$DISCORD_SDK"}
+          make clean package DEBUG=0 FINALPACKAGE=1 JAILBREAK=1 ROOTLESS=1 ${DISCORD_SDK:+DISCORD_SDK="$DISCORD_SDK"}
           cp packages/*.deb ../out/
 
       - name: Inject into IPA
