@@ -1,6 +1,8 @@
 #import "IVLAudioDSP.h"
 #import "IVLSettings.h"
 #import "IVLLocalization.h"
+#import "IVLPlaybackManager.h"
+#import "YTMHeaders.h"
 #import <AudioToolbox/AudioToolbox.h>
 #import <MediaToolbox/MediaToolbox.h>
 #import <objc/runtime.h>
@@ -19,30 +21,47 @@
 static _Atomic BOOL gKaraokeOn = NO;
 static _Atomic float gKaraokeStrength = 0.85f;
 static _Atomic BOOL gBoostOn = NO;
-static _Atomic float gBoostGain = 1.5f;
+static _Atomic float gBoostGain = 1.84f;
 static _Atomic uint64_t gProcessedCalls = 0;
-static _Atomic int gActivePath = 0; // 1=RenderCB, 2=AudioUnitRender, 3=AudioQueue
+static _Atomic uint64_t gDecodedFramesTotal = 0;
+static _Atomic int gActivePath = 0;
 static _Atomic int gRebindHits = 0;
+static _Atomic uint32_t gLastFormatID = 0;
+static _Atomic int gLastStage = 0;      // 0=ok, 1=inBB, 2=convNew, 3=fillErr, 4=sbarFail
+static _Atomic int gLastError = 0;
+static _Atomic int gSBARFailCount = 0;
+
+typedef struct {
+    float lpLow;
+    float lpHigh;
+} IVLFilterState;
 
 typedef struct {
     AudioUnit unit;
     AURenderCallback origProc;
     void *origRefCon;
-    float lpState;
+    IVLFilterState flt;
 } IVLUnitEntry;
 
 #define kIVLMaxUnits 32
 static IVLUnitEntry gUnits[kIVLMaxUnits];
 static pthread_mutex_t gUnitsLock = PTHREAD_MUTEX_INITIALIZER;
-static float gGlobalLPState = 0.0f;
+static IVLFilterState gGlobalFilter = { 0.0f, 0.0f };
+
+#pragma mark - Renderer Volume Registry (AVSampleBufferAudioRenderer / AVPlayer / AVAudioPlayerNode / AVAudioPlayer)
+
+static NSHashTable *gRenderers = nil;
+static pthread_mutex_t gRenderersLock = PTHREAD_MUTEX_INITIALIZER;
+static const void *kIVLBaseVolumeKey = &kIVLBaseVolumeKey;
+static __thread BOOL tReapplyingVolume = NO;
 
 static inline float IVLSoftClip(float x) {
-    if (x > 0.85f) return 0.85f + 0.15f * tanhf((x - 0.85f) / 0.15f);
-    if (x < -0.85f) return -0.85f + 0.15f * tanhf((x + 0.85f) / 0.15f);
+    if (x > 0.82f) return 0.82f + 0.18f * tanhf((x - 0.82f) / 0.18f);
+    if (x < -0.82f) return -0.82f + 0.18f * tanhf((x + 0.82f) / 0.18f);
     return x;
 }
 
-static void IVLProcessAudioBufferList(AudioBufferList *ioData, UInt32 inNumberFrames, float *lpPtr, int pathID) {
+static void IVLProcessAudioBufferList(AudioBufferList *ioData, UInt32 inNumberFrames, IVLFilterState *fltPtr, int pathID) {
     if (!ioData || ioData->mNumberBuffers == 0 || inNumberFrames == 0) return;
 
     atomic_fetch_add_explicit(&gProcessedCalls, 1, memory_order_relaxed);
@@ -54,10 +73,15 @@ static void IVLProcessAudioBufferList(AudioBufferList *ioData, UInt32 inNumberFr
 
     float kStr = kOn ? atomic_load_explicit(&gKaraokeStrength, memory_order_relaxed) : 0.0f;
     float gain = bOn ? atomic_load_explicit(&gBoostGain, memory_order_relaxed) : 1.0f;
-    const float lpAlpha = 0.022f; // ~160 Hz 1-pole lowpass to preserve bass during vocal removal
-    float lp = lpPtr ? *lpPtr : 0.0f;
+    if (kOn) gain *= 1.14f; // Subtle makeup gain for center energy removed with vocals
 
-    // 1. Non-interleaved stereo Float32 (standard iOS AURemoteIO / AVAudioEngine)
+    // Band-limited vocal isolator: preserves bass/kick (< ~180 Hz) AND crisp hi-hats (> ~6.8 kHz)
+    const float alphaLow = 0.023f;
+    const float alphaHigh = 0.59f;
+    float lpLow = fltPtr ? fltPtr->lpLow : 0.0f;
+    float lpHigh = fltPtr ? fltPtr->lpHigh : 0.0f;
+
+    // 1. Non-interleaved stereo Float32
     if (ioData->mNumberBuffers == 2 &&
         ioData->mBuffers[0].mNumberChannels == 1 &&
         ioData->mBuffers[1].mNumberChannels == 1 &&
@@ -70,19 +94,18 @@ static void IVLProcessAudioBufferList(AudioBufferList *ioData, UInt32 inNumberFr
                 float l = L[i], r = R[i];
                 if (kOn) {
                     float mid = 0.5f * (l + r);
-                    lp += lpAlpha * (mid - lp);
-                    float vocal = mid - lp;
+                    lpLow += alphaLow * (mid - lpLow);
+                    lpHigh += alphaHigh * (mid - lpHigh);
+                    float vocal = lpHigh - lpLow;
                     l -= kStr * vocal;
                     r -= kStr * vocal;
                 }
-                if (bOn) {
-                    l = IVLSoftClip(l * gain);
-                    r = IVLSoftClip(r * gain);
-                }
+                l = IVLSoftClip(l * gain);
+                r = IVLSoftClip(r * gain);
                 L[i] = l;
                 R[i] = r;
             }
-            if (lpPtr) *lpPtr = lp;
+            if (fltPtr) { fltPtr->lpLow = lpLow; fltPtr->lpHigh = lpHigh; }
             return;
         }
     }
@@ -97,24 +120,34 @@ static void IVLProcessAudioBufferList(AudioBufferList *ioData, UInt32 inNumberFr
                 float l = buf[i * 2], r = buf[i * 2 + 1];
                 if (kOn) {
                     float mid = 0.5f * (l + r);
-                    lp += lpAlpha * (mid - lp);
-                    float vocal = mid - lp;
+                    lpLow += alphaLow * (mid - lpLow);
+                    lpHigh += alphaHigh * (mid - lpHigh);
+                    float vocal = lpHigh - lpLow;
                     l -= kStr * vocal;
                     r -= kStr * vocal;
                 }
-                if (bOn) {
-                    l = IVLSoftClip(l * gain);
-                    r = IVLSoftClip(r * gain);
-                }
-                buf[i * 2] = l;
-                buf[i * 2 + 1] = r;
+                buf[i * 2] = IVLSoftClip(l * gain);
+                buf[i * 2 + 1] = IVLSoftClip(r * gain);
             }
-            if (lpPtr) *lpPtr = lp;
+            if (fltPtr) { fltPtr->lpLow = lpLow; fltPtr->lpHigh = lpHigh; }
             return;
         }
     }
 
-    // 3. Interleaved stereo Int16
+    // 3. Mono Float32 (Volume Boost still works on mono streams)
+    if (ioData->mNumberBuffers == 1 &&
+        ioData->mBuffers[0].mNumberChannels == 1 &&
+        ioData->mBuffers[0].mDataByteSize >= inNumberFrames * sizeof(float)) {
+        float *buf = (float *)ioData->mBuffers[0].mData;
+        if (buf && bOn) {
+            for (UInt32 i = 0; i < inNumberFrames; i++) {
+                buf[i] = IVLSoftClip(buf[i] * gain);
+            }
+            return;
+        }
+    }
+
+    // 4. Interleaved stereo Int16
     if (ioData->mNumberBuffers == 1 &&
         ioData->mBuffers[0].mNumberChannels == 2 &&
         ioData->mBuffers[0].mDataByteSize >= inNumberFrames * 2 * sizeof(int16_t)) {
@@ -125,26 +158,23 @@ static void IVLProcessAudioBufferList(AudioBufferList *ioData, UInt32 inNumberFr
                 float r = buf[i * 2 + 1] / 32768.0f;
                 if (kOn) {
                     float mid = 0.5f * (l + r);
-                    lp += lpAlpha * (mid - lp);
-                    float vocal = mid - lp;
+                    lpLow += alphaLow * (mid - lpLow);
+                    lpHigh += alphaHigh * (mid - lpHigh);
+                    float vocal = lpHigh - lpLow;
                     l -= kStr * vocal;
                     r -= kStr * vocal;
                 }
-                if (bOn) {
-                    l = IVLSoftClip(l * gain);
-                    r = IVLSoftClip(r * gain);
-                }
-                l = fmaxf(-1.0f, fminf(1.0f, l));
-                r = fmaxf(-1.0f, fminf(1.0f, r));
+                l = fmaxf(-1.0f, fminf(1.0f, IVLSoftClip(l * gain)));
+                r = fmaxf(-1.0f, fminf(1.0f, IVLSoftClip(r * gain)));
                 buf[i * 2] = (int16_t)(l * 32767.0f);
                 buf[i * 2 + 1] = (int16_t)(r * 32767.0f);
             }
-            if (lpPtr) *lpPtr = lp;
+            if (fltPtr) { fltPtr->lpLow = lpLow; fltPtr->lpHigh = lpHigh; }
         }
     }
 }
 
-#pragma mark - Hook 1: AudioUnitSetProperty (RenderCallback)
+#pragma mark - Low-level CoreAudio C Hooks (fallback paths)
 
 static OSStatus IVLDSPRenderCallback(void *inRefCon,
                                      AudioUnitRenderActionFlags *ioActionFlags,
@@ -155,7 +185,7 @@ static OSStatus IVLDSPRenderCallback(void *inRefCon,
     IVLUnitEntry *entry = (IVLUnitEntry *)inRefCon;
     if (!entry || !entry->origProc) return noErr;
     OSStatus st = entry->origProc(entry->origRefCon, ioActionFlags, inTimeStamp, inBusNumber, inNumberFrames, ioData);
-    if (st == noErr) IVLProcessAudioBufferList(ioData, inNumberFrames, &entry->lpState, 1);
+    if (st == noErr) IVLProcessAudioBufferList(ioData, inNumberFrames, &entry->flt, 1);
     return st;
 }
 
@@ -186,7 +216,8 @@ static OSStatus IVLHookAudioUnitSetProperty(AudioUnit inUnit,
             slot->unit = inUnit;
             slot->origProc = cb->inputProc;
             slot->origRefCon = cb->inputProcRefCon;
-            slot->lpState = 0.0f;
+            slot->flt.lpLow = 0.0f;
+            slot->flt.lpHigh = 0.0f;
             pthread_mutex_unlock(&gUnitsLock);
 
             AURenderCallbackStruct wrapped;
@@ -197,8 +228,6 @@ static OSStatus IVLHookAudioUnitSetProperty(AudioUnit inUnit,
     }
     return orig(inUnit, inID, inScope, inElement, inData, inDataSize);
 }
-
-#pragma mark - Hook 2: AudioUnitRender (direct pull)
 
 typedef OSStatus (*IVLAudioUnitRenderFn)(AudioUnit, AudioUnitRenderActionFlags *, const AudioTimeStamp *, UInt32, UInt32, AudioBufferList *);
 static IVLAudioUnitRenderFn gOrigAudioUnitRender = NULL;
@@ -211,14 +240,11 @@ static OSStatus IVLHookAudioUnitRender(AudioUnit inUnit,
                                        AudioBufferList *ioData) {
     IVLAudioUnitRenderFn orig = gOrigAudioUnitRender ?: AudioUnitRender;
     OSStatus st = orig(inUnit, ioActionFlags, inTimeStamp, inOutputBusNumber, inNumberFrames, ioData);
-    // Avoid double-processing if RenderCallback already processed this unit
     if (st == noErr && atomic_load_explicit(&gActivePath, memory_order_relaxed) != 1) {
-        IVLProcessAudioBufferList(ioData, inNumberFrames, &gGlobalLPState, 2);
+        IVLProcessAudioBufferList(ioData, inNumberFrames, &gGlobalFilter, 2);
     }
     return st;
 }
-
-#pragma mark - Hook 3: AudioQueueEnqueueBuffer (AudioQueue PCM path)
 
 typedef OSStatus (*IVLAudioQueueEnqueueFn)(AudioQueueRef, AudioQueueBufferRef, UInt32, const AudioStreamPacketDescription *);
 static IVLAudioQueueEnqueueFn gOrigAudioQueueEnqueue = NULL;
@@ -228,7 +254,6 @@ static OSStatus IVLHookAudioQueueEnqueueBuffer(AudioQueueRef inAQ,
                                                UInt32 inNumPacketDescs,
                                                const AudioStreamPacketDescription *inPacketDescs) {
     IVLAudioQueueEnqueueFn orig = gOrigAudioQueueEnqueue ?: AudioQueueEnqueueBuffer;
-    // Only touch linear PCM buffers (inNumPacketDescs == 0)
     if (inBuffer && inBuffer->mAudioData && inBuffer->mAudioDataByteSize >= 8 && inNumPacketDescs == 0) {
         AudioStreamBasicDescription asbd;
         UInt32 sz = sizeof(asbd);
@@ -240,7 +265,7 @@ static OSStatus IVLHookAudioQueueEnqueueBuffer(AudioQueueRef inAQ,
             abl.mBuffers[0].mData = inBuffer->mAudioData;
             abl.mBuffers[0].mDataByteSize = inBuffer->mAudioDataByteSize;
             UInt32 frames = asbd.mBytesPerFrame > 0 ? (inBuffer->mAudioDataByteSize / asbd.mBytesPerFrame) : 0;
-            if (frames > 0) IVLProcessAudioBufferList(&abl, frames, &gGlobalLPState, 3);
+            if (frames > 0) IVLProcessAudioBufferList(&abl, frames, &gGlobalFilter, 3);
         }
     }
     return orig(inAQ, inBuffer, inNumPacketDescs, inPacketDescs);
@@ -351,7 +376,7 @@ static void IVLRebindImage(const struct mach_header *header, intptr_t slide) {
     }
 }
 
-#pragma mark - Half-sheet Quick Audio DSP Controller (accessible right from the lyrics screen)
+#pragma mark - Half-sheet Quick Audio DSP Controller
 
 @interface IVLAudioSheetViewController : UITableViewController
 @end
@@ -379,7 +404,8 @@ static void IVLRebindImage(const struct mach_header *header, intptr_t slide) {
 - (void)close { [self dismissViewControllerAnimated:YES completion:nil]; }
 
 - (void)refreshStatus {
-    [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:2] withRowAnimation:UITableViewRowAnimationNone];
+    UITableViewCell *c = [self.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:2]];
+    if (c) c.detailTextLabel.text = [IVLAudioDSP statusText];
 }
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return 3; }
@@ -411,13 +437,13 @@ static void IVLRebindImage(const struct mach_header *header, intptr_t slide) {
         c.accessoryView = sw;
         return c;
     }
-    // Live slider row
     UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
     c.selectionStyle = UITableViewCellSelectionStyleNone;
     BOOL isKaraoke = (indexPath.section == 0);
     NSString *key = isKaraoke ? IVLKeyKaraokeStrength : IVLKeyVolumeBoostLevel;
     double minV = isKaraoke ? 0.0 : 100.0;
-    double maxV = isKaraoke ? 100.0 : 250.0;
+    double maxV = isKaraoke ? 100.0 : 300.0;
+    double step = isKaraoke ? 5.0 : 10.0;
     double cur = MAX(minV, MIN(maxV, [IVLSettings doubleForKey:key]));
 
     UILabel *title = [UILabel new];
@@ -430,7 +456,7 @@ static void IVLRebindImage(const struct mach_header *header, intptr_t slide) {
     UISlider *sl = [UISlider new];
     sl.minimumValue = minV; sl.maximumValue = maxV; sl.value = cur;
     [sl addAction:[UIAction actionWithHandler:^(UIAction *a) {
-        double v = round(((UISlider *)a.sender).value / 5.0) * 5.0;
+        double v = round(((UISlider *)a.sender).value / step) * step;
         val.text = [NSString stringWithFormat:@"%.0f%%", v];
         [IVLSettings setObject:@(v) forKey:key];
     }] forControlEvents:UIControlEventValueChanged];
@@ -452,50 +478,9 @@ static void IVLRebindImage(const struct mach_header *header, intptr_t slide) {
 
 @end
 
-#pragma mark - Manager
+#pragma mark - Real-time Per-Packet AudioConverter Decoder (Opus / AAC / HE-AAC -> Float32 PCM)
 
-@implementation IVLAudioDSP {
-    BOOL _started;
-}
-
-+ (instancetype)shared {
-    static IVLAudioDSP *s;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ s = [self new]; });
-    return s;
-}
-
-+ (NSString *)statusText {
-    uint64_t calls = atomic_load_explicit(&gProcessedCalls, memory_order_relaxed);
-    int path = atomic_load_explicit(&gActivePath, memory_order_relaxed);
-    int hits = atomic_load_explicit(&gRebindHits, memory_order_relaxed);
-    if (calls > 0) {
-        NSString *pName = @"DSP";
-        switch (path) {
-            case 1: pName = @"AudioUnit CB"; break;
-            case 2: pName = @"AudioUnit"; break;
-            case 3: pName = @"AudioQueue"; break;
-            case 4: pName = @"AVAudioPlayerNode"; break;
-            case 5: pName = @"SampleBuf PCM"; break;
-            case 6: pName = @"AVPlayerTap"; break;
-            case 7: pName = @"SampleBuf (passthrough)"; break;
-            case 8: pName = @"SampleBuf DSP"; break;
-            default: break;
-        }
-        return [NSString stringWithFormat:@"Active (%@)", pName];
-    }
-    return [NSString stringWithFormat:@"Standby (hooks: %d)", hits];
-}
-
-+ (void)processPCMBuffer:(AVAudioPCMBuffer *)buffer {
-    if (!buffer || buffer.frameLength == 0) return;
-    AudioBufferList *abl = buffer.mutableAudioBufferList;
-    if (abl) {
-        IVLProcessAudioBufferList(abl, buffer.frameLength, &gGlobalLPState, 4);
-    }
-}
-
-#pragma mark - Real-time AudioConverter decoder for encoded CMSampleBuffer (AAC/Opus -> Float32 PCM -> DSP)
+#define kIVLNeedMoreInput ((OSStatus)0x6E6D706B) // 'nmpk' — prevents AudioConverter from marking permanent EOF
 
 typedef struct {
     AudioConverterRef converter;
@@ -510,48 +495,58 @@ static IVLSampleDecoder gDecoder = {0};
 static pthread_mutex_t gDecoderLock = PTHREAD_MUTEX_INITIALIZER;
 
 typedef struct {
-    const uint8_t *bytes;
-    size_t byteLen;
-    AudioStreamPacketDescription *pktDescs;
-    UInt32 numPackets;
-    UInt32 consumedPackets;
-    AudioStreamPacketDescription fallbackDesc;
-} IVLConverterFeed;
+    const uint8_t *pktBytes;
+    UInt32 pktLen;
+    UInt32 channels;
+    UInt32 varFrames;
+    BOOL consumed;
+    AudioStreamPacketDescription desc;
+} IVLSinglePacketFeed;
 
-static OSStatus IVLConverterInputProc(AudioConverterRef inAudioConverter,
-                                      UInt32 *ioNumberDataPackets,
-                                      AudioBufferList *ioData,
-                                      AudioStreamPacketDescription **outDataPacketDescription,
-                                      void *inUserData) {
-    IVLConverterFeed *feed = (IVLConverterFeed *)inUserData;
-    if (!feed || feed->consumedPackets >= feed->numPackets) {
-        *ioNumberDataPackets = 0;
-        return noErr;
-    }
-    UInt32 remaining = feed->numPackets - feed->consumedPackets;
-    UInt32 give = (*ioNumberDataPackets < remaining) ? *ioNumberDataPackets : remaining;
-
-    if (feed->pktDescs) {
-        AudioStreamPacketDescription *startDesc = &feed->pktDescs[feed->consumedPackets];
-        ioData->mNumberBuffers = 1;
-        ioData->mBuffers[0].mData = (void *)feed->bytes;
-        ioData->mBuffers[0].mDataByteSize = (UInt32)feed->byteLen;
-        if (outDataPacketDescription) *outDataPacketDescription = startDesc;
-        feed->consumedPackets += give;
-        *ioNumberDataPackets = give;
+// RFC 6716 Section 3.1: exact Opus packet sample count at 48 kHz
+static UInt32 IVLOpusPacketFrames(const uint8_t *pkt, UInt32 len) {
+    if (!pkt || len == 0) return 960;
+    uint8_t toc = pkt[0];
+    uint8_t cfg = toc >> 3;
+    UInt32 frameSize = 960;
+    if (cfg < 12) {
+        static const UInt32 kSilk[4] = { 480, 960, 1920, 2880 };
+        frameSize = kSilk[cfg & 3];
+    } else if (cfg < 16) {
+        frameSize = (cfg & 1) ? 960 : 480;
     } else {
-        ioData->mNumberBuffers = 1;
-        ioData->mBuffers[0].mData = (void *)feed->bytes;
-        ioData->mBuffers[0].mDataByteSize = (UInt32)feed->byteLen;
-        if (outDataPacketDescription) {
-            feed->fallbackDesc.mStartOffset = 0;
-            feed->fallbackDesc.mVariableFramesInPacket = 0;
-            feed->fallbackDesc.mDataByteSize = (UInt32)feed->byteLen;
-            *outDataPacketDescription = &feed->fallbackDesc;
-        }
-        feed->consumedPackets = feed->numPackets;
-        *ioNumberDataPackets = remaining;
+        static const UInt32 kCelt[4] = { 120, 240, 480, 960 };
+        frameSize = kCelt[cfg & 3];
     }
+    uint8_t c = toc & 3;
+    UInt32 count = 1;
+    if (c == 1 || c == 2) count = 2;
+    else if (c == 3) count = (len >= 2 && (pkt[1] & 0x3F) > 0) ? (pkt[1] & 0x3F) : 1;
+    return frameSize * count;
+}
+
+static OSStatus IVLSinglePacketInputProc(AudioConverterRef inAudioConverter,
+                                         UInt32 *ioNumberDataPackets,
+                                         AudioBufferList *ioData,
+                                         AudioStreamPacketDescription **outDataPacketDescription,
+                                         void *inUserData) {
+    IVLSinglePacketFeed *feed = (IVLSinglePacketFeed *)inUserData;
+    if (!feed || feed->consumed || feed->pktLen == 0) {
+        *ioNumberDataPackets = 0;
+        return kIVLNeedMoreInput;
+    }
+    feed->desc.mStartOffset = 0;
+    feed->desc.mVariableFramesInPacket = feed->varFrames;
+    feed->desc.mDataByteSize = feed->pktLen;
+
+    ioData->mNumberBuffers = 1;
+    ioData->mBuffers[0].mNumberChannels = feed->channels;
+    ioData->mBuffers[0].mData = (void *)feed->pktBytes;
+    ioData->mBuffers[0].mDataByteSize = feed->pktLen;
+    if (outDataPacketDescription) *outDataPacketDescription = &feed->desc;
+
+    feed->consumed = YES;
+    *ioNumberDataPackets = 1;
     return noErr;
 }
 
@@ -569,27 +564,64 @@ static BOOL IVLEnsureDecoderLocked(const AudioStreamBasicDescription *inASBD, CM
     if (gDecoder.outFmt) { CFRelease(gDecoder.outFmt); gDecoder.outFmt = NULL; }
     if (gDecoder.cookie) { free(gDecoder.cookie); gDecoder.cookie = NULL; gDecoder.cookieSize = 0; }
 
+    UInt32 outCh = (inASBD->mChannelsPerFrame >= 1 && inASBD->mChannelsPerFrame <= 2) ? inASBD->mChannelsPerFrame : 2;
+    Float64 outSR = (inASBD->mSampleRate > 0) ? inASBD->mSampleRate : 48000.0;
+
     AudioStreamBasicDescription outASBD;
     memset(&outASBD, 0, sizeof(outASBD));
-    outASBD.mSampleRate = inASBD->mSampleRate > 0 ? inASBD->mSampleRate : 44100.0;
+    outASBD.mSampleRate = outSR;
     outASBD.mFormatID = kAudioFormatLinearPCM;
-    outASBD.mFormatFlags = kLinearPCMFormatFlagIsFloat | kLinearPCMFormatFlagIsPacked;
+    outASBD.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;
     outASBD.mBitsPerChannel = 32;
-    outASBD.mChannelsPerFrame = 2;
-    outASBD.mBytesPerFrame = 2 * sizeof(float);
+    outASBD.mChannelsPerFrame = outCh;
+    outASBD.mBytesPerFrame = outCh * sizeof(float);
     outASBD.mFramesPerPacket = 1;
     outASBD.mBytesPerPacket = outASBD.mBytesPerFrame;
 
     AudioConverterRef conv = NULL;
-    if (AudioConverterNew(inASBD, &outASBD, &conv) != noErr || !conv) return NO;
+    OSStatus st = AudioConverterNew(inASBD, &outASBD, &conv);
+    if ((st != noErr || !conv) && inASBD->mFormatID == kAudioFormatOpus) {
+        AudioStreamBasicDescription fixedIn = *inASBD;
+        if (fixedIn.mSampleRate <= 0) fixedIn.mSampleRate = 48000.0;
+        if (fixedIn.mChannelsPerFrame == 0) fixedIn.mChannelsPerFrame = 2;
+        if (fixedIn.mFramesPerPacket == 0) fixedIn.mFramesPerPacket = 960;
+        outASBD.mSampleRate = fixedIn.mSampleRate;
+        outASBD.mChannelsPerFrame = fixedIn.mChannelsPerFrame;
+        outASBD.mBytesPerFrame = outASBD.mChannelsPerFrame * sizeof(float);
+        outASBD.mBytesPerPacket = outASBD.mBytesPerFrame;
+        st = AudioConverterNew(&fixedIn, &outASBD, &conv);
+    }
+    if (st != noErr || !conv) {
+        AudioClassDescription swDesc = { kAudioDecoderComponentType, inASBD->mFormatID, kAppleSoftwareAudioCodecManufacturer };
+        st = AudioConverterNewSpecific(inASBD, &outASBD, 1, &swDesc, &conv);
+    }
+    if (st != noErr || !conv) {
+        atomic_store_explicit(&gLastStage, 2, memory_order_relaxed);
+        atomic_store_explicit(&gLastError, (int)st, memory_order_relaxed);
+        return NO;
+    }
+
     if (cPtr && cSize > 0) {
         AudioConverterSetProperty(conv, kAudioConverterDecompressionMagicCookie, (UInt32)cSize, cPtr);
         gDecoder.cookie = malloc(cSize);
         if (gDecoder.cookie) { memcpy(gDecoder.cookie, cPtr, cSize); gDecoder.cookieSize = cSize; }
+    } else if (inASBD->mFormatID == kAudioFormatOpus) {
+        uint8_t opusHead[19] = {
+            'O','p','u','s','H','e','a','d',
+            1, (uint8_t)outASBD.mChannelsPerFrame,
+            0x38, 0x01,
+            0x80, 0xBB, 0x00, 0x00,
+            0x00, 0x00, 0
+        };
+        AudioConverterSetProperty(conv, kAudioConverterDecompressionMagicCookie, sizeof(opusHead), opusHead);
     }
+
     CMFormatDescriptionRef outFmt = NULL;
-    if (CMAudioFormatDescriptionCreate(kCFAllocatorDefault, &outASBD, 0, NULL, 0, NULL, NULL, &outFmt) != noErr || !outFmt) {
+    OSStatus fmtSt = CMAudioFormatDescriptionCreate(kCFAllocatorDefault, &outASBD, 0, NULL, 0, NULL, NULL, &outFmt);
+    if (fmtSt != noErr || !outFmt) {
         AudioConverterDispose(conv);
+        atomic_store_explicit(&gLastStage, 2, memory_order_relaxed);
+        atomic_store_explicit(&gLastError, (int)fmtSt, memory_order_relaxed);
         return NO;
     }
 
@@ -600,10 +632,143 @@ static BOOL IVLEnsureDecoderLocked(const AudioStreamBasicDescription *inASBD, CM
     return YES;
 }
 
+static NSString *IVLFourCCString(uint32_t fcc) {
+    if (fcc == 0) return @"";
+    char c[5];
+    c[0] = (char)((fcc >> 24) & 0xFF);
+    c[1] = (char)((fcc >> 16) & 0xFF);
+    c[2] = (char)((fcc >> 8) & 0xFF);
+    c[3] = (char)(fcc & 0xFF);
+    c[4] = 0;
+    for (int i = 0; i < 4; i++) {
+        if (c[i] < 32 || c[i] > 126) return [NSString stringWithFormat:@"0x%08x", fcc];
+    }
+    return [[NSString stringWithUTF8String:c] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+}
+
+#pragma mark - Manager
+
+@implementation IVLAudioDSP {
+    BOOL _started;
+    BOOL _prevKaraokeOn;
+    double _prevKaraokeStrength;
+    BOOL _prevBoostOn;
+    double _prevBoostLevel;
+    uint64_t _reseekToken;
+}
+
++ (instancetype)shared {
+    static IVLAudioDSP *s;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ s = [self new]; });
+    return s;
+}
+
++ (void)registerRenderer:(id)renderer {
+    if (!renderer) return;
+    BOOL isNew = NO;
+    pthread_mutex_lock(&gRenderersLock);
+    if (!gRenderers) gRenderers = [NSHashTable weakObjectsHashTable];
+    if (![gRenderers containsObject:renderer]) {
+        [gRenderers addObject:renderer];
+        isNew = YES;
+    }
+    pthread_mutex_unlock(&gRenderersLock);
+
+    if (isNew && !objc_getAssociatedObject(renderer, kIVLBaseVolumeKey)) {
+        float cur = 1.0f;
+        if ([renderer respondsToSelector:@selector(volume)]) {
+            cur = [(AVPlayer *)renderer volume];
+            if (cur <= 0.001f || cur > 1.0f) cur = 1.0f;
+        }
+        objc_setAssociatedObject(renderer, kIVLBaseVolumeKey, @(cur), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if (atomic_load_explicit(&gBoostOn, memory_order_relaxed) && cur < 0.999f && [renderer respondsToSelector:@selector(setVolume:)]) {
+            tReapplyingVolume = YES;
+            [(AVPlayer *)renderer setVolume:cur];
+            tReapplyingVolume = NO;
+        }
+    }
+}
+
++ (float)scaledVolumeForRenderer:(id)renderer requestedVolume:(float)volume {
+    if (renderer) {
+        [self registerRenderer:renderer];
+        if (!tReapplyingVolume) {
+            objc_setAssociatedObject(renderer, kIVLBaseVolumeKey, @(volume), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+    }
+    if (atomic_load_explicit(&gBoostOn, memory_order_relaxed) && volume > 0.0001f) {
+        // Lift YouTube's loudness-normalized renderer attenuation up to full 1.0 headroom;
+        // PCM DSP simultaneously applies the rest of the gain above 1.0 with soft-clipping.
+        float gain = atomic_load_explicit(&gBoostGain, memory_order_relaxed);
+        return fminf(1.0f, volume * gain);
+    }
+    return volume;
+}
+
+- (void)reapplyVolumesToAllRenderers {
+    pthread_mutex_lock(&gRenderersLock);
+    NSArray *all = gRenderers ? gRenderers.allObjects : @[];
+    pthread_mutex_unlock(&gRenderersLock);
+
+    for (id r in all) {
+        if (![r respondsToSelector:@selector(setVolume:)]) continue;
+        NSNumber *base = objc_getAssociatedObject(r, kIVLBaseVolumeKey);
+        float baseVol = base ? base.floatValue : 1.0f;
+        tReapplyingVolume = YES;
+        [(AVPlayer *)r setVolume:baseVol];
+        tReapplyingVolume = NO;
+    }
+}
+
++ (void)noteRendererFailure:(int)errCode {
+    atomic_store_explicit(&gLastStage, 4, memory_order_relaxed);
+    atomic_store_explicit(&gLastError, errCode, memory_order_relaxed);
+    atomic_fetch_add_explicit(&gSBARFailCount, 1, memory_order_relaxed);
+}
+
++ (NSString *)statusText {
+    uint64_t calls = atomic_load_explicit(&gProcessedCalls, memory_order_relaxed);
+    int path = atomic_load_explicit(&gActivePath, memory_order_relaxed);
+    int hits = atomic_load_explicit(&gRebindHits, memory_order_relaxed);
+    int stage = atomic_load_explicit(&gLastStage, memory_order_relaxed);
+    int err = atomic_load_explicit(&gLastError, memory_order_relaxed);
+    NSString *codec = IVLFourCCString(atomic_load_explicit(&gLastFormatID, memory_order_relaxed));
+
+    if (stage != 0 && (atomic_load_explicit(&gKaraokeOn, memory_order_relaxed) || atomic_load_explicit(&gBoostOn, memory_order_relaxed))) {
+        return [NSString stringWithFormat:@"Err s%d:%d (%@)", stage, err, codec.length ? codec : @"?"];
+    }
+    if (calls > 0) {
+        NSString *pName = @"DSP";
+        switch (path) {
+            case 1: pName = @"AudioUnit CB"; break;
+            case 2: pName = @"AudioUnit"; break;
+            case 3: pName = @"AudioQueue"; break;
+            case 4: pName = @"AVAudioPlayerNode"; break;
+            case 5: pName = @"SampleBuf PCM"; break;
+            case 6: pName = @"AVPlayerTap"; break;
+            case 7: pName = codec.length ? [NSString stringWithFormat:@"Passthrough · %@", codec] : @"SampleBuf (passthrough)"; break;
+            case 8: pName = codec.length ? [NSString stringWithFormat:@"DSP · %@", codec] : @"SampleBuf DSP"; break;
+            default: break;
+        }
+        return [NSString stringWithFormat:@"Active (%@)", pName];
+    }
+    return [NSString stringWithFormat:@"Standby (hooks: %d)", hits];
+}
+
++ (void)processPCMBuffer:(AVAudioPCMBuffer *)buffer {
+    if (!buffer || buffer.frameLength == 0) return;
+    AudioBufferList *abl = buffer.mutableAudioBufferList;
+    if (abl) {
+        IVLProcessAudioBufferList(abl, buffer.frameLength, &gGlobalFilter, 4);
+    }
+}
+
 + (void)resetDecoder {
     pthread_mutex_lock(&gDecoderLock);
     if (gDecoder.converter) AudioConverterReset(gDecoder.converter);
-    gGlobalLPState = 0.0f;
+    gGlobalFilter.lpLow = 0.0f;
+    gGlobalFilter.lpHigh = 0.0f;
     pthread_mutex_unlock(&gDecoderLock);
 }
 
@@ -612,6 +777,8 @@ static BOOL IVLEnsureDecoderLocked(const AudioStreamBasicDescription *inASBD, CM
     CMFormatDescriptionRef fmt = CMSampleBufferGetFormatDescription(sampleBuffer);
     const AudioStreamBasicDescription *asbd = fmt ? CMAudioFormatDescriptionGetStreamBasicDescription(fmt) : NULL;
     if (!asbd) return NULL;
+
+    atomic_store_explicit(&gLastFormatID, (uint32_t)asbd->mFormatID, memory_order_relaxed);
 
     // Linear PCM path (in-place)
     if (asbd->mFormatID == kAudioFormatLinearPCM) {
@@ -622,18 +789,22 @@ static BOOL IVLEnsureDecoderLocked(const AudioStreamBasicDescription *inASBD, CM
             kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment, &blockBuf);
         if (st == noErr) {
             UInt32 frames = (UInt32)CMSampleBufferGetNumSamples(sampleBuffer);
-            if (frames > 0) IVLProcessAudioBufferList(&abl, frames, &gGlobalLPState, 5);
+            if (frames > 0) IVLProcessAudioBufferList(&abl, frames, &gGlobalFilter, 5);
         }
         if (blockBuf) CFRelease(blockBuf);
         return NULL;
     }
 
-    // Encoded audio path (AAC / HE-AAC / Opus): zero-cost passthrough when both Karaoke & Boost are OFF
+    // Encoded audio path (Opus / AAC / HE-AAC): zero-cost passthrough when both Karaoke & Boost are OFF
     BOOL kOn = atomic_load_explicit(&gKaraokeOn, memory_order_relaxed);
     BOOL bOn = atomic_load_explicit(&gBoostOn, memory_order_relaxed);
     if (!kOn && !bOn) {
         atomic_fetch_add_explicit(&gProcessedCalls, 1, memory_order_relaxed);
         atomic_store_explicit(&gActivePath, 7, memory_order_relaxed);
+        return NULL;
+    }
+
+    if (atomic_load_explicit(&gSBARFailCount, memory_order_relaxed) >= 4) {
         return NULL;
     }
 
@@ -646,14 +817,15 @@ static BOOL IVLEnsureDecoderLocked(const AudioStreamBasicDescription *inASBD, CM
     if (!rawBytes) return NULL;
     if (CMBlockBufferCopyDataBytes(inBB, 0, totalLen, rawBytes) != kCMBlockBufferNoErr) {
         free(rawBytes);
+        atomic_store_explicit(&gLastStage, 1, memory_order_relaxed);
         return NULL;
     }
 
-    CMItemCount numSamples = CMSampleBufferGetNumSamples(sampleBuffer);
     size_t pdSize = 0;
     AudioStreamPacketDescription *pktDescs = NULL;
-    UInt32 numPackets = (UInt32)MAX(1, numSamples);
-    if (CMSampleBufferGetAudioStreamPacketDescriptions(sampleBuffer, 0, NULL, &pdSize) == noErr && pdSize > 0) {
+    UInt32 numPackets = 1;
+    if (CMSampleBufferGetAudioStreamPacketDescriptions(sampleBuffer, 0, NULL, &pdSize) == noErr &&
+        pdSize >= sizeof(AudioStreamPacketDescription)) {
         pktDescs = (AudioStreamPacketDescription *)malloc(pdSize);
         if (pktDescs) {
             if (CMSampleBufferGetAudioStreamPacketDescriptions(sampleBuffer, pdSize, pktDescs, NULL) == noErr) {
@@ -663,43 +835,81 @@ static BOOL IVLEnsureDecoderLocked(const AudioStreamBasicDescription *inASBD, CM
                 pktDescs = NULL;
             }
         }
+    } else if (asbd->mBytesPerPacket > 0) {
+        numPackets = (UInt32)MAX(1, totalLen / asbd->mBytesPerPacket);
     }
 
-    UInt32 framesPerPkt = asbd->mFramesPerPacket > 0 ? asbd->mFramesPerPacket : 2048;
-    UInt32 maxOutFrames = MAX((UInt32)numSamples, numPackets * framesPerPkt) + 2048;
-    size_t outBytes = (size_t)maxOutFrames * 2 * sizeof(float);
-    float *pcmOut = (float *)malloc(outBytes);
-    if (!pcmOut) {
-        free(rawBytes);
-        if (pktDescs) free(pktDescs);
-        return NULL;
-    }
+    BOOL isOpus = (asbd->mFormatID == kAudioFormatOpus);
+    UInt32 maxFramesPerPkt = isOpus ? 5760 : MAX(2048U, asbd->mFramesPerPacket);
+    UInt32 maxOutFrames = numPackets * maxFramesPerPkt + 2048;
 
     UInt32 totalDecoded = 0;
+    UInt32 outCh = 2;
+    float *pcmOut = NULL;
     CMFormatDescriptionRef outFmtRetained = NULL;
 
     pthread_mutex_lock(&gDecoderLock);
     if (IVLEnsureDecoderLocked(asbd, fmt)) {
-        IVLConverterFeed feed = { rawBytes, totalLen, pktDescs, numPackets, 0 };
-        while (feed.consumedPackets < feed.numPackets && totalDecoded < maxOutFrames) {
-            UInt32 want = maxOutFrames - totalDecoded;
-            AudioBufferList outABL;
-            outABL.mNumberBuffers = 1;
-            outABL.mBuffers[0].mNumberChannels = 2;
-            outABL.mBuffers[0].mData = pcmOut + (totalDecoded * 2);
-            outABL.mBuffers[0].mDataByteSize = want * 2 * sizeof(float);
-            OSStatus st = AudioConverterFillComplexBuffer(gDecoder.converter, IVLConverterInputProc, &feed, &want, &outABL, NULL);
-            if (want > 0) totalDecoded += want;
-            if (st != noErr || want == 0) break;
-        }
-        if (totalDecoded > 0 && gDecoder.outFmt) {
-            AudioBufferList dspABL;
-            dspABL.mNumberBuffers = 1;
-            dspABL.mBuffers[0].mNumberChannels = 2;
-            dspABL.mBuffers[0].mData = pcmOut;
-            dspABL.mBuffers[0].mDataByteSize = totalDecoded * 2 * sizeof(float);
-            IVLProcessAudioBufferList(&dspABL, totalDecoded, &gGlobalLPState, 8);
-            outFmtRetained = (CMFormatDescriptionRef)CFRetain(gDecoder.outFmt);
+        outCh = gDecoder.outASBD.mChannelsPerFrame;
+        pcmOut = (float *)malloc((size_t)maxOutFrames * outCh * sizeof(float));
+        if (pcmOut) {
+            for (UInt32 p = 0; p < numPackets && totalDecoded < maxOutFrames; p++) {
+                const uint8_t *pktPtr = rawBytes;
+                UInt32 pktLen = (UInt32)totalLen;
+                UInt32 pktFrames = isOpus ? 960 : (asbd->mFramesPerPacket > 0 ? asbd->mFramesPerPacket : 1024);
+
+                if (pktDescs) {
+                    AudioStreamPacketDescription d = pktDescs[p];
+                    if ((size_t)d.mStartOffset + d.mDataByteSize > totalLen || d.mDataByteSize == 0) continue;
+                    pktPtr = rawBytes + d.mStartOffset;
+                    pktLen = d.mDataByteSize;
+                    if (d.mVariableFramesInPacket > 0) pktFrames = d.mVariableFramesInPacket;
+                    else if (isOpus) pktFrames = IVLOpusPacketFrames(pktPtr, pktLen);
+                } else if (asbd->mBytesPerPacket > 0) {
+                    pktPtr = rawBytes + (size_t)p * asbd->mBytesPerPacket;
+                    pktLen = asbd->mBytesPerPacket;
+                } else if (isOpus) {
+                    pktFrames = IVLOpusPacketFrames(pktPtr, pktLen);
+                }
+
+                UInt32 avail = maxOutFrames - totalDecoded;
+                UInt32 want = MIN(avail, MAX(pktFrames, isOpus ? pktFrames : 2048U));
+                if (isOpus) want = MIN(avail, pktFrames);
+
+                IVLSinglePacketFeed feed;
+                memset(&feed, 0, sizeof(feed));
+                feed.pktBytes = pktPtr;
+                feed.pktLen = pktLen;
+                feed.channels = outCh;
+                feed.varFrames = pktFrames;
+                feed.consumed = NO;
+
+                AudioBufferList outABL;
+                outABL.mNumberBuffers = 1;
+                outABL.mBuffers[0].mNumberChannels = outCh;
+                outABL.mBuffers[0].mData = pcmOut + ((size_t)totalDecoded * outCh);
+                outABL.mBuffers[0].mDataByteSize = want * outCh * sizeof(float);
+
+                OSStatus st = AudioConverterFillComplexBuffer(gDecoder.converter, IVLSinglePacketInputProc, &feed, &want, &outABL, NULL);
+                if (want > 0) totalDecoded += want;
+                if (st != noErr && st != kIVLNeedMoreInput) {
+                    atomic_store_explicit(&gLastStage, 3, memory_order_relaxed);
+                    atomic_store_explicit(&gLastError, (int)st, memory_order_relaxed);
+                    break;
+                }
+            }
+
+            if (totalDecoded > 0 && gDecoder.outFmt) {
+                atomic_store_explicit(&gLastStage, 0, memory_order_relaxed);
+                atomic_fetch_add_explicit(&gDecodedFramesTotal, totalDecoded, memory_order_relaxed);
+                AudioBufferList dspABL;
+                dspABL.mNumberBuffers = 1;
+                dspABL.mBuffers[0].mNumberChannels = outCh;
+                dspABL.mBuffers[0].mData = pcmOut;
+                dspABL.mBuffers[0].mDataByteSize = totalDecoded * outCh * sizeof(float);
+                IVLProcessAudioBufferList(&dspABL, totalDecoded, &gGlobalFilter, 8);
+                outFmtRetained = (CMFormatDescriptionRef)CFRetain(gDecoder.outFmt);
+            }
         }
     }
     pthread_mutex_unlock(&gDecoderLock);
@@ -707,13 +917,13 @@ static BOOL IVLEnsureDecoderLocked(const AudioStreamBasicDescription *inASBD, CM
     free(rawBytes);
     if (pktDescs) free(pktDescs);
 
-    if (totalDecoded == 0 || !outFmtRetained) {
-        free(pcmOut);
+    if (totalDecoded == 0 || !outFmtRetained || !pcmOut) {
+        if (pcmOut) free(pcmOut);
         if (outFmtRetained) CFRelease(outFmtRetained);
         return NULL;
     }
 
-    size_t finalBytes = (size_t)totalDecoded * 2 * sizeof(float);
+    size_t finalBytes = (size_t)totalDecoded * outCh * sizeof(float);
     CMBlockBufferRef outBB = NULL;
     OSStatus bbSt = CMBlockBufferCreateWithMemoryBlock(kCFAllocatorDefault, pcmOut, finalBytes, kCFAllocatorMalloc, NULL, 0, finalBytes, 0, &outBB);
     if (bbSt != kCMBlockBufferNoErr || !outBB) {
@@ -723,13 +933,28 @@ static BOOL IVLEnsureDecoderLocked(const AudioStreamBasicDescription *inASBD, CM
     }
 
     CMTime pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
-
     CMSampleBufferRef outSB = NULL;
     OSStatus sbSt = CMAudioSampleBufferCreateReadyWithPacketDescriptions(
         kCFAllocatorDefault, outBB, outFmtRetained, totalDecoded, pts, NULL, &outSB);
     CFRelease(outBB);
     CFRelease(outFmtRetained);
-    return (sbSt == noErr) ? outSB : NULL;
+
+    if (sbSt != noErr || !outSB) return NULL;
+
+    // Preserve TrimDurationAtStart / TrimDurationAtEnd & DoNotDisplay seek preroll attachments
+    CMPropagateAttachments(sampleBuffer, outSB);
+    CFArrayRef inSampleAtts = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, false);
+    if (inSampleAtts && CFArrayGetCount(inSampleAtts) > 0) {
+        CFDictionaryRef d0 = (CFDictionaryRef)CFArrayGetValueAtIndex(inSampleAtts, 0);
+        if (d0 && CFDictionaryGetValue(d0, kCMSampleAttachmentKey_DoNotDisplay) == kCFBooleanTrue) {
+            CFArrayRef outSampleAtts = CMSampleBufferGetSampleAttachmentsArray(outSB, true);
+            if (outSampleAtts && CFArrayGetCount(outSampleAtts) > 0) {
+                CFMutableDictionaryRef outD0 = (CFMutableDictionaryRef)CFArrayGetValueAtIndex(outSampleAtts, 0);
+                if (outD0) CFDictionarySetValue(outD0, kCMSampleAttachmentKey_DoNotDisplay, kCFBooleanTrue);
+            }
+        }
+    }
+    return outSB;
 }
 
 static void IVLTapProcess(MTAudioProcessingTapRef tap,
@@ -740,7 +965,7 @@ static void IVLTapProcess(MTAudioProcessingTapRef tap,
                           MTAudioProcessingTapFlags *flagsOut) {
     OSStatus st = MTAudioProcessingTapGetSourceAudio(tap, numberFrames, bufferListInOut, flagsOut, NULL, numberFramesOut);
     if (st == noErr && numberFramesOut && *numberFramesOut > 0) {
-        IVLProcessAudioBufferList(bufferListInOut, (UInt32)(*numberFramesOut), &gGlobalLPState, 6);
+        IVLProcessAudioBufferList(bufferListInOut, (UInt32)(*numberFramesOut), &gGlobalFilter, 6);
     }
 }
 
@@ -790,24 +1015,68 @@ static void IVLTapProcess(MTAudioProcessingTapRef tap,
     gOrigAudioUnitSetProperty = (IVLAudioUnitSetPropertyFn)dlsym(RTLD_DEFAULT, "AudioUnitSetProperty");
     gOrigAudioUnitRender = (IVLAudioUnitRenderFn)dlsym(RTLD_DEFAULT, "AudioUnitRender");
     gOrigAudioQueueEnqueue = (IVLAudioQueueEnqueueFn)dlsym(RTLD_DEFAULT, "AudioQueueEnqueueBuffer");
-    [self syncSettings];
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(syncSettings) name:IVLSettingsDidChangeNotification object:nil];
+    [self applySettingsInitial:YES];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onSettingsChanged) name:IVLSettingsDidChangeNotification object:nil];
     _dyld_register_func_for_add_image(IVLRebindImage);
 }
 
-- (void)syncSettings {
+- (void)onSettingsChanged {
+    [self applySettingsInitial:NO];
+}
+
+// AVSampleBufferAudioRenderer pre-buffers ~10-15s of compressed audio in mediaserverd.
+// Seeking to the current timestamp flushes SBAR from RAM cache so DSP changes take effect in ~0.1s.
+- (void)scheduleSBARFlushWithDelay:(NSTimeInterval)delay {
+    int path = atomic_load_explicit(&gActivePath, memory_order_relaxed);
+    if (path != 7 && path != 8) return;
+    uint64_t tok = ++_reseekToken;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (tok != self->_reseekToken) return;
+        YTPlayerViewController *p = (YTPlayerViewController *)[IVLPlaybackManager shared].player;
+        if (!p) return;
+        @try {
+            if ([p respondsToSelector:@selector(currentVideoMediaTime)] && [p respondsToSelector:@selector(seekToTime:)]) {
+                CGFloat t = [p currentVideoMediaTime];
+                if (t >= 0) [p seekToTime:t];
+            }
+        } @catch (__unused id e) {}
+    });
+}
+
+- (void)applySettingsInitial:(BOOL)initial {
     BOOL kOn = [IVLSettings boolForKey:IVLKeyKaraokeMode];
     double kStr = [IVLSettings doubleForKey:IVLKeyKaraokeStrength];
     if (kStr < 0 || kStr > 100) kStr = 85.0;
 
     BOOL bOn = [IVLSettings boolForKey:IVLKeyVolumeBoost];
     double bPct = [IVLSettings doubleForKey:IVLKeyVolumeBoostLevel];
-    if (bPct < 100 || bPct > 250) bPct = 150.0;
+    if (bPct < 100 || bPct > 300) bPct = 150.0;
+
+    BOOL toggleChanged = (!initial && (kOn != _prevKaraokeOn || bOn != _prevBoostOn));
+    BOOL sliderChanged = (!initial && (fabs(kStr - _prevKaraokeStrength) > 0.1 || fabs(bPct - _prevBoostLevel) > 0.1));
+
+    _prevKaraokeOn = kOn;
+    _prevKaraokeStrength = kStr;
+    _prevBoostOn = bOn;
+    _prevBoostLevel = bPct;
+
+    // Exponential loudness curve: 150% -> 1.84x, 200% -> 2.83x, 250% -> 3.95x, 300% -> 5.20x
+    float gain = (bPct <= 100.0) ? 1.0f : powf((float)(bPct / 100.0), 1.5f);
 
     atomic_store_explicit(&gKaraokeOn, kOn, memory_order_relaxed);
     atomic_store_explicit(&gKaraokeStrength, (float)(kStr / 100.0), memory_order_relaxed);
     atomic_store_explicit(&gBoostOn, bOn, memory_order_relaxed);
-    atomic_store_explicit(&gBoostGain, (float)(bPct / 100.0), memory_order_relaxed);
+    atomic_store_explicit(&gBoostGain, gain, memory_order_relaxed);
+
+    if (toggleChanged) {
+        atomic_store_explicit(&gSBARFailCount, 0, memory_order_relaxed);
+        atomic_store_explicit(&gLastStage, 0, memory_order_relaxed);
+    }
+
+    if (toggleChanged || sliderChanged) {
+        [self reapplyVolumesToAllRenderers];
+        [self scheduleSBARFlushWithDelay:toggleChanged ? 0.04 : 0.30];
+    }
 }
 
 @end

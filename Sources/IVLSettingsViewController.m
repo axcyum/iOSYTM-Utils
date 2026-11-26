@@ -517,7 +517,7 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
 
     IVLRow *bOn = [IVLRow type:IVLRowSwitch key:IVLKeyVolumeBoost title:IVLLoc(@"volume_boost")];
     IVLRow *bLvl = [IVLRow type:IVLRowSlider key:IVLKeyVolumeBoostLevel title:IVLLoc(@"volume_boost_level")];
-    bLvl.min = 100; bLvl.max = 250; bLvl.step = 10;
+    bLvl.min = 100; bLvl.max = 300; bLvl.step = 10;
     bLvl.format = ^NSString *(double v) { return [NSString stringWithFormat:@"%.0f%%", v]; };
 
     IVLRow *st = [IVLRow type:IVLRowInfo key:@"" title:IVLLoc(@"status")];

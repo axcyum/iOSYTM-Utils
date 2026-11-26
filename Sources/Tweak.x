@@ -92,22 +92,36 @@ static const void *kIVLButtonKey = &kIVLButtonKey;
 %group AudioDSPHooks
 %hook AVAudioPlayerNode
 
+- (instancetype)init {
+    id orig = %orig;
+    [IVLAudioDSP registerRenderer:orig];
+    return orig;
+}
+
+- (void)setVolume:(float)volume {
+    %orig([IVLAudioDSP scaledVolumeForRenderer:self requestedVolume:volume]);
+}
+
 - (void)scheduleBuffer:(AVAudioPCMBuffer *)buffer completionHandler:(id)completionHandler {
+    [IVLAudioDSP registerRenderer:self];
     [IVLAudioDSP processPCMBuffer:buffer];
     %orig;
 }
 
 - (void)scheduleBuffer:(AVAudioPCMBuffer *)buffer completionCallbackType:(NSInteger)callbackType completionHandler:(id)completionHandler {
+    [IVLAudioDSP registerRenderer:self];
     [IVLAudioDSP processPCMBuffer:buffer];
     %orig;
 }
 
 - (void)scheduleBuffer:(AVAudioPCMBuffer *)buffer atTime:(id)when options:(NSUInteger)options completionHandler:(id)completionHandler {
+    [IVLAudioDSP registerRenderer:self];
     [IVLAudioDSP processPCMBuffer:buffer];
     %orig;
 }
 
 - (void)scheduleBuffer:(AVAudioPCMBuffer *)buffer atTime:(id)when options:(NSUInteger)options completionCallbackType:(NSInteger)callbackType completionHandler:(id)completionHandler {
+    [IVLAudioDSP registerRenderer:self];
     [IVLAudioDSP processPCMBuffer:buffer];
     %orig;
 }
@@ -116,11 +130,27 @@ static const void *kIVLButtonKey = &kIVLButtonKey;
 
 %hook AVSampleBufferAudioRenderer
 
+- (instancetype)init {
+    id orig = %orig;
+    [IVLAudioDSP registerRenderer:orig];
+    return orig;
+}
+
+- (void)setVolume:(float)volume {
+    %orig([IVLAudioDSP scaledVolumeForRenderer:self requestedVolume:volume]);
+}
+
 - (void)enqueueSampleBuffer:(CMSampleBufferRef)sampleBuffer {
+    [IVLAudioDSP registerRenderer:self];
     CMSampleBufferRef processed = [IVLAudioDSP createProcessedSampleBuffer:sampleBuffer];
     if (processed) {
         %orig(processed);
         CFRelease(processed);
+        if (self.status == AVQueuedSampleBufferRenderingStatusFailed) {
+            [IVLAudioDSP noteRendererFailure:(int)self.error.code];
+            [self flush];
+            %orig(sampleBuffer);
+        }
     } else {
         %orig(sampleBuffer);
     }
@@ -140,14 +170,45 @@ static const void *kIVLButtonKey = &kIVLButtonKey;
 
 %hook AVPlayer
 
+- (instancetype)init {
+    id orig = %orig;
+    [IVLAudioDSP registerRenderer:orig];
+    return orig;
+}
+
+- (void)setVolume:(float)volume {
+    %orig([IVLAudioDSP scaledVolumeForRenderer:self requestedVolume:volume]);
+}
+
 - (void)replaceCurrentItemWithPlayerItem:(AVPlayerItem *)item {
     %orig;
     [IVLAudioDSP attachTapToPlayerItem:item];
 }
 
 - (void)play {
+    [IVLAudioDSP registerRenderer:self];
     [IVLAudioDSP attachTapToPlayerItem:self.currentItem];
     %orig;
+}
+
+%end
+
+%hook AVAudioPlayer
+
+- (instancetype)initWithContentsOfURL:(NSURL *)url error:(NSError **)outError {
+    id orig = %orig;
+    [IVLAudioDSP registerRenderer:orig];
+    return orig;
+}
+
+- (instancetype)initWithData:(NSData *)data error:(NSError **)outError {
+    id orig = %orig;
+    [IVLAudioDSP registerRenderer:orig];
+    return orig;
+}
+
+- (void)setVolume:(float)volume {
+    %orig([IVLAudioDSP scaledVolumeForRenderer:self requestedVolume:volume]);
 }
 
 %end
