@@ -11,7 +11,8 @@ static const CGFloat kIVLHomeBarHeight = 26.0;
     BOOL _started;
     NSTimer *_timer;
     __weak UIView *_attachedMiniBar;
-    NSMutableArray<NSArray *> *_clippedAncestors; // @[@[weak-or-view, @(origClips)]]
+    NSMutableArray<NSArray *> *_clippedAncestors; // @[@[view, @(origClips)]]
+    NSMutableArray<UIView *> *_shiftedViews;      // miniBar + overlapping sibling thumbnail/player views
     UIView *_topFillView;
     UIView *_stripView;
     UIView *_topHairline;
@@ -31,6 +32,7 @@ static const CGFloat kIVLHomeBarHeight = 26.0;
     if (_started) return;
     _started = YES;
     _clippedAncestors = [NSMutableArray array];
+    _shiftedViews = [NSMutableArray array];
 
     _topFillView = [UIView new];
     _topFillView.userInteractionEnabled = NO;
@@ -133,10 +135,10 @@ static const CGFloat kIVLHomeBarHeight = 26.0;
 }
 
 - (void)detach {
-    UIView *old = _attachedMiniBar;
-    if (old) {
-        old.layer.sublayerTransform = CATransform3DIdentity;
+    for (UIView *v in _shiftedViews) {
+        v.layer.sublayerTransform = CATransform3DIdentity;
     }
+    [_shiftedViews removeAllObjects];
     for (NSArray *pair in _clippedAncestors) {
         UIView *v = pair[0];
         v.clipsToBounds = [pair[1] boolValue];
@@ -186,6 +188,13 @@ static const CGFloat kIVLHomeBarHeight = 26.0;
     if (!miniBar) {
         miniBar = [self findMiniBarInView:win window:win depth:0];
         if (miniBar) {
+            // If miniBar sits inside a tight wrapper container (<= 110pt tall) that holds both the bar and
+            // its thumbnail/player view, shift the wrapper as a single unit to avoid any double thumbnail.
+            while (miniBar.superview && miniBar.superview != win &&
+                   miniBar.superview.bounds.size.height <= 110.0 &&
+                   miniBar.superview.bounds.size.width >= win.bounds.size.width * 0.90) {
+                miniBar = miniBar.superview;
+            }
             _attachedMiniBar = miniBar;
             [_clippedAncestors removeAllObjects];
             for (UIView *p = miniBar; p && p != win && p.bounds.size.height <= 140.0; p = p.superview) {
@@ -216,11 +225,28 @@ static const CGFloat kIVLHomeBarHeight = 26.0;
     _topFillView.frame = miniBar.bounds;
     _topFillView.backgroundColor = bg;
 
-    // Use CALayer.sublayerTransform instead of UIView.transform so YouTube Music's own setFrame:
-    // never breaks or pushes the mini bar off-screen.
+    // Collect miniBar plus any overlapping sibling thumbnail/mini-player view (e.g. YTPlayerView)
     CATransform3D shift = CATransform3DMakeTranslation(0, -kIVLHomeBarHeight, 0);
-    if (!CATransform3DEqualToTransform(miniBar.layer.sublayerTransform, shift)) {
-        miniBar.layer.sublayerTransform = shift;
+    NSMutableArray<UIView *> *targets = [NSMutableArray arrayWithObject:miniBar];
+    UIView *parent = miniBar.superview;
+    if (parent) {
+        for (UIView *sib in parent.subviews) {
+            if (sib == miniBar || sib == _stripView || sib.hidden || sib.alpha < 0.05) continue;
+            CGRect sf = [sib convertRect:sib.bounds toView:win];
+            if (sf.size.height >= 24.0 && sf.size.height <= 100.0 && CGRectIntersectsRect(sf, fInWin)) {
+                [targets addObject:sib];
+                if (sib.clipsToBounds) sib.clipsToBounds = NO;
+            }
+        }
+    }
+    for (UIView *old in _shiftedViews) {
+        if (![targets containsObject:old]) old.layer.sublayerTransform = CATransform3DIdentity;
+    }
+    [_shiftedViews setArray:targets];
+    for (UIView *t in _shiftedViews) {
+        if (!CATransform3DEqualToTransform(t.layer.sublayerTransform, shift)) {
+            t.layer.sublayerTransform = shift;
+        }
     }
 
     // Place the matching-color lyric strip directly in the main window at the bottom 26pt of miniBar's slot
