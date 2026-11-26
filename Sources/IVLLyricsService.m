@@ -173,20 +173,28 @@ static NSURL *IVLURL(NSString *base, NSString *path, NSDictionary<NSString *, NS
     return ly;
 }
 
+static double IVLSafeDouble(id v) {
+    return [v respondsToSelector:@selector(doubleValue)] ? [v doubleValue] : 0.0;
+}
+
+static BOOL IVLSafeBool(id v) {
+    return [v respondsToSelector:@selector(boolValue)] ? [v boolValue] : NO;
+}
+
 - (NSDictionary *)bestLRCLIBRecord:(NSArray *)records track:(IVLTrack *)track title:(NSString *)title {
     NSDictionary *best = nil;
     double bestScore = -1;
     NSString *nt = IVLNorm(title);
     for (NSDictionary *r in records) {
-        if (![r isKindOfClass:[NSDictionary class]] || [r[@"instrumental"] boolValue]) continue;
+        if (![r isKindOfClass:[NSDictionary class]] || IVLSafeBool(r[@"instrumental"])) continue;
         double score = 0;
-        double d = [r[@"duration"] doubleValue];
+        double d = IVLSafeDouble(r[@"duration"]);
         if (track.duration > 0 && d > 0) {
             double diff = fabs(d - track.duration);
             if (diff > kDurationTolerance) continue;
             score += (kDurationTolerance - diff) / kDurationTolerance * 2.0;
         }
-        NSString *rt = IVLNorm([r[@"trackName"] description] ?: @"");
+        NSString *rt = IVLNorm([r[@"trackName"] isKindOfClass:[NSString class]] ? r[@"trackName"] : @"");
         if (nt.length && [rt isEqualToString:nt]) score += 3;
         else if (nt.length && ([rt containsString:nt] || [nt containsString:rt])) score += 1;
         if ([r[@"syncedLyrics"] isKindOfClass:[NSString class]] && [r[@"syncedLyrics"] length]) score += 4;
@@ -415,14 +423,15 @@ static NSInteger IVLLyricsQuality(IVLLyrics *ly, IVLTrack *track) {
         NSMutableArray *results = [NSMutableArray array];
         if ([json isKindOfClass:[NSArray class]]) {
             for (NSDictionary *r in json) {
-                if (![r isKindOfClass:[NSDictionary class]] || [r[@"instrumental"] boolValue]) continue;
-                IVLLyrics *ly = [self lyricsFromLRCLIBRecord:r durationMs:(NSInteger)([r[@"duration"] doubleValue] * 1000)];
+                if (![r isKindOfClass:[NSDictionary class]] || IVLSafeBool(r[@"instrumental"])) continue;
+                double dur = IVLSafeDouble(r[@"duration"]);
+                IVLLyrics *ly = [self lyricsFromLRCLIBRecord:r durationMs:(NSInteger)(dur * 1000)];
                 if (!ly) continue;
                 IVLSearchResult *res = [IVLSearchResult new];
-                res.title = [r[@"trackName"] description] ?: @"";
-                res.artist = [r[@"artistName"] description] ?: @"";
+                res.title = [r[@"trackName"] isKindOfClass:[NSString class]] ? r[@"trackName"] : @"";
+                res.artist = [r[@"artistName"] isKindOfClass:[NSString class]] ? r[@"artistName"] : @"";
                 res.album = [r[@"albumName"] isKindOfClass:[NSString class]] ? r[@"albumName"] : nil;
-                res.duration = [r[@"duration"] doubleValue];
+                res.duration = dur;
                 res.synced = ly.synced;
                 res.source = @"LRCLIB";
                 res.lyrics = ly;

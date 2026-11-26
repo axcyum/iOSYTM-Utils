@@ -218,6 +218,69 @@ static NSString *IVLYTExtractSquareCover(id node) {
     }];
 }
 
+- (void)youtubeQueueForTrack:(IVLTrack *)track
+                  playlistID:(nullable NSString *)playlistID
+                  completion:(void (^)(NSArray<NSDictionary *> *items, NSInteger selectedIndex))completion {
+    [self youtubeVideoIDForTrack:track completion:^(NSString *vid) {
+        if (!vid.length) {
+            dispatch_async(dispatch_get_main_queue(), ^{ completion(@[], 0); });
+            return;
+        }
+        NSString *pl = playlistID.length ? playlistID : [NSString stringWithFormat:@"RDAMVM%@", vid];
+        NSDictionary *body = @{
+            @"videoId": vid,
+            @"playlistId": pl,
+            @"enablePersistentPlaylistPanel": @YES,
+            @"isAudioOnly": @YES,
+        };
+        [self innerTube:@"next" client:@"WEB_REMIX" body:body completion:^(NSDictionary *json) {
+            NSDictionary *panel = IVLYTDict(IVLYTFind(json, @"playlistPanelRenderer", 0));
+            NSArray *contents = IVLYTArray(panel[@"contents"]);
+            NSMutableArray<NSDictionary *> *items = [NSMutableArray array];
+            NSMutableSet<NSString *> *seen = [NSMutableSet set];
+            NSInteger selectedIdx = 0;
+
+            for (id entry in contents) {
+                NSDictionary *ed = IVLYTDict(entry);
+                NSDictionary *vr = IVLYTDict(ed[@"playlistPanelVideoRenderer"]);
+                if (!vr) {
+                    NSDictionary *wrap = IVLYTDict(ed[@"playlistPanelVideoWrapperRenderer"]);
+                    NSDictionary *prim = IVLYTDict(wrap[@"primaryRenderer"]);
+                    vr = IVLYTDict(prim[@"playlistPanelVideoRenderer"]);
+                }
+                if (!vr) continue;
+                NSString *v = IVLYTString(vr[@"videoId"]);
+                if (!v.length || [seen containsObject:v]) continue;
+                [seen addObject:v];
+
+                NSArray *tRuns = IVLYTArray(IVLYTDict(vr[@"title"])[@"runs"]);
+                NSString *title = IVLYTString(IVLYTDict(tRuns.firstObject)[@"text"]) ?: @"";
+                NSArray *aRuns = IVLYTArray(IVLYTDict(vr[@"longBylineText"])[@"runs"])
+                              ?: IVLYTArray(IVLYTDict(vr[@"shortBylineText"])[@"runs"]);
+                NSString *artist = IVLYTString(IVLYTDict(aRuns.firstObject)[@"text"]) ?: @"";
+
+                NSString *cover = IVLYTExtractSquareCover(vr);
+                if (!cover.length) {
+                    NSArray *thumbs = IVLYTArray(IVLYTDict(vr[@"thumbnail"])[@"thumbnails"]);
+                    cover = IVLYTString(IVLYTDict(thumbs.lastObject)[@"url"]) ?: @"";
+                }
+                id selObj = vr[@"selected"];
+                BOOL isSel = ([selObj respondsToSelector:@selector(boolValue)] && [selObj boolValue]) || [v isEqualToString:vid];
+                if (isSel) selectedIdx = (NSInteger)items.count;
+
+                [items addObject:@{
+                    @"videoId": v,
+                    @"title": title,
+                    @"artist": artist,
+                    @"artworkURL": cover ?: @"",
+                }];
+                if (items.count >= 40) break;
+            }
+            dispatch_async(dispatch_get_main_queue(), ^{ completion(items, selectedIdx); });
+        }];
+    }];
+}
+
 - (void)youtubeForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)done {
     NSInteger durMs = (NSInteger)(track.duration * 1000);
     [self youtubeVideoIDForTrack:track completion:^(NSString *vid) {

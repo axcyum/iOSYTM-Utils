@@ -54,6 +54,7 @@ extern NSString *const IVLKeyListenBrainzEnabled;// BOOL
 extern NSString *const IVLKeyOpenPlayer;         // BOOL  lyrics screen opens on the player page
 extern NSString *const IVLKeyImmersivePlayer;    // BOOL  Apple Music full-bleed hero UI (experimental, default NO)
 extern NSString *const IVLKeyAMLyrics;           // BOOL  Apple Music inline lyrics view (experimental, default NO)
+extern NSString *const IVLKeyCoverFlow;          // BOOL  iOS 6-style landscape Cover Flow (default NO)
 extern NSString *const IVLKeyDiscordInterval;    // NSInteger seconds between presence updates (3..60, default 15)
 extern NSString *const IVLKeyDiscordStatusDisplay; // NSInteger 0 = Activity Name, 1 = Artist Name, 2 = Song Title
 extern NSString *const IVLKeyDiscordName;        // NSString activity name ("Listening to <name>")

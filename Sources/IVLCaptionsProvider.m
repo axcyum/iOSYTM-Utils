@@ -127,8 +127,9 @@ static IVLLyrics *IVLParseJSON3(NSDictionary *json, NSInteger durMs) {
         // "♪ lyric ♪" decorations; a bare note marks an instrumental part
         t = [[t stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"♪♫♬ 　"]] copy];
         IVLLyricLine *l = [IVLLyricLine new];
-        l.startMs = [e[@"tStartMs"] integerValue];
-        l.endMs = l.startMs + [e[@"dDurationMs"] integerValue];
+        id tsObj = e[@"tStartMs"], durObj = e[@"dDurationMs"];
+        l.startMs = [tsObj respondsToSelector:@selector(integerValue)] ? [tsObj integerValue] : 0;
+        l.endMs = l.startMs + ([durObj respondsToSelector:@selector(integerValue)] ? [durObj integerValue] : 0);
         l.text = t;
         [lines addObject:l];
     }
@@ -180,7 +181,9 @@ static NSError *IVLCapError(NSString *message) {
         [self musicVideoCounterpartFor:vid completion:^(NSString *mv) {
             if (!mv.length) { completion(@[], nil, [NSString stringWithFormat:@"字幕なし（%@ / %@ / 動画版なし）", appNote, apiNote]); return; }
             [self innerTubePlayer:mv completion:^(NSDictionary *mp) {
-                double len = [mp[@"videoDetails"][@"lengthSeconds"] doubleValue];
+                NSDictionary *vd = [mp[@"videoDetails"] isKindOfClass:[NSDictionary class]] ? mp[@"videoDetails"] : nil;
+                id lenObj = vd[@"lengthSeconds"];
+                double len = [lenObj respondsToSelector:@selector(doubleValue)] ? [lenObj doubleValue] : 0.0;
                 if (track.duration > 0 && len > 0 && fabs(len - track.duration) > 2.0) {
                     completion(@[], nil, [NSString stringWithFormat:@"動画版の長さが曲と違うため使えません（%.0f秒 / %.0f秒）", len, track.duration]);
                     return;

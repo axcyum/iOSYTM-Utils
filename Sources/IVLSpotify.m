@@ -219,8 +219,10 @@ static NSError *IVLSpotifyError(NSInteger code, NSString *message) {
     for (NSDictionary *t in raw) {
         if (![t isKindOfClass:[NSDictionary class]] || ![t[@"id"] isKindOfClass:[NSString class]] || [seen containsObject:t[@"id"]]) continue;
         [seen addObject:t[@"id"]];
+        id msObj = t[@"ms"];
+        double sec = [msObj respondsToSelector:@selector(doubleValue)] ? ([msObj doubleValue] / 1000.0) : 0.0;
         [cands addObject:@{ @"id": t[@"id"], @"title": [t[@"name"] description] ?: @"", @"artist": [t[@"artist"] description] ?: @"",
-                            @"duration": @([t[@"ms"] doubleValue] / 1000.0) }];
+                            @"duration": @(sec) }];
     }
     if (!cands.count) return;
     void (^done)(NSArray *) = _searchDone;

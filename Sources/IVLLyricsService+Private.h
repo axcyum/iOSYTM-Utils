@@ -29,6 +29,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)youtubeVideoIDForTrack:(IVLTrack *)track completion:(void (^)(NSString *_Nullable vid))completion;
 /// Resolves a borderless 1:1 square album cover URL (googleusercontent) and videoId for Discord RPC.
 - (void)youtubeSquareCoverForTrack:(IVLTrack *)track completion:(void (^)(NSString *_Nullable coverURL, NSString *_Nullable vid))completion;
+/// Fetches the current playlist / Up Next queue for Cover Flow: @[@{ @"videoId", @"title", @"artist", @"artworkURL" }]
+- (void)youtubeQueueForTrack:(IVLTrack *)track
+                  playlistID:(nullable NSString *)playlistID
+                  completion:(void (^)(NSArray<NSDictionary *> *items, NSInteger selectedIndex))completion;
 @end
 
 /// Root-level LRC/TTML files hosted in user-specified GitHub repositories

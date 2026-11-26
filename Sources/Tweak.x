@@ -20,6 +20,7 @@
 #import "IVLWebNowPlaying.h"
 #import "IVLExtras.h"
 #import "IVLScrobbler.h"
+#import "IVLCoverFlow.h"
 
 static const void *kIVLButtonKey = &kIVLButtonKey;
 
@@ -41,6 +42,29 @@ static const void *kIVLButtonKey = &kIVLButtonKey;
 - (void)potentiallyMutatedSingleVideo:(id)video currentVideoTimeDidChange:(id)time {
     %orig;
     [[IVLPlaybackManager shared] playerHeartbeat:self];
+}
+
+- (void)setPlayerViewLayout:(NSInteger)layout {
+    if (layout == 2 && [IVLCoverFlowManager shouldBlockNativeFullscreen]) return;
+    %orig;
+}
+
+%end
+%end
+
+#pragma mark - Cover Flow native landscape fullscreen blocker
+
+%group WatchFullscreenBlock
+%hook YTMWatchViewController
+
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations {
+    if ([IVLCoverFlowManager shouldBlockNativeFullscreen]) return UIInterfaceOrientationMaskPortrait;
+    return %orig;
+}
+
+- (BOOL)shouldAutorotate {
+    if ([IVLCoverFlowManager shouldBlockNativeFullscreen]) return NO;
+    return %orig;
 }
 
 %end
@@ -108,6 +132,16 @@ static const void *kIVLButtonKey = &kIVLButtonKey;
     }
 }
 
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations {
+    if ([IVLCoverFlowManager shouldBlockNativeFullscreen]) return UIInterfaceOrientationMaskPortrait;
+    return %orig;
+}
+
+- (BOOL)shouldAutorotate {
+    if ([IVLCoverFlowManager shouldBlockNativeFullscreen]) return NO;
+    return %orig;
+}
+
 %end
 %end
 
@@ -158,8 +192,10 @@ static UIImage *IVLMenuIcon(void) {
             [[IVLStats shared] start];
             [IVLSleepTimer shared];
             [[IVLScrobbler shared] start];
+            [[IVLCoverFlowManager shared] start];
         });
         if (objc_getClass("YTPlayerViewController")) %init(Player);
+        if (objc_getClass("YTMWatchViewController")) %init(WatchFullscreenBlock);
         if (objc_getClass("YTMNowPlayingViewController")) %init(NowPlaying);
         if (objc_getClass("YTMAvatarAccountView")) %init(AccountMenu);
     }

@@ -51,6 +51,7 @@ NSString *const IVLKeyListenBrainzEnabled = @"listenbrainzEnabled";
 NSString *const IVLKeyOpenPlayer = @"openPlayer";
 NSString *const IVLKeyImmersivePlayer = @"immersivePlayer";
 NSString *const IVLKeyAMLyrics = @"amLyrics";
+NSString *const IVLKeyCoverFlow = @"coverFlow";
 NSString *const IVLKeyWNPEnabled = @"wnpEnabled";
 NSString *const IVLKeyWNPHost = @"wnpHost";
 NSString *const IVLKeyWNPPort = @"wnpPort";
@@ -123,6 +124,7 @@ static NSString *IVLLocCaptionsName(void) {
             IVLKeyOpenPlayer: @NO,
             IVLKeyImmersivePlayer: @NO,
             IVLKeyAMLyrics: @NO,
+            IVLKeyCoverFlow: @NO,
             IVLKeyWNPEnabled: @NO,
             IVLKeyWNPHost: @"",
             IVLKeyWNPPort: @8974,

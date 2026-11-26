@@ -263,9 +263,11 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
         return [IVLSettings boolForKey:IVLKeyImmersivePlayer] ? YES : [IVLSettings boolForKey:IVLKeyAMLyrics];
     };
 
+    IVLRow *coverFlow = [IVLRow type:IVLRowSwitch key:IVLKeyCoverFlow title:IVLLoc(@"cover_flow")];
+
     return @[
         [IVLSection title:IVLLoc(@"theme") footer:IVLLoc(@"footer_theme") rows:@[theme, accent, bg]],
-        [IVLSection title:IVLLoc(@"player_style") footer:IVLLoc(@"footer_player_style") rows:@[openPlayer, amLyrics, immersive]],
+        [IVLSection title:IVLLoc(@"player_style") footer:IVLLoc(@"footer_player_style") rows:@[openPlayer, amLyrics, immersive, coverFlow]],
     ];
 }
 

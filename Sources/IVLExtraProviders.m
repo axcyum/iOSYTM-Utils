@@ -101,7 +101,8 @@ NSDictionary *IVLBestCandidate(NSArray<NSDictionary *> *candidates, IVLTrack *tr
         score += artistScore;
 
         double diff = -1;
-        double cd = [c[@"duration"] doubleValue];
+        id durObj = c[@"duration"];
+        double cd = [durObj respondsToSelector:@selector(doubleValue)] ? [durObj doubleValue] : 0.0;
         if (track.duration > 0 && cd > 0) {
             diff = fabs(track.duration - cd);
             if (diff <= 2) score += 24;
@@ -358,10 +359,12 @@ static BOOL IVLIsNoLyricsPlaceholder(NSString *text) {
         for (id r in IVLArray(IVLDict(json)[@"results"])) {
             NSDictionary *d = IVLDict(r);
             if (!d[@"trackId"]) continue;
+            id msObj = d[@"trackTimeMillis"];
+            double sec = [msObj respondsToSelector:@selector(doubleValue)] ? ([msObj doubleValue] / 1000.0) : 0.0;
             [cands addObject:@{ @"id": [d[@"trackId"] description],
                                 @"title": IVLString(d[@"trackName"]) ?: @"",
                                 @"artist": IVLString(d[@"artistName"]) ?: @"",
-                                @"duration": @([d[@"trackTimeMillis"] doubleValue] / 1000.0) }];
+                                @"duration": @(sec) }];
         }
         NSDictionary *best = IVLBestCandidate(cands, track);
         if (!best) { done(nil, error); return; }
@@ -382,8 +385,10 @@ static BOOL IVLIsNoLyricsPlaceholder(NSString *text) {
             NSDictionary *d = IVLDict(r);
             NSString *hash = [d[@"hash"] description];
             if (!hash.length) continue;
+            id durObj = d[@"duration"];
+            double sec = [durObj respondsToSelector:@selector(doubleValue)] ? [durObj doubleValue] : 0.0;
             [cands addObject:@{ @"id": hash, @"title": IVLString(d[@"title"]) ?: @"", @"artist": IVLString(d[@"artist"]) ?: @"",
-                                @"duration": @([d[@"duration"] doubleValue]) }];
+                                @"duration": @(sec) }];
         }
         NSDictionary *best = IVLBestCandidate(cands, track);
         if (!best) { done(nil, error); return; }
