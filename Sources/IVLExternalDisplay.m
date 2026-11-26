@@ -1,15 +1,52 @@
 #import "IVLExternalDisplay.h"
 #import "IVLSettings.h"
 #import "IVLPlaybackManager.h"
+#import "IVLLyricCell.h"
 #import "IVLExtras.h"
 #import "IVLLocalization.h"
 #import <AVKit/AVKit.h>
+#import <CoreImage/CoreImage.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
 
 static NSString *IVLFormatSec(NSInteger totalSec) {
     if (totalSec < 0) totalSec = 0;
     return [NSString stringWithFormat:@"%ld:%02ld", (long)(totalSec / 60), (long)(totalSec % 60)];
+}
+
+// Pre-bakes a small 220x220 blurred + darkened background once per track on a background queue,
+// completely avoiding per-frame 1080p/4K CABackdropLayer (UIVisualEffectView) GPU stalls on HDMI.
+static UIImage *IVLPreblurredStageBackground(UIImage *source) {
+    if (!source) return nil;
+    const CGFloat side = 220.0;
+    CGRect rect = CGRectMake(0, 0, side, side);
+    UIGraphicsImageRendererFormat *fmt = [UIGraphicsImageRendererFormat defaultFormat];
+    fmt.scale = 1.0;
+    fmt.opaque = YES;
+    UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:rect.size format:fmt];
+    UIImage *scaled = [r imageWithActions:^(__unused UIGraphicsImageRendererContext *ctx) {
+        CGFloat k = MAX(side / MAX(1.0, source.size.width), side / MAX(1.0, source.size.height));
+        CGSize d = CGSizeMake(source.size.width * k, source.size.height * k);
+        [source drawInRect:CGRectMake((side - d.width) * 0.5, (side - d.height) * 0.5, d.width, d.height)];
+    }];
+    UIImage *blurred = scaled;
+    @try {
+        static CIContext *ci;
+        static dispatch_once_t once;
+        dispatch_once(&once, ^{ ci = [CIContext contextWithOptions:@{ kCIContextCacheIntermediates: @NO }]; });
+        CIImage *inImg = [[CIImage alloc] initWithImage:scaled];
+        CIFilter *f = [CIFilter filterWithName:@"CIGaussianBlur"];
+        [f setValue:[inImg imageByClampingToExtent] forKey:kCIInputImageKey];
+        [f setValue:@22.0 forKey:kCIInputRadiusKey];
+        CGImageRef cg = [ci createCGImage:f.outputImage fromRect:rect];
+        if (cg) { blurred = [UIImage imageWithCGImage:cg]; CGImageRelease(cg); }
+    } @catch (__unused id e) {}
+
+    return [r imageWithActions:^(__unused UIGraphicsImageRendererContext *ctx) {
+        [blurred drawInRect:rect];
+        [[UIColor colorWithWhite:0 alpha:0.46] setFill];
+        UIRectFillUsingBlendMode(rect, kCGBlendModeNormal);
+    }];
 }
 
 #pragma mark - 16:9 Apple TV-Style Lyrics Stage View Controller
@@ -24,8 +61,6 @@ static NSString *IVLFormatSec(NSInteger totalSec) {
 @implementation IVLExternalLyricsViewController {
     UIView *_stage;
     UIImageView *_bgView;
-    UIVisualEffectView *_blurView;
-    UIView *_dimView;
 
     UIView *_artShadow;
     UIImageView *_artView;
@@ -36,8 +71,9 @@ static NSString *IVLFormatSec(NSInteger totalSec) {
     UILabel *_timeLeftLabel;
     UILabel *_timeRightLabel;
 
+    UIView *_lyricsBox;
     UILabel *_prevLabel;
-    UILabel *_curLabel;
+    IVLKaraokeLabel *_curLabel;
     UILabel *_subLabel;
     UILabel *_next1Label;
     UILabel *_next2Label;
@@ -48,7 +84,12 @@ static NSString *IVLFormatSec(NSInteger totalSec) {
     NSTimer *_modalTimer;
     NSUInteger _hudHideGen;
 
+    UIImage *_lastSourceArt;
+    UIColor *_cachedAccent;
     NSInteger _lastIdx;
+    NSInteger _lastShownSec;
+    NSInteger _lastShownDurSec;
+    CGFloat _lastProgWidth;
     CGFloat _curFontPt;
 }
 
@@ -64,7 +105,11 @@ static NSString *IVLFormatSec(NSInteger totalSec) {
     self.view.backgroundColor = UIColor.blackColor;
     self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
     _lastIdx = NSNotFound;
+    _lastShownSec = -1;
+    _lastShownDurSec = -1;
+    _lastProgWidth = -1.0;
     _curFontPt = 36.0;
+    _cachedAccent = [IVLTheme accentColor] ?: UIColor.whiteColor;
 
     _stage = [UIView new];
     _stage.backgroundColor = UIColor.blackColor;
@@ -74,20 +119,15 @@ static NSString *IVLFormatSec(NSInteger totalSec) {
     _bgView = [UIImageView new];
     _bgView.contentMode = UIViewContentModeScaleAspectFill;
     _bgView.clipsToBounds = YES;
+    _bgView.opaque = YES;
+    _bgView.backgroundColor = [UIColor colorWithWhite:0.06 alpha:1.0];
     [_stage addSubview:_bgView];
-
-    _blurView = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemChromeMaterialDark]];
-    [_stage addSubview:_blurView];
-
-    _dimView = [UIView new];
-    _dimView.backgroundColor = [UIColor colorWithWhite:0 alpha:0.38];
-    [_stage addSubview:_dimView];
 
     _artShadow = [UIView new];
     _artShadow.layer.shadowColor = UIColor.blackColor.CGColor;
     _artShadow.layer.shadowOpacity = 0.55;
-    _artShadow.layer.shadowRadius = 26.0;
-    _artShadow.layer.shadowOffset = CGSizeMake(0, 14);
+    _artShadow.layer.shadowRadius = 24.0;
+    _artShadow.layer.shadowOffset = CGSizeMake(0, 12);
     [_stage addSubview:_artShadow];
 
     _artView = [UIImageView new];
@@ -126,42 +166,48 @@ static NSString *IVLFormatSec(NSInteger totalSec) {
     _timeRightLabel.textAlignment = NSTextAlignmentRight;
     [_stage addSubview:_timeRightLabel];
 
+    _lyricsBox = [UIView new];
+    _lyricsBox.backgroundColor = UIColor.clearColor;
+    [_stage addSubview:_lyricsBox];
+
     _prevLabel = [UILabel new];
     _prevLabel.textColor = [UIColor colorWithWhite:1 alpha:0.30];
     _prevLabel.numberOfLines = 2;
-    [_stage addSubview:_prevLabel];
+    [_lyricsBox addSubview:_prevLabel];
 
-    _curLabel = [UILabel new];
+    _curLabel = [IVLKaraokeLabel new];
     _curLabel.textColor = UIColor.whiteColor;
+    _curLabel.brightColor = _cachedAccent;
+    _curLabel.dimColor = [UIColor colorWithWhite:1 alpha:0.36];
     _curLabel.numberOfLines = 3;
-    [_stage addSubview:_curLabel];
+    [_lyricsBox addSubview:_curLabel];
 
     _subLabel = [UILabel new];
     _subLabel.textColor = [UIColor colorWithWhite:0.86 alpha:0.90];
     _subLabel.numberOfLines = 2;
-    [_stage addSubview:_subLabel];
+    [_lyricsBox addSubview:_subLabel];
 
     _next1Label = [UILabel new];
     _next1Label.textColor = [UIColor colorWithWhite:1 alpha:0.42];
     _next1Label.numberOfLines = 2;
-    [_stage addSubview:_next1Label];
+    [_lyricsBox addSubview:_next1Label];
 
     _next2Label = [UILabel new];
     _next2Label.textColor = [UIColor colorWithWhite:1 alpha:0.22];
     _next2Label.numberOfLines = 2;
-    [_stage addSubview:_next2Label];
+    [_lyricsBox addSubview:_next2Label];
 
     if (_interactiveModal) {
         UIApplication.sharedApplication.idleTimerDisabled = YES;
 
         _hudBar = [UIView new];
-        _hudBar.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.72];
+        _hudBar.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.78];
         _hudBar.layer.cornerRadius = 21.0;
         [_stage addSubview:_hudBar];
 
         _routePicker = [[AVRoutePickerView alloc] initWithFrame:CGRectMake(8, 3, 36, 36)];
         _routePicker.tintColor = UIColor.whiteColor;
-        _routePicker.activeTintColor = [IVLTheme accentColor];
+        _routePicker.activeTintColor = _cachedAccent;
         _routePicker.prioritizesVideoDevices = YES;
         [_hudBar addSubview:_routePicker];
 
@@ -180,7 +226,8 @@ static NSString *IVLFormatSec(NSInteger totalSec) {
         [nc addObserver:self selector:@selector(refreshTrack) name:IVLTrackDidChangeNotification object:nil];
         [nc addObserver:self selector:@selector(refreshTrack) name:IVLArtworkDidChangeNotification object:nil];
         [nc addObserver:self selector:@selector(refreshLyrics) name:IVLLyricsDidChangeNotification object:nil];
-        _modalTimer = [NSTimer scheduledTimerWithTimeInterval:0.12 target:self selector:@selector(tick) userInfo:nil repeats:YES];
+        _modalTimer = [NSTimer timerWithTimeInterval:1.0 / 30.0 target:self selector:@selector(tick) userInfo:nil repeats:YES];
+        _modalTimer.tolerance = 0.008;
         [[NSRunLoop mainRunLoop] addTimer:_modalTimer forMode:NSRunLoopCommonModes];
     }
 
@@ -245,7 +292,6 @@ static NSString *IVLFormatSec(NSInteger totalSec) {
     CGRect outer = self.view.bounds;
     if (outer.size.width <= 0 || outer.size.height <= 0) return;
 
-    // Guarantee landscape 16:9 stage even if Portrait Orientation Lock is enabled on the phone
     BOOL forceRotate = (_interactiveModal && outer.size.width < outer.size.height);
     CGFloat w = forceRotate ? outer.size.height : outer.size.width;
     CGFloat h = forceRotate ? outer.size.width : outer.size.height;
@@ -257,10 +303,7 @@ static NSString *IVLFormatSec(NSInteger totalSec) {
         _stage.transform = CGAffineTransformMakeRotation(M_PI_2);
     }
 
-    CGRect b = CGRectMake(0, 0, w, h);
-    _bgView.frame = b;
-    _blurView.frame = b;
-    _dimView.frame = b;
+    _bgView.frame = CGRectMake(0, 0, w, h);
 
     CGFloat pad = floor(MIN(w, h) * 0.065);
     CGFloat leftW = floor(w * 0.34);
@@ -268,6 +311,7 @@ static NSString *IVLFormatSec(NSInteger totalSec) {
     CGFloat artX = pad + floor((leftW - artSize) * 0.5);
     CGFloat artY = floor((h - artSize - 115.0) * 0.5);
     _artShadow.frame = CGRectMake(artX, MAX(pad, artY), artSize, artSize);
+    _artShadow.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:_artShadow.bounds cornerRadius:18.0].CGPath;
     _artView.frame = _artShadow.bounds;
 
     CGFloat titleSize = MAX(17.0, floor(h * 0.035));
@@ -287,6 +331,8 @@ static NSString *IVLFormatSec(NSInteger totalSec) {
 
     CGFloat rightX = pad + leftW + pad * 0.75;
     CGFloat rightW = MAX(120.0, w - rightX - pad);
+    _lyricsBox.transform = CGAffineTransformIdentity;
+    _lyricsBox.frame = CGRectMake(rightX, 0, rightW, h);
 
     CGFloat mainPt = MAX(24.0, floor(h * 0.055));
     CGFloat sidePt = MAX(16.0, floor(h * 0.035));
@@ -299,17 +345,18 @@ static NSString *IVLFormatSec(NSInteger totalSec) {
     _next2Label.font = [UIFont systemFontOfSize:sidePt weight:UIFontWeightMedium];
 
     CGFloat cy = h * 0.43;
-    _prevLabel.frame = CGRectMake(rightX, cy - sidePt * 2.9 - 16.0, rightW, sidePt * 2.6);
-    _curLabel.frame = CGRectMake(rightX, cy - mainPt * 0.4, rightW, mainPt * 3.3);
-    _subLabel.frame = CGRectMake(rightX, CGRectGetMaxY(_curLabel.frame) + 6.0, rightW, subPt * 2.4);
-    _next1Label.frame = CGRectMake(rightX, CGRectGetMaxY(_subLabel.frame) + 16.0, rightW, sidePt * 2.6);
-    _next2Label.frame = CGRectMake(rightX, CGRectGetMaxY(_next1Label.frame) + 10.0, rightW, sidePt * 2.5);
+    _prevLabel.frame = CGRectMake(0, cy - sidePt * 2.9 - 16.0, rightW, sidePt * 2.6);
+    _curLabel.frame = CGRectMake(0, cy - mainPt * 0.4, rightW, mainPt * 3.3);
+    _subLabel.frame = CGRectMake(0, CGRectGetMaxY(_curLabel.frame) + 6.0, rightW, subPt * 2.4);
+    _next1Label.frame = CGRectMake(0, CGRectGetMaxY(_subLabel.frame) + 16.0, rightW, sidePt * 2.6);
+    _next2Label.frame = CGRectMake(0, CGRectGetMaxY(_next1Label.frame) + 10.0, rightW, sidePt * 2.5);
 
     if (_hudBar) {
         _hudBar.frame = CGRectMake(w - pad - 92.0, MAX(18.0, pad * 0.65), 92.0, 42.0);
     }
 
     _lastIdx = NSNotFound;
+    _lastProgWidth = -1.0;
     [self tick];
 }
 
@@ -317,15 +364,34 @@ static NSString *IVLFormatSec(NSInteger totalSec) {
     IVLTrack *t = [IVLPlaybackManager shared].track;
     _titleLabel.text = t.title.length ? t.title : IVLLoc(@"nothing_playing");
     _artistLabel.text = t.artist ?: @"";
+    _cachedAccent = [IVLTheme accentColor] ?: UIColor.whiteColor;
+    _curLabel.textColor = _cachedAccent;
+    _curLabel.brightColor = _cachedAccent;
+
     UIImage *img = [t.artworkImage isKindOfClass:[UIImage class]] ? (UIImage *)t.artworkImage : nil;
-    [UIView transitionWithView:_stage duration:0.35 options:UIViewAnimationOptionTransitionCrossDissolve animations:^{
-        self->_artView.image = img;
-        self->_bgView.image = img;
-    } completion:nil];
-    _curLabel.textColor = [IVLTheme accentColor];
+    _artView.image = img;
+    if (img != _lastSourceArt) {
+        _lastSourceArt = img;
+        if (!img) {
+            _bgView.image = nil;
+        } else {
+            __weak typeof(self) ws = self;
+            dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+                UIImage *baked = IVLPreblurredStageBackground(img);
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    __strong typeof(ws) ss = ws;
+                    if (!ss || ss->_lastSourceArt != img) return;
+                    ss->_bgView.image = baked;
+                });
+            });
+        }
+    }
 }
 
 - (void)refreshLyrics {
+    _cachedAccent = [IVLTheme accentColor] ?: UIColor.whiteColor;
+    _curLabel.textColor = _cachedAccent;
+    _curLabel.brightColor = _cachedAccent;
     _lastIdx = NSNotFound;
     [self tick];
 }
@@ -333,77 +399,89 @@ static NSString *IVLFormatSec(NSInteger totalSec) {
 - (void)tick {
     IVLPlaybackManager *pm = [IVLPlaybackManager shared];
     IVLTrack *t = pm.track;
-    NSInteger rawSec = MAX(0, [pm rawTimeMs] / 1000);
-    _timeLeftLabel.text = IVLFormatSec(rawSec);
+    NSInteger rawMs = [pm rawTimeMs];
+    NSInteger rawSec = MAX(0, rawMs / 1000);
+    if (rawSec != _lastShownSec) {
+        _lastShownSec = rawSec;
+        _timeLeftLabel.text = IVLFormatSec(rawSec);
+    }
     if (t.duration > 0) {
-        double p = MAX(0.0, MIN(1.0, ([pm rawTimeMs] / 1000.0) / t.duration));
-        _progFill.frame = CGRectMake(0, 0, _progTrack.bounds.size.width * p, _progTrack.bounds.size.height);
-        _timeRightLabel.text = IVLFormatSec((NSInteger)round(t.duration));
-    } else {
+        NSInteger durSec = (NSInteger)round(t.duration);
+        if (durSec != _lastShownDurSec) {
+            _lastShownDurSec = durSec;
+            _timeRightLabel.text = IVLFormatSec(durSec);
+        }
+        double p = MAX(0.0, MIN(1.0, (rawMs / 1000.0) / t.duration));
+        CGFloat newW = _progTrack.bounds.size.width * p;
+        if (fabs(newW - _lastProgWidth) >= 0.5) {
+            _lastProgWidth = newW;
+            _progFill.frame = CGRectMake(0, 0, newW, _progTrack.bounds.size.height);
+        }
+    } else if (_lastShownDurSec != -2) {
+        _lastShownDurSec = -2;
+        _lastProgWidth = 0;
         _progFill.frame = CGRectZero;
         _timeRightLabel.text = @"--:--";
     }
 
     IVLLyrics *ly = pm.lyrics;
     if (!ly.lines.count) {
-        _prevLabel.text = @"";
-        _curLabel.attributedText = nil;
-        _curLabel.text = (pm.state == IVLLyricsStateLoading) ? IVLLoc(@"loading") : @"♪";
-        _subLabel.text = @"";
-        _next1Label.text = @"";
-        _next2Label.text = @"";
+        if (_lastIdx != -10) {
+            _lastIdx = -10;
+            _curLabel.karaokeActive = NO;
+            _curLabel.words = nil;
+            _prevLabel.text = @"";
+            _curLabel.text = (pm.state == IVLLyricsStateLoading) ? IVLLoc(@"loading") : @"♪";
+            _subLabel.text = @"";
+            _next1Label.text = @"";
+            _next2Label.text = @"";
+        }
         return;
     }
 
     NSInteger nowMs = [pm currentTimeMs];
     NSInteger idx = 0;
     if (ly.synced) {
-        idx = -1;
-        for (NSInteger i = 0; i < (NSInteger)ly.lines.count; i++) {
-            if (ly.lines[i].startMs <= nowMs) idx = i;
-            else break;
-        }
-        if (idx < 0) idx = 0;
+        NSInteger found = [ly indexOfLineAtTime:nowMs];
+        idx = (found >= 0) ? found : 0;
     }
 
     IVLLyricLine *cur = ly.lines[idx];
-    BOOL lineChanged = (idx != _lastIdx);
-    _lastIdx = idx;
+    BOOL useKaraoke = (cur.words.count > 0 && !cur.instrumental && [IVLSettings boolForKey:IVLKeyKaraoke]);
 
-    if (lineChanged) {
-        NSString *prevTxt = (idx > 0) ? ly.lines[idx - 1].text : @"";
+    if (idx != _lastIdx) {
+        _lastIdx = idx;
+        _prevLabel.text = (idx > 0) ? ly.lines[idx - 1].text : @"";
         NSString *curTxt = cur.instrumental ? @"• • •" : (cur.text ?: @"");
-        NSString *subTxt = cur.translation.length ? cur.translation : (cur.pronunciation ?: @"");
-        NSString *n1Txt = (idx + 1 < (NSInteger)ly.lines.count) ? ly.lines[idx + 1].text : @"";
-        NSString *n2Txt = (idx + 2 < (NSInteger)ly.lines.count) ? ly.lines[idx + 2].text : @"";
+        if (useKaraoke) {
+            UIFont *f = [UIFont systemFontOfSize:_curFontPt weight:UIFontWeightHeavy];
+            _curLabel.attributedText = [[NSAttributedString alloc] initWithString:curTxt attributes:@{
+                NSFontAttributeName: f,
+                NSForegroundColorAttributeName: _cachedAccent,
+            }];
+            _curLabel.words = cur.words;
+            _curLabel.karaokeActive = YES;
+        } else {
+            _curLabel.karaokeActive = NO;
+            _curLabel.words = nil;
+            _curLabel.attributedText = nil;
+            _curLabel.text = curTxt;
+        }
+        _subLabel.text = cur.translation.length ? cur.translation : (cur.pronunciation ?: @"");
+        _next1Label.text = (idx + 1 < (NSInteger)ly.lines.count) ? ly.lines[idx + 1].text : @"";
+        _next2Label.text = (idx + 2 < (NSInteger)ly.lines.count) ? ly.lines[idx + 2].text : @"";
 
-        [UIView transitionWithView:_stage duration:0.22 options:UIViewAnimationOptionTransitionCrossDissolve animations:^{
-            self->_prevLabel.text = prevTxt;
-            if (!cur.words.count || ![IVLSettings boolForKey:IVLKeyKaraoke]) {
-                self->_curLabel.attributedText = nil;
-                self->_curLabel.text = curTxt;
-            }
-            self->_subLabel.text = subTxt;
-            self->_next1Label.text = n1Txt;
-            self->_next2Label.text = n2Txt;
+        // Pure GPU layer transform slide (zero offscreen snapshot rasterization!)
+        _lyricsBox.transform = CGAffineTransformMakeTranslation(0, 12.0);
+        _lyricsBox.alpha = 0.45;
+        [UIView animateWithDuration:0.20 delay:0 options:UIViewAnimationOptionCurveEaseOut | UIViewAnimationOptionAllowUserInteraction animations:^{
+            self->_lyricsBox.transform = CGAffineTransformIdentity;
+            self->_lyricsBox.alpha = 1.0;
         } completion:nil];
     }
 
-    // Word-by-word live highlight on TV stage when karaoke word timings exist
-    if (cur.words.count > 0 && !cur.instrumental && [IVLSettings boolForKey:IVLKeyKaraoke]) {
-        UIFont *f = [UIFont systemFontOfSize:_curFontPt weight:UIFontWeightHeavy];
-        UIColor *activeCol = [IVLTheme accentColor] ?: UIColor.whiteColor;
-        UIColor *dimCol = [UIColor colorWithWhite:1.0 alpha:0.38];
-        NSMutableAttributedString *attr = [[NSMutableAttributedString alloc] init];
-        for (IVLWord *w in cur.words) {
-            if (!w.text.length) continue;
-            UIColor *c = (nowMs >= w.startMs) ? activeCol : dimCol;
-            [attr appendAttributedString:[[NSAttributedString alloc] initWithString:w.text attributes:@{
-                NSFontAttributeName: f,
-                NSForegroundColorAttributeName: c,
-            }]];
-        }
-        _curLabel.attributedText = attr;
+    if (useKaraoke) {
+        _curLabel.timeMs = nowMs;
     }
 }
 
@@ -717,7 +795,8 @@ static BOOL IVLIsExternalSceneRole(NSString *role) {
 
 - (void)startTickTimer {
     [_tickTimer invalidate];
-    _tickTimer = [NSTimer scheduledTimerWithTimeInterval:0.12 target:_vc selector:@selector(tick) userInfo:nil repeats:YES];
+    _tickTimer = [NSTimer timerWithTimeInterval:1.0 / 30.0 target:_vc selector:@selector(tick) userInfo:nil repeats:YES];
+    _tickTimer.tolerance = 0.008;
     [[NSRunLoop mainRunLoop] addTimer:_tickTimer forMode:NSRunLoopCommonModes];
 }
 

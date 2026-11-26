@@ -3,41 +3,97 @@
 
 #pragma mark - Karaoke label
 
-@implementation IVLKaraokeLabel
+@implementation IVLKaraokeLabel {
+    NSTextStorage *_cachedStorage;
+    NSLayoutManager *_cachedLM;
+    NSTextContainer *_cachedTC;
+    NSAttributedString *_cachedSource;
+    CGFloat _cachedWidth;
+    NSInteger _lastVisualState;
+}
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self = [super initWithFrame:frame])) {
         _dimColor = [UIColor colorWithWhite:1 alpha:0.35];
         _brightColor = UIColor.whiteColor;
+        _lastVisualState = -1;
     }
     return self;
+}
+
+- (void)setAttributedText:(NSAttributedString *)attributedText {
+    [super setAttributedText:attributedText];
+    _cachedSource = nil;
+    _lastVisualState = -1;
+}
+
+- (void)setWords:(NSArray<IVLWord *> *)words {
+    _words = [words copy];
+    _lastVisualState = -1;
+    if (_karaokeActive) [self setNeedsDisplay];
+}
+
+- (NSInteger)visualStateForTime:(NSInteger)t {
+    if (!_karaokeActive || !_words.count) return -2;
+    NSUInteger done = 0, loc = 0;
+    NSInteger fracStep = 0;
+    for (IVLWord *w in _words) {
+        NSUInteger len = w.text.length;
+        if (t >= w.endMs) {
+            done = loc + len;
+        } else if (t >= w.startMs) {
+            CGFloat f = (CGFloat)(t - w.startMs) / (CGFloat)MAX(1, w.endMs - w.startMs);
+            fracStep = (NSInteger)(f * 64.0) + 1;
+            break;
+        } else {
+            break;
+        }
+        loc += len;
+    }
+    return (NSInteger)((done << 8) | (fracStep & 0xFF));
 }
 
 - (void)setTimeMs:(NSInteger)timeMs {
     if (_timeMs == timeMs) return;
     _timeMs = timeMs;
-    if (_karaokeActive) [self setNeedsDisplay];
+    if (!_karaokeActive) return;
+    NSInteger st = [self visualStateForTime:timeMs];
+    if (st == _lastVisualState) return;
+    _lastVisualState = st;
+    [self setNeedsDisplay];
 }
 
 - (void)setKaraokeActive:(BOOL)karaokeActive {
     if (_karaokeActive == karaokeActive) return;
     _karaokeActive = karaokeActive;
+    _lastVisualState = -1;
     [self setNeedsDisplay];
+}
+
+- (void)ensureTextKitForSource:(NSAttributedString *)src width:(CGFloat)width {
+    if (_cachedStorage && _cachedSource == src && fabs(_cachedWidth - width) < 0.5) return;
+    _cachedSource = src;
+    _cachedWidth = width;
+    _cachedStorage = [[NSTextStorage alloc] initWithAttributedString:src];
+    _cachedLM = [NSLayoutManager new];
+    _cachedTC = [[NSTextContainer alloc] initWithSize:CGSizeMake(MAX(1.0, width), CGFLOAT_MAX)];
+    _cachedTC.lineFragmentPadding = 0;
+    _cachedTC.lineBreakMode = NSLineBreakByWordWrapping;
+    [_cachedLM addTextContainer:_cachedTC];
+    [_cachedStorage addLayoutManager:_cachedLM];
 }
 
 - (void)drawTextInRect:(CGRect)rect {
     NSAttributedString *src = self.attributedText;
     if (!_karaokeActive || !_words.count || !src.length) { [super drawTextInRect:rect]; return; }
 
-    NSRange all = NSMakeRange(0, src.length);
-    NSTextStorage *storage = [[NSTextStorage alloc] initWithAttributedString:src];
+    [self ensureTextKitForSource:src width:rect.size.width];
+    NSTextStorage *storage = _cachedStorage;
+    NSLayoutManager *lm = _cachedLM;
+    NSTextContainer *tc = _cachedTC;
+
+    NSRange all = NSMakeRange(0, storage.length);
     [storage addAttribute:NSForegroundColorAttributeName value:_dimColor range:all];
-    NSLayoutManager *lm = [NSLayoutManager new];
-    NSTextContainer *tc = [[NSTextContainer alloc] initWithSize:CGSizeMake(rect.size.width, CGFLOAT_MAX)];
-    tc.lineFragmentPadding = 0;
-    tc.lineBreakMode = NSLineBreakByWordWrapping;
-    [lm addTextContainer:tc];
-    [storage addLayoutManager:lm];
 
     NSRange glyphs = [lm glyphRangeForTextContainer:tc];
     CGRect used = [lm usedRectForTextContainer:tc];
@@ -50,8 +106,8 @@
     NSRange partial = NSMakeRange(NSNotFound, 0);
     CGFloat frac = 0;
     for (IVLWord *w in _words) {
-        if (loc >= src.length) break;
-        NSUInteger len = MIN(w.text.length, src.length - loc);
+        if (loc >= storage.length) break;
+        NSUInteger len = MIN(w.text.length, storage.length - loc);
         if (t >= w.endMs) {
             done = loc + len;
         } else if (t >= w.startMs) {
@@ -84,7 +140,7 @@
             }
         }
         if (maxX > minX) {
-            [clip appendPath:[UIBezierPath bezierPathWithRect:CGRectMake(origin.x + minX, origin.y + r.origin.y - 6, maxX - minX, r.size.height + 12)]];
+            [clip appendPath:[UIBezierPath bezierPathWithRect:CGRectMake(origin.x + minX, origin.y + r.origin.y - 4, maxX - minX, r.size.height + 8)]];
         }
     }];
 
@@ -92,7 +148,6 @@
     CGContextSaveGState(ctx);
     [clip addClip];
     [storage addAttribute:NSForegroundColorAttributeName value:_brightColor range:all];
-    CGContextSetShadowWithColor(ctx, CGSizeZero, 8, [_brightColor colorWithAlphaComponent:0.45].CGColor);
     [lm drawGlyphsForGlyphRange:glyphs atPoint:origin];
     CGContextRestoreGState(ctx);
 }

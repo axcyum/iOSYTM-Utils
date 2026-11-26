@@ -57,6 +57,7 @@ static const CFTimeInterval kKaraokeInterval = 0.25;
         [nc addObserver:self selector:@selector(reset) name:IVLTrackDidChangeNotification object:nil];
         [nc addObserver:self selector:@selector(lyricsChanged) name:IVLLyricsDidChangeNotification object:nil];
         [nc addObserver:self selector:@selector(settingsChanged:) name:IVLSettingsDidChangeNotification object:nil];
+        [nc addObserver:self selector:@selector(appResignedActive) name:UIApplicationWillResignActiveNotification object:nil];
         dispatch_async(dispatch_get_main_queue(), ^{ [self startTimer]; });
     }
     return self;
@@ -112,6 +113,11 @@ static const CFTimeInterval kKaraokeInterval = 0.25;
     _animating = NO;
 }
 
+- (void)appResignedActive {
+    _shownIndex = -2;
+    _animating = NO;
+}
+
 - (void)settingsChanged:(NSNotification *)n {
     NSString *k = n.object;
     if ([k isEqualToString:IVLKeyLockEnabled] || [k isEqualToString:IVLKeyEnabled]) {
@@ -156,10 +162,12 @@ static const CFTimeInterval kKaraokeInterval = 0.25;
         return;
     }
 
+    BOOL appForeground = (UIApplication.sharedApplication.applicationState == UIApplicationStateActive);
     CFTimeInterval now = CACurrentMediaTime();
     if (idx != _shownIndex) {
         UIImage *text = [self renderTextForIndex:idx lyrics:ly time:t];
-        BOOL animate = [IVLSettings boolForKey:IVLKeyLockAnimation] && _textFrame && _shownIndex >= 0 && labs(idx - _shownIndex) == 1;
+        // Skip multi-frame 720x720 bitmap animations while the user is actively inside the app / on HDMI
+        BOOL animate = !appForeground && [IVLSettings boolForKey:IVLKeyLockAnimation] && _textFrame && _shownIndex >= 0 && labs(idx - _shownIndex) == 1;
         if (animate) {
             _fromText = _textFrame;
             _toText = text;
@@ -174,6 +182,10 @@ static const CFTimeInterval kKaraokeInterval = 0.25;
         _lastKaraoke = now;
         return;
     }
+
+    // While the app is active in foreground, lock screen word-by-word bitmap redraws are invisible
+    // and only stall the main thread / mediaremoted IPC. Resume instantly when resigning active.
+    if (appForeground) return;
 
     if (_animating) {
         CGFloat p = MIN(1.0, (now - _animStart) / kAnimDuration);
