@@ -11,7 +11,8 @@ static const CGFloat kIVLHomeBarHeight = 26.0;
     BOOL _started;
     NSTimer *_timer;
     __weak UIView *_attachedMiniBar;
-    BOOL _savedClipsToBounds;
+    NSMutableArray<NSArray *> *_clippedAncestors; // @[@[weak-or-view, @(origClips)]]
+    UIView *_topFillView;
     UIView *_stripView;
     UIView *_topHairline;
     UIImageView *_noteIcon;
@@ -29,6 +30,10 @@ static const CGFloat kIVLHomeBarHeight = 26.0;
 - (void)start {
     if (_started) return;
     _started = YES;
+    _clippedAncestors = [NSMutableArray array];
+
+    _topFillView = [UIView new];
+    _topFillView.userInteractionEnabled = NO;
 
     _stripView = [UIView new];
     _stripView.backgroundColor = [UIColor colorWithRed:0.129 green:0.129 blue:0.129 alpha:1.0];
@@ -131,8 +136,13 @@ static const CGFloat kIVLHomeBarHeight = 26.0;
     UIView *old = _attachedMiniBar;
     if (old) {
         old.layer.sublayerTransform = CATransform3DIdentity;
-        old.clipsToBounds = _savedClipsToBounds;
     }
+    for (NSArray *pair in _clippedAncestors) {
+        UIView *v = pair[0];
+        v.clipsToBounds = [pair[1] boolValue];
+    }
+    [_clippedAncestors removeAllObjects];
+    [_topFillView removeFromSuperview];
     _attachedMiniBar = nil;
     _stripView.hidden = YES;
     [_stripView removeFromSuperview];
@@ -176,8 +186,12 @@ static const CGFloat kIVLHomeBarHeight = 26.0;
     if (!miniBar) {
         miniBar = [self findMiniBarInView:win window:win depth:0];
         if (miniBar) {
-            _savedClipsToBounds = miniBar.clipsToBounds;
             _attachedMiniBar = miniBar;
+            [_clippedAncestors removeAllObjects];
+            for (UIView *p = miniBar; p && p != win && p.bounds.size.height <= 140.0; p = p.superview) {
+                [_clippedAncestors addObject:@[p, @(p.clipsToBounds)]];
+                p.clipsToBounds = NO;
+            }
             fInWin = [miniBar convertRect:miniBar.bounds toView:win];
         }
     }
@@ -186,9 +200,24 @@ static const CGFloat kIVLHomeBarHeight = 26.0;
         return;
     }
 
+    // Keep unclipped even if YTMusic resets clipsToBounds during layout
+    for (NSArray *pair in _clippedAncestors) {
+        UIView *v = pair[0];
+        if (v.clipsToBounds) v.clipsToBounds = NO;
+    }
+
+    UIColor *bg = [self sampleColorFromView:miniBar depth:0] ?: [UIColor colorWithRed:0.129 green:0.129 blue:0.129 alpha:1.0];
+
+    // Put an opaque matching background view at index 0 inside miniBar so it shifts upward together
+    // with the artwork/title/buttons and prevents the home feed from bleeding through the top 26pt.
+    if (_topFillView.superview != miniBar) {
+        [miniBar insertSubview:_topFillView atIndex:0];
+    }
+    _topFillView.frame = miniBar.bounds;
+    _topFillView.backgroundColor = bg;
+
     // Use CALayer.sublayerTransform instead of UIView.transform so YouTube Music's own setFrame:
     // never breaks or pushes the mini bar off-screen.
-    miniBar.clipsToBounds = NO;
     CATransform3D shift = CATransform3DMakeTranslation(0, -kIVLHomeBarHeight, 0);
     if (!CATransform3DEqualToTransform(miniBar.layer.sublayerTransform, shift)) {
         miniBar.layer.sublayerTransform = shift;
@@ -208,8 +237,6 @@ static const CGFloat kIVLHomeBarHeight = 26.0;
     }
     _stripView.hidden = NO;
     [win bringSubviewToFront:_stripView];
-
-    UIColor *bg = [self sampleColorFromView:miniBar depth:0] ?: [UIColor colorWithRed:0.129 green:0.129 blue:0.129 alpha:1.0];
     _stripView.backgroundColor = bg;
 
     NSString *line = [pm currentLineText];
