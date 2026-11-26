@@ -48,12 +48,45 @@ static const int kPlayerID = 1;
         _status = @"";
         _createdAt = (long long)(NSDate.date.timeIntervalSince1970 * 1000);
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(settingsChanged:) name:IVLSettingsDidChangeNotification object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(appDidEnterBackground) name:UIApplicationDidEnterBackgroundNotification object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(appWillEnterForeground) name:UIApplicationWillEnterForegroundNotification object:nil];
         dispatch_async(dispatch_get_main_queue(), ^{
-            self->_tick = [NSTimer scheduledTimerWithTimeInterval:1.0 target:self selector:@selector(push) userInfo:nil repeats:YES];
+            [self syncTimer];
             [self reconnect];
         });
     }
     return self;
+}
+
+- (void)syncTimer {
+    BOOL on = [IVLSettings boolForKey:IVLKeyWNPEnabled];
+    if (on && !_tick) {
+        _tick = [NSTimer scheduledTimerWithTimeInterval:1.0 target:self selector:@selector(push) userInfo:nil repeats:YES];
+    } else if (!on && _tick) {
+        [_tick invalidate];
+        _tick = nil;
+    }
+}
+
+- (void)appDidEnterBackground {
+    // Never keep retrying TCP connections while backgrounded and not playing
+    if (![IVLRemoteControl isPlaying]) {
+        dispatch_async(_q, ^{
+            self->_generation++;
+            [self closeLocked];
+        });
+    }
+}
+
+- (void)appWillEnterForeground {
+    if (![IVLSettings boolForKey:IVLKeyWNPEnabled]) return;
+    dispatch_async(_q, ^{
+        if (!self->_conn) {
+            self->_generation++;
+            self->_attempt = 0;
+            [self openLocked];
+        }
+    });
 }
 
 - (void)setStatusText:(NSString *)s {
@@ -65,7 +98,10 @@ static const int kPlayerID = 1;
 
 - (void)settingsChanged:(NSNotification *)n {
     NSString *k = n.object;
-    if ([k isEqualToString:IVLKeyWNPEnabled] || [k isEqualToString:IVLKeyWNPHost] || [k isEqualToString:IVLKeyWNPPort]) [self reconnect];
+    if ([k isEqualToString:IVLKeyWNPEnabled] || [k isEqualToString:IVLKeyWNPHost] || [k isEqualToString:IVLKeyWNPPort]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self syncTimer]; });
+        [self reconnect];
+    }
 }
 
 #pragma mark - Connection
@@ -81,7 +117,11 @@ static const int kPlayerID = 1;
 }
 
 - (void)closeLocked {
-    if (_conn) { nw_connection_cancel(_conn); _conn = nil; }
+    if (_conn) {
+        nw_connection_set_state_changed_handler(_conn, NULL);
+        nw_connection_cancel(_conn);
+        _conn = nil;
+    }
     _revision = nil;
     _cache = [NSMutableDictionary dictionary];
     _playerAdded = NO;
@@ -142,12 +182,23 @@ static const int kPlayerID = 1;
 
 - (void)scheduleRetryFrom:(nw_connection_t)c generation:(NSUInteger)gen {
     if (c != _conn) return;
+    nw_connection_set_state_changed_handler(c, NULL);
     nw_connection_cancel(c);
     _conn = nil;
     _revision = nil;
     _playerAdded = NO;
     _cache = [NSMutableDictionary dictionary];
-    double delay = MIN(30.0, 2.0 * pow(1.6, MIN(_attempt, 8)));
+    if (![IVLSettings boolForKey:IVLKeyWNPEnabled]) {
+        [self setStatusText:@"オフ"];
+        return;
+    }
+    // Cap consecutive retries at 5 so unreachable hosts never spin up thousands of TCP sockets
+    static const NSUInteger kMaxRetries = 5;
+    if (_attempt >= kMaxRetries) {
+        [self setStatusText:@"接続できません（設定から再接続）"];
+        return;
+    }
+    double delay = MIN(60.0, 5.0 * pow(2.0, (double)_attempt));
     _attempt++;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), _q, ^{
         if (gen == self->_generation && !self->_conn && [IVLSettings boolForKey:IVLKeyWNPEnabled]) [self openLocked];

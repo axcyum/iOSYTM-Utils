@@ -23,6 +23,9 @@ extern NSString *const IVLKeyProviderLRCLIB;     // BOOL
 extern NSString *const IVLKeyProviderYouTube;    // BOOL
 extern NSString *const IVLKeyProviderLyricsPlus; // BOOL
 extern NSString *const IVLKeyProviderLyrically;  // BOOL
+extern NSString *const IVLKeyProviderSpicyLyrics;// BOOL
+extern NSString *const IVLKeyProviderPetitLyrics;// BOOL
+extern NSString *const IVLKeyProviderGenius;     // BOOL
 extern NSString *const IVLKeyProviderGitHub;     // BOOL (default NO)
 extern NSString *const IVLKeyGitHubLRCRepo;      // NSString (legacy single repo, auto-migrated)
 extern NSString *const IVLKeyGitHubLRCBranch;    // NSString (legacy single branch, auto-migrated)
@@ -56,6 +59,11 @@ extern NSString *const IVLKeyOpenPlayer;         // BOOL  lyrics screen opens on
 extern NSString *const IVLKeyImmersivePlayer;    // BOOL  Apple Music full-bleed hero UI (experimental, default NO)
 extern NSString *const IVLKeyAMLyrics;           // BOOL  Apple Music inline lyrics view (experimental, default NO)
 extern NSString *const IVLKeyCoverFlow;          // BOOL  iOS 6-style landscape Cover Flow (default NO)
+extern NSString *const IVLKeyExternalDisplay;    // BOOL  HDMI / AirPlay fullscreen lyrics stage (default NO)
+extern NSString *const IVLKeyKaraokeMode;        // BOOL  on-device center vocal removal (default NO)
+extern NSString *const IVLKeyKaraokeStrength;    // double 0..100 (default 85)
+extern NSString *const IVLKeyVolumeBoost;        // BOOL  soft-clipped volume boost (default NO)
+extern NSString *const IVLKeyVolumeBoostLevel;   // double 100..250 (default 150)
 extern NSString *const IVLKeyDiscordInterval;    // NSInteger seconds between presence updates (3..60, default 15)
 extern NSString *const IVLKeyDiscordStatusDisplay; // NSInteger 0 = Activity Name, 1 = Artist Name, 2 = Song Title
 extern NSString *const IVLKeyDiscordName;        // NSString activity name ("Listening to <name>")

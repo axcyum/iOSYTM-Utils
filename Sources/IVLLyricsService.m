@@ -236,6 +236,9 @@ static BOOL IVLSafeBool(id v) {
 
 - (void)invokeProvider:(NSString *)pid track:(IVLTrack *)track completion:(IVLLyricsCompletion)done {
     if ([pid isEqualToString:@"github"]) [self githubLRCForTrack:track completion:done];
+    else if ([pid isEqualToString:@"spicylyrics"]) [self spicyLyricsForTrack:track completion:done];
+    else if ([pid isEqualToString:@"petitlyrics"]) [self petitLyricsForTrack:track completion:done];
+    else if ([pid isEqualToString:@"genius"]) [self geniusForTrack:track completion:done];
     else if ([pid isEqualToString:@"captions"]) [self captionsForTrack:track completion:done];
     else if ([pid isEqualToString:@"spotify"]) [[IVLSpotify shared] lyricsForTrack:track completion:done];
     else if ([pid isEqualToString:@"youtube"]) [self youtubeForTrack:track completion:done];

@@ -30,7 +30,7 @@ static NSString *IVLCollapse(NSString *s) {
 
 /// One layer of XML character references (&amp; &#39; &#x27; ...)
 static NSString *IVLDecodeEntities(NSString *s) {
-    if (![s containsString:@"&"]) return s ?: @"";
+    if (!s.length || ![s containsString:@"&"]) return s ?: @"";
     static NSRegularExpression *re;
     static dispatch_once_t once;
     dispatch_once(&once, ^{ re = [NSRegularExpression regularExpressionWithPattern:@"&(?:#([0-9]+)|#[xX]([0-9a-fA-F]+)|([a-z]+));" options:0 error:nil]; });
@@ -132,6 +132,7 @@ static IVLLyrics *IVLPlainFromTexts(NSArray<NSString *> *texts) {
 #pragma mark - Credit / placeholder lines (KuGou payloads)
 
 static BOOL IVLIsCreditLine(NSString *text, NSUInteger index, IVLTrack *track) {
+    if (!text.length) return NO;
     static NSRegularExpression *re;
     static dispatch_once_t once;
     dispatch_once(&once, ^{

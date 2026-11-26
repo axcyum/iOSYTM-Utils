@@ -212,15 +212,17 @@ static NSError *IVLCapError(NSString *message) {
     [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
     req.HTTPBody = [NSJSONSerialization dataWithJSONObject:@{ @"context": client, @"videoId": vid } options:0 error:nil];
     [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *r, NSError *e) {
-        NSString *body = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
+        NSString *body = data.length ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
         // The song/video switch lives under "counterpart"; its renderer carries the video's id.
-        NSRange c = [body rangeOfString:@"\"counterpart\""];
+        NSRange c = body.length ? [body rangeOfString:@"\"counterpart\""] : NSMakeRange(NSNotFound, 0);
         NSString *found = nil;
-        if (c.location != NSNotFound) {
+        if (body.length && c.location != NSNotFound) {
             NSString *tail = [body substringFromIndex:c.location];
-            NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:@"\"videoId\"\\s*:\\s*\"([A-Za-z0-9_-]{11})\"" options:0 error:nil];
-            NSTextCheckingResult *m = [re firstMatchInString:tail options:0 range:NSMakeRange(0, MIN(tail.length, 20000))];
-            if (m) found = [tail substringWithRange:[m rangeAtIndex:1]];
+            if (tail.length) {
+                NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:@"\"videoId\"\\s*:\\s*\"([A-Za-z0-9_-]{11})\"" options:0 error:nil];
+                NSTextCheckingResult *m = [re firstMatchInString:tail options:0 range:NSMakeRange(0, MIN(tail.length, 20000))];
+                if (m) found = [tail substringWithRange:[m rangeAtIndex:1]];
+            }
         }
         completion([found isEqualToString:vid] ? nil : found);
     }] resume];

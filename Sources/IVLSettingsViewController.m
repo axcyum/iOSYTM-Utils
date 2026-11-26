@@ -181,6 +181,7 @@ typedef NS_ENUM(NSInteger, IVLRowType) {
         @"lock": IVLLoc(@"sec_lock"),
         @"spotify": @"Spotify",
         @"github_lrc": IVLLoc(@"github_lrc_repo"),
+        @"audio": IVLLoc(@"sec_audio"),
         @"discord": @"Discord Rich Presence",
         @"wnp": @"WebNowPlaying",
         @"accent": IVLLoc(@"accent_color"),
@@ -507,6 +508,23 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
     ];
 }
 
+- (NSArray<IVLSection *> *)audioSections {
+    IVLRow *kOn = [IVLRow type:IVLRowSwitch key:IVLKeyKaraokeMode title:IVLLoc(@"karaoke_mode")];
+    IVLRow *kStr = [IVLRow type:IVLRowSlider key:IVLKeyKaraokeStrength title:IVLLoc(@"karaoke_strength")];
+    kStr.min = 0; kStr.max = 100; kStr.step = 5;
+    kStr.format = ^NSString *(double v) { return [NSString stringWithFormat:@"%.0f%%", v]; };
+
+    IVLRow *bOn = [IVLRow type:IVLRowSwitch key:IVLKeyVolumeBoost title:IVLLoc(@"volume_boost")];
+    IVLRow *bLvl = [IVLRow type:IVLRowSlider key:IVLKeyVolumeBoostLevel title:IVLLoc(@"volume_boost_level")];
+    bLvl.min = 100; bLvl.max = 250; bLvl.step = 10;
+    bLvl.format = ^NSString *(double v) { return [NSString stringWithFormat:@"%.0f%%", v]; };
+
+    return @[
+        [IVLSection title:IVLLoc(@"karaoke_mode") footer:IVLLoc(@"footer_karaoke_mode") rows:@[kOn, kStr]],
+        [IVLSection title:IVLLoc(@"volume_boost") footer:IVLLoc(@"footer_volume_boost") rows:@[bOn, bLvl]],
+    ];
+}
+
 - (NSArray<IVLSection *> *)discordSections {
     IVLDiscord *d = [IVLDiscord shared];
     IVLRow *state = [IVLRow type:IVLRowInfo key:@"" title:IVLLoc(@"status")];
@@ -569,6 +587,7 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
     if ([_page isEqualToString:@"lock"]) { _sections = [self lockSections]; return; }
     if ([_page isEqualToString:@"spotify"]) { _sections = [self spotifySections]; return; }
     if ([_page isEqualToString:@"github_lrc"]) { _sections = [self githubLRCSections]; return; }
+    if ([_page isEqualToString:@"audio"]) { _sections = [self audioSections]; return; }
     if ([_page isEqualToString:@"discord"]) { _sections = [self discordSections]; return; }
     if ([_page isEqualToString:@"wnp"]) { _sections = [self wnpSections]; return; }
     if ([_page isEqualToString:@"scrobble"]) { _sections = [self scrobbleSections]; return; }
@@ -635,9 +654,21 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
         return res > 0 ? [NSString stringWithFormat:@"%@ · %lds", offStr, (long)res] : offStr;
     });
 
-    // 3. Tools — Lock Screen Lyrics, Sleep Timer, Song Recognition (ShazamKit)
+    // 3. Tools — Lock Screen Lyrics, External Display, Audio DSP, Sleep Timer, Song Recognition (ShazamKit)
     IVLRow *lockPage = subpage(@"lock", IVLLoc(@"sec_lock"), @"lock.iphone", @"lock.fill", @"5E5CE6", ^NSString *{
         return IVLLoc([IVLSettings boolForKey:IVLKeyLockEnabled] ? @"on" : @"off");
+    });
+
+    IVLRow *extDisplay = [[IVLRow type:IVLRowSwitch key:IVLKeyExternalDisplay title:IVLLoc(@"external_display")]
+                          withBadge:@"airplayvideo" fallback:@"tv.fill" hex:@"32ADE6"];
+
+    IVLRow *audioPage = subpage(@"audio", IVLLoc(@"sec_audio"), @"waveform.path.ecg", @"speaker.wave.3.fill", @"FF375F", ^NSString *{
+        BOOL k = [IVLSettings boolForKey:IVLKeyKaraokeMode];
+        BOOL b = [IVLSettings boolForKey:IVLKeyVolumeBoost];
+        if (k && b) return [NSString stringWithFormat:@"%@ · %.0f%%", IVLLoc(@"karaoke_short"), [IVLSettings doubleForKey:IVLKeyVolumeBoostLevel]];
+        if (k) return IVLLoc(@"karaoke_short");
+        if (b) return [NSString stringWithFormat:@"%.0f%%", [IVLSettings doubleForKey:IVLKeyVolumeBoostLevel]];
+        return IVLLoc(@"off");
     });
 
     IVLRow *sleepPage = [[IVLRow type:IVLRowLink key:@"" title:IVLLoc(@"sleep_timer")]
@@ -736,7 +767,7 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
     _sections = @[
         [IVLSection title:IVLLoc(@"sec_general") footer:nil rows:@[master, btnPage, appearancePage, displayPage]],
         [IVLSection title:IVLLoc(@"sec_lyrics_lang") footer:nil rows:@[sourcesPage, transPage, syncPage]],
-        [IVLSection title:IVLLoc(@"sec_tools") footer:nil rows:@[lockPage, sleepPage, recognizeRow]],
+        [IVLSection title:IVLLoc(@"sec_tools") footer:nil rows:@[lockPage, extDisplay, audioPage, sleepPage, recognizeRow]],
         [IVLSection title:IVLLoc(@"sec_integrations") footer:nil rows:@[discordPage, scrobblePage, wnpPage, statsPage]],
         [IVLSection title:IVLLoc(@"sec_data") footer:IVLLoc(@"footer_about") rows:@[clear, checkUpdates, devLink, repoLink, version]],
     ];
@@ -1164,6 +1195,9 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
 
 + (NSString *)detailFor:(NSString *)pid {
     if ([pid isEqualToString:@"github"]) return IVLLoc(@"src_github");
+    if ([pid isEqualToString:@"spicylyrics"]) return IVLLoc(@"src_spicylyrics");
+    if ([pid isEqualToString:@"petitlyrics"]) return IVLLoc(@"src_petitlyrics");
+    if ([pid isEqualToString:@"genius"]) return IVLLoc(@"src_genius");
     if ([pid isEqualToString:@"captions"]) return IVLLoc(@"src_captions");
     if ([pid isEqualToString:@"spotify"]) return IVLLoc(@"src_spotify");
     if ([pid isEqualToString:@"youtube"]) return IVLLoc(@"src_youtube");

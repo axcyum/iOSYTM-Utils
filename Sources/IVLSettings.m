@@ -20,6 +20,9 @@ NSString *const IVLKeyProviderLRCLIB = @"providerLRCLIB";
 NSString *const IVLKeyProviderYouTube = @"providerYouTube";
 NSString *const IVLKeyProviderLyricsPlus = @"providerLyricsPlus";
 NSString *const IVLKeyProviderLyrically = @"providerLyrically";
+NSString *const IVLKeyProviderSpicyLyrics = @"providerSpicyLyrics";
+NSString *const IVLKeyProviderPetitLyrics = @"providerPetitLyrics";
+NSString *const IVLKeyProviderGenius = @"providerGenius";
 NSString *const IVLKeyProviderGitHub = @"providerGitHub";
 NSString *const IVLKeyGitHubLRCRepo = @"githubLRCRepo";
 NSString *const IVLKeyGitHubLRCBranch = @"githubLRCBranch";
@@ -53,6 +56,11 @@ NSString *const IVLKeyOpenPlayer = @"openPlayer";
 NSString *const IVLKeyImmersivePlayer = @"immersivePlayer";
 NSString *const IVLKeyAMLyrics = @"amLyrics";
 NSString *const IVLKeyCoverFlow = @"coverFlow";
+NSString *const IVLKeyExternalDisplay = @"externalDisplay";
+NSString *const IVLKeyKaraokeMode = @"karaokeMode";
+NSString *const IVLKeyKaraokeStrength = @"karaokeStrength";
+NSString *const IVLKeyVolumeBoost = @"volumeBoost";
+NSString *const IVLKeyVolumeBoostLevel = @"volumeBoostLevel";
 NSString *const IVLKeyWNPEnabled = @"wnpEnabled";
 NSString *const IVLKeyWNPHost = @"wnpHost";
 NSString *const IVLKeyWNPPort = @"wnpPort";
@@ -95,6 +103,9 @@ static NSString *IVLLocCaptionsName(void) {
             IVLKeyProviderYouTube: @YES,
             IVLKeyProviderLyricsPlus: @YES,
             IVLKeyProviderLyrically: @YES,
+            IVLKeyProviderSpicyLyrics: @YES,
+            IVLKeyProviderPetitLyrics: @YES,
+            IVLKeyProviderGenius: @YES,
             IVLKeyProviderGitHub: @NO,
             IVLKeyGitHubLRCRepo: @"",
             IVLKeyGitHubLRCBranch: @"",
@@ -127,6 +138,11 @@ static NSString *IVLLocCaptionsName(void) {
             IVLKeyImmersivePlayer: @NO,
             IVLKeyAMLyrics: @NO,
             IVLKeyCoverFlow: @NO,
+            IVLKeyExternalDisplay: @NO,
+            IVLKeyKaraokeMode: @NO,
+            IVLKeyKaraokeStrength: @85.0,
+            IVLKeyVolumeBoost: @NO,
+            IVLKeyVolumeBoostLevel: @150.0,
             IVLKeyWNPEnabled: @NO,
             IVLKeyWNPHost: @"",
             IVLKeyWNPPort: @8974,
@@ -149,7 +165,7 @@ static NSString *IVLLocCaptionsName(void) {
 
 + (NSArray<NSString *> *)knownProviders {
     // synced built-in sources first, optional GitHub LRC repo at the bottom (OFF by default)
-    return @[@"youtube", @"lyricsplus", @"spotify", @"captions", @"unison", @"lyrically", @"lrclib", @"github"];
+    return @[@"youtube", @"lyricsplus", @"spicylyrics", @"petitlyrics", @"spotify", @"captions", @"unison", @"lyrically", @"lrclib", @"genius", @"github"];
 }
 
 + (NSArray<NSString *> *)providerIDs {
@@ -169,12 +185,14 @@ static NSString *IVLLocCaptionsName(void) {
 + (void)setProviderIDs:(NSArray<NSString *> *)ids { [self setObject:[ids copy] forKey:IVLKeyProviderOrder]; }
 
 + (NSString *)enableKeyForProvider:(NSString *)pid {
-    return @{ @"github": IVLKeyProviderGitHub, @"captions": IVLKeyProviderCaptions, @"spotify": IVLKeyProviderSpotify, @"youtube": IVLKeyProviderYouTube, @"lyricsplus": IVLKeyProviderLyricsPlus, @"unison": IVLKeyProviderUnison,
+    return @{ @"github": IVLKeyProviderGitHub, @"spicylyrics": IVLKeyProviderSpicyLyrics, @"petitlyrics": IVLKeyProviderPetitLyrics, @"genius": IVLKeyProviderGenius,
+              @"captions": IVLKeyProviderCaptions, @"spotify": IVLKeyProviderSpotify, @"youtube": IVLKeyProviderYouTube, @"lyricsplus": IVLKeyProviderLyricsPlus, @"unison": IVLKeyProviderUnison,
               @"lyrically": IVLKeyProviderLyrically, @"lrclib": IVLKeyProviderLRCLIB }[pid] ?: @"";
 }
 
 + (NSString *)nameForProvider:(NSString *)pid {
-    return @{ @"github": @"GitHub LRC", @"captions": IVLLocCaptionsName(), @"spotify": @"Spotify", @"youtube": @"YouTube Music", @"lyricsplus": @"LyricsPlus", @"unison": @"Unison", @"lyrically": @"Lyrically", @"lrclib": @"LRCLIB" }[pid] ?: pid;
+    return @{ @"github": @"GitHub LRC", @"spicylyrics": @"SpicyLyrics", @"petitlyrics": @"PetitLyrics", @"genius": @"Genius",
+              @"captions": IVLLocCaptionsName(), @"spotify": @"Spotify", @"youtube": @"YouTube Music", @"lyricsplus": @"LyricsPlus", @"unison": @"Unison", @"lyrically": @"Lyrically", @"lrclib": @"LRCLIB" }[pid] ?: pid;
 }
 
 + (NSArray<NSString *> *)enabledProviderIDs {

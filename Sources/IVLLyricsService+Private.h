@@ -14,6 +14,13 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)lyricallyForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)done;
 @end
 
+/// Additional providers: SpicyLyrics, PetitLyrics, Genius
+@interface IVLLyricsService (MoreProviders)
+- (void)spicyLyricsForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)done;
+- (void)petitLyricsForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)done;
+- (void)geniusForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)done;
+@end
+
 /// Subtitles of the (music) video used as lyrics
 @interface IVLLyricsService (Captions)
 - (void)captionsForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)done;

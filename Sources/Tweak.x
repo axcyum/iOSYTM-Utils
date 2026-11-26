@@ -22,6 +22,8 @@
 #import "IVLScrobbler.h"
 #import "IVLCoverFlow.h"
 #import "IVLHomeBarLyrics.h"
+#import "IVLExternalDisplay.h"
+#import "IVLAudioDSP.h"
 
 static const void *kIVLButtonKey = &kIVLButtonKey;
 
@@ -209,6 +211,8 @@ static UIImage *IVLMenuIcon(void) {
             [[IVLScrobbler shared] start];
             [[IVLCoverFlowManager shared] start];
             [[IVLHomeBarLyricsManager shared] start];
+            [[IVLExternalDisplayManager shared] start];
+            [[IVLAudioDSP shared] start];
         });
         if (objc_getClass("YTPlayerViewController")) %init(Player);
         if (objc_getClass("YTMWatchViewController")) %init(WatchFullscreenBlock);

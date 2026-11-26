@@ -14,6 +14,9 @@ extern NSNotificationName const IVLSpotifyStateDidChangeNotification;
 @property (nonatomic, copy, readonly) NSString *statusText;
 - (void)refreshLoginState;
 - (void)lyricsForTrack:(IVLTrack *)track completion:(IVLLyricsCompletion)completion;
+/// Resolves Spotify access token and best-matching Spotify track ID for SpicyLyrics.
+- (void)resolveTokenAndTrackIDForTrack:(IVLTrack *)track
+                            completion:(void (^)(NSString *_Nullable token, NSString *_Nullable trackID, NSError *_Nullable error))completion;
 - (UIViewController *)loginViewController;
 - (void)logout;
 @end

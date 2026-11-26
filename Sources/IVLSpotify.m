@@ -364,6 +364,29 @@ static NSString *IVLEnc(NSString *s) {
     }];
 }
 
+- (void)resolveTokenAndTrackIDForTrack:(IVLTrack *)track
+                            completion:(void (^)(NSString *_Nullable token, NSString *_Nullable trackID, NSError *_Nullable error))completion {
+    if (!self.loggedIn) {
+        completion(nil, nil, IVLSpotifyError(401, @"Spotify login required"));
+        return;
+    }
+    [self withToken:^(NSString *token) {
+        if (!token.length) { completion(nil, nil, IVLSpotifyError(408, @"token timeout")); return; }
+        NSString *title = [IVLLyricsService cleanTitle:track.title];
+        NSString *artist = [IVLLyricsService cleanArtist:track.artist];
+        NSString *q = artist.length ? [NSString stringWithFormat:@"%@ %@", title, artist] : title;
+        [self webSearch:q completion:^(NSArray<NSDictionary *> *cands) {
+            NSDictionary *best = cands.count ? IVLBestCandidate(cands, track) : nil;
+            NSString *tid = [best[@"id"] isKindOfClass:[NSString class]] ? best[@"id"] : nil;
+            if (!tid.length) {
+                completion(token, nil, IVLSpotifyError(404, @"no matching Spotify track"));
+                return;
+            }
+            completion(token, tid, nil);
+        }];
+    }];
+}
+
 @end
 
 #pragma mark - Login screen
