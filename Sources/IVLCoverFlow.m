@@ -5,6 +5,7 @@
 #import "IVLRemoteControl.h"
 #import "IVLLocalization.h"
 #import <QuartzCore/QuartzCore.h>
+#import <objc/runtime.h>
 
 @interface IVLCoverFlowManager ()
 @property (nonatomic, copy) NSArray<NSDictionary *> *capturedQueue;
@@ -569,6 +570,139 @@ static NSArray<NSDictionary *> *IVLRotateQueueForTrack(NSArray<NSDictionary *> *
     return [[items subarrayWithRange:tail] arrayByAddingObjectsFromArray:[items subarrayWithRange:head]];
 }
 
+/// Safely walks object ivars (shallow BFS) to locate YouTube Music's live YTIPlaylistPanelRenderer
+/// or queue item array without triggering unknown KVC keys or crashing.
+static void IVLCFScanForQueue(id root, NSMutableArray<NSDictionary *> **outItems, NSString **outPlaylistID) {
+    if (!root) return;
+    NSMutableSet<NSValue *> *visited = [NSMutableSet set];
+    NSMutableArray *queue = [NSMutableArray arrayWithObject:@[root, @0]];
+    NSUInteger steps = 0;
+
+    while (queue.count && steps < 350) {
+        NSArray *pair = queue.firstObject;
+        [queue removeObjectAtIndex:0];
+        id obj = pair[0];
+        NSInteger depth = [pair[1] integerValue];
+        if (!obj || depth > 5) continue;
+
+        NSValue *ptr = [NSValue valueWithPointer:(__bridge const void *)obj];
+        if ([visited containsObject:ptr]) continue;
+        [visited addObject:ptr];
+        steps++;
+
+        NSString *clsName = NSStringFromClass([obj class]);
+        if ([clsName containsString:@"PlaylistPanelRenderer"]) {
+            NSString *pl = nil;
+            NSArray<NSDictionary *> *extracted = IVLCFExtractFromPanel(obj, &pl);
+            if (pl.length && outPlaylistID && !(*outPlaylistID).length) *outPlaylistID = pl;
+            if (extracted.count >= 2 && outItems) {
+                *outItems = [extracted mutableCopy];
+                return;
+            }
+        }
+
+        // Skip Foundation value/UI leaf classes to keep scanning ultra-fast
+        if ([obj isKindOfClass:[NSString class]] || [obj isKindOfClass:[NSNumber class]] ||
+            [obj isKindOfClass:[NSData class]] || [obj isKindOfClass:[UIImage class]] ||
+            [obj isKindOfClass:[UIColor class]] || [obj isKindOfClass:[UIFont class]] ||
+            [obj isKindOfClass:[CALayer class]] || [obj isKindOfClass:[NSLayoutConstraint class]]) {
+            continue;
+        }
+
+        if ([obj isKindOfClass:[UIViewController class]]) {
+            UIViewController *vc = (UIViewController *)obj;
+            for (UIViewController *child in vc.childViewControllers) {
+                if (child) [queue addObject:@[child, @(depth + 1)]];
+            }
+        }
+
+        if ([obj isKindOfClass:[NSArray class]]) {
+            NSArray *arr = (NSArray *)obj;
+            if (arr.count > 0 && arr.count <= 80) {
+                // Check if this array directly holds YTIPlaylistPanelVideoRenderer / queue item objects
+                NSMutableArray<NSDictionary *> *direct = [NSMutableArray array];
+                NSMutableSet<NSString *> *seen = [NSMutableSet set];
+                for (id el in arr) {
+                    NSString *ec = NSStringFromClass([el class]);
+                    if ([ec containsString:@"PlaylistPanelVideo"] || [ec containsString:@"QueueItem"]) {
+                        id vr = el;
+                        @try {
+                            if ([el respondsToSelector:@selector(playlistPanelVideoRenderer)]) {
+                                id sub = [el performSelector:@selector(playlistPanelVideoRenderer)];
+                                if (sub) vr = sub;
+                            }
+                            NSString *vid = [vr respondsToSelector:@selector(videoId)] ? [vr performSelector:@selector(videoId)] : nil;
+                            if (![vid isKindOfClass:[NSString class]] || !vid.length || [seen containsObject:vid]) continue;
+                            [seen addObject:vid];
+                            NSString *title = [vr respondsToSelector:@selector(title)] ? IVLCFFormattedString([vr performSelector:@selector(title)]) : @"";
+                            NSString *artist = [vr respondsToSelector:@selector(shortBylineText)] ? IVLCFFormattedString([vr performSelector:@selector(shortBylineText)]) : @"";
+                            if (!artist.length && [vr respondsToSelector:@selector(longBylineText)]) artist = IVLCFFormattedString([vr performSelector:@selector(longBylineText)]);
+                            NSRange dot = [artist rangeOfString:@" • "];
+                            if (dot.location != NSNotFound) artist = [artist substringToIndex:dot.location];
+                            NSString *cover = @"";
+                            if ([vr respondsToSelector:@selector(thumbnail)]) {
+                                id td = [vr performSelector:@selector(thumbnail)];
+                                if (td && [td respondsToSelector:@selector(thumbnailsArray)]) {
+                                    id tarr = [td performSelector:@selector(thumbnailsArray)];
+                                    if ([tarr isKindOfClass:[NSArray class]] && [(NSArray *)tarr count]) {
+                                        id last = [(NSArray *)tarr lastObject];
+                                        if ([last respondsToSelector:@selector(URL)]) {
+                                            id u = [last performSelector:@selector(URL)];
+                                            if ([u isKindOfClass:[NSString class]]) cover = IVLCFUpgradeCoverURL(u);
+                                        }
+                                    }
+                                }
+                            }
+                            [direct addObject:@{ @"videoId": vid, @"title": title ?: @"", @"artist": artist ?: @"", @"artworkURL": cover ?: @"" }];
+                        } @catch (__unused NSException *e) {}
+                    }
+                }
+                if (direct.count >= 2 && outItems) {
+                    *outItems = direct;
+                    return;
+                }
+            }
+            continue;
+        }
+
+        // Only walk ivars of YouTube / YTM classes
+        if (![clsName hasPrefix:@"YT"] && ![clsName hasPrefix:@"YTM"] && ![clsName hasPrefix:@"ML"]) continue;
+
+        Class c = [obj class];
+        while (c && c != [NSObject class] && c != [UIViewController class] && c != [UIView class]) {
+            NSString *cn = NSStringFromClass(c);
+            if (![cn hasPrefix:@"YT"] && ![cn hasPrefix:@"YTM"] && ![cn hasPrefix:@"ML"]) break;
+            unsigned int count = 0;
+            Ivar *ivars = class_copyIvarList(c, &count);
+            for (unsigned int i = 0; i < count; i++) {
+                const char *enc = ivar_getTypeEncoding(ivars[i]);
+                if (!enc || enc[0] != '@') continue;
+                const char *name = ivar_getName(ivars[i]);
+                if (!name) continue;
+                NSString *nsName = [NSString stringWithUTF8String:name];
+                // Prioritize queue / watch / panel / response / controller ivars
+                NSString *ln = nsName.lowercaseString;
+                BOOL interesting = [ln containsString:@"queue"] || [ln containsString:@"panel"] || [ln containsString:@"watch"]
+                                || [ln containsString:@"playlist"] || [ln containsString:@"response"] || [ln containsString:@"content"]
+                                || [ln containsString:@"renderer"] || [ln containsString:@"model"] || [ln containsString:@"data"]
+                                || [ln containsString:@"controller"] || [ln containsString:@"player"] || [ln containsString:@"item"];
+                if (!interesting) continue;
+                @try {
+                    id val = object_getIvar(obj, ivars[i]);
+                    if (!val) continue;
+                    if (outPlaylistID && !(*outPlaylistID).length && [ln containsString:@"playlistid"] && [val isKindOfClass:[NSString class]] && [val length]) {
+                        *outPlaylistID = val;
+                    } else {
+                        [queue addObject:@[val, @(depth + 1)]];
+                    }
+                } @catch (__unused NSException *e) {}
+            }
+            free(ivars);
+            c = class_getSuperclass(c);
+        }
+    }
+}
+
 #pragma mark - Queue loading
 
 - (void)reloadQueue {
@@ -579,7 +713,21 @@ static NSArray<NSDictionary *> *IVLRotateQueueForTrack(NSArray<NSDictionary *> *
         return;
     }
 
-    // 1. Prefer the real active queue captured directly from YouTube Music's YTIPlaylistPanelRenderer
+    // 1. Live scan YTMWatchViewController / YTPlayerViewController for the real active queue
+    UIViewController *player = [IVLPlaybackManager shared].player;
+    UIViewController *watch = player.parentViewController ?: player;
+    NSMutableArray<NSDictionary *> *scannedItems = nil;
+    NSString *scannedPL = nil;
+    if (watch) IVLCFScanForQueue(watch, &scannedItems, &scannedPL);
+    if (!scannedItems.count && player && player != watch) IVLCFScanForQueue(player, &scannedItems, &scannedPL);
+    if (scannedItems.count >= 2) {
+        [IVLCoverFlowManager shared].capturedQueue = scannedItems;
+    }
+    if (scannedPL.length) {
+        [IVLCoverFlowManager shared].capturedPlaylistID = scannedPL;
+    }
+
+    // 2. Prefer the real active queue captured from YouTube Music
     NSArray<NSDictionary *> *captured = [IVLCoverFlowManager shared].capturedQueue;
     if (captured.count) {
         NSString *vid = track.youtubeVideoID ?: @"";
@@ -602,7 +750,7 @@ static NSArray<NSDictionary *> *IVLRotateQueueForTrack(NSArray<NSDictionary *> *
         }
     }
 
-    // Immediate fallback card for current track while playlist loads
+    // Immediate card for current track
     if (!_items.count || ![_loadedVideoID isEqualToString:track.youtubeVideoID ?: track.videoID]) {
         _items = @[@{
             @"videoId": track.youtubeVideoID ?: @"",
@@ -614,7 +762,10 @@ static NSArray<NSDictionary *> *IVLRotateQueueForTrack(NSArray<NSDictionary *> *
         [self rebuildCards];
     }
 
+    // 3. Only query InnerTube `next` when we have a real playlistId (never fall back to unrelated RDAMVM radio)
     NSString *playlistID = [IVLCoverFlowManager shared].capturedPlaylistID;
+    if (!playlistID.length) return;
+
     [_spinner startAnimating];
     NSString *reqID = track.youtubeVideoID ?: track.videoID;
     __weak typeof(self) weakSelf = self;

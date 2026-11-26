@@ -221,15 +221,18 @@ static NSString *IVLYTExtractSquareCover(id node) {
 - (void)youtubeQueueForTrack:(IVLTrack *)track
                   playlistID:(nullable NSString *)playlistID
                   completion:(void (^)(NSArray<NSDictionary *> *items, NSInteger selectedIndex))completion {
+    if (!playlistID.length) {
+        dispatch_async(dispatch_get_main_queue(), ^{ completion(@[], 0); });
+        return;
+    }
     [self youtubeVideoIDForTrack:track completion:^(NSString *vid) {
         if (!vid.length) {
             dispatch_async(dispatch_get_main_queue(), ^{ completion(@[], 0); });
             return;
         }
-        NSString *pl = playlistID.length ? playlistID : [NSString stringWithFormat:@"RDAMVM%@", vid];
         NSDictionary *body = @{
             @"videoId": vid,
-            @"playlistId": pl,
+            @"playlistId": playlistID,
             @"enablePersistentPlaylistPanel": @YES,
             @"isAudioOnly": @YES,
         };

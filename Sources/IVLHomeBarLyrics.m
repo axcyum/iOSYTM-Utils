@@ -3,6 +3,7 @@
 #import "IVLPlaybackManager.h"
 #import "IVLLyricsViewController.h"
 #import "IVLExtras.h"
+#import <QuartzCore/QuartzCore.h>
 
 static const CGFloat kIVLHomeBarHeight = 26.0;
 
@@ -10,6 +11,7 @@ static const CGFloat kIVLHomeBarHeight = 26.0;
     BOOL _started;
     NSTimer *_timer;
     __weak UIView *_attachedMiniBar;
+    BOOL _savedClipsToBounds;
     UIView *_stripView;
     UIView *_topHairline;
     UIImageView *_noteIcon;
@@ -127,8 +129,9 @@ static const CGFloat kIVLHomeBarHeight = 26.0;
 
 - (void)detach {
     UIView *old = _attachedMiniBar;
-    if (old && !CGAffineTransformIsIdentity(old.transform)) {
-        old.transform = CGAffineTransformIdentity;
+    if (old) {
+        old.layer.sublayerTransform = CATransform3DIdentity;
+        old.clipsToBounds = _savedClipsToBounds;
     }
     _attachedMiniBar = nil;
     _stripView.hidden = YES;
@@ -150,38 +153,53 @@ static const CGFloat kIVLHomeBarHeight = 26.0;
     UIWindow *win = [self mainAppWindow];
     if (!win) { [self detach]; return; }
 
+    // Hide while a modal screen (lyrics, settings, sheets) is presented on top
+    if (win.rootViewController.presentedViewController != nil) {
+        _stripView.hidden = YES;
+        return;
+    }
+
     UIView *miniBar = _attachedMiniBar;
-    // Validate existing reference is still visible in the bottom home position
+    CGRect fInWin = CGRectZero;
     if (miniBar) {
-        CGRect f = [miniBar convertRect:miniBar.bounds toView:win];
-        if (!miniBar.window || miniBar.hidden || miniBar.alpha < 0.05 || f.origin.y < win.bounds.size.height * 0.45) {
+        if (miniBar.window != win || miniBar.hidden || miniBar.alpha < 0.1) {
             [self detach];
             miniBar = nil;
+        } else {
+            fInWin = [miniBar convertRect:miniBar.bounds toView:win];
+            if (fInWin.origin.y < win.bounds.size.height * 0.50 || CGRectGetMaxY(fInWin) > win.bounds.size.height - 30.0) {
+                [self detach];
+                miniBar = nil;
+            }
         }
     }
     if (!miniBar) {
         miniBar = [self findMiniBarInView:win window:win depth:0];
+        if (miniBar) {
+            _savedClipsToBounds = miniBar.clipsToBounds;
+            _attachedMiniBar = miniBar;
+            fInWin = [miniBar convertRect:miniBar.bounds toView:win];
+        }
     }
-    if (!miniBar || !miniBar.superview) {
+    if (!miniBar) {
         [self detach];
         return;
     }
 
-    // Shift the native mini bar up by 26pt using transform (preserves all AutoLayout constraints cleanly)
-    CGAffineTransform shift = CGAffineTransformMakeTranslation(0, -kIVLHomeBarHeight);
-    if (!CGAffineTransformEqualToTransform(miniBar.transform, shift)) {
-        miniBar.transform = shift;
+    // Use CALayer.sublayerTransform instead of UIView.transform so YouTube Music's own setFrame:
+    // never breaks or pushes the mini bar off-screen.
+    miniBar.clipsToBounds = NO;
+    CATransform3D shift = CATransform3DMakeTranslation(0, -kIVLHomeBarHeight, 0);
+    if (!CATransform3DEqualToTransform(miniBar.layer.sublayerTransform, shift)) {
+        miniBar.layer.sublayerTransform = shift;
     }
-    _attachedMiniBar = miniBar;
 
-    // Position our matching-color lyric strip directly underneath the shifted mini bar
-    UIView *parent = miniBar.superview;
-    if (_stripView.superview != parent) {
-        [parent addSubview:_stripView];
+    // Place the matching-color lyric strip directly in the main window at the bottom 26pt of miniBar's slot
+    // (directly underneath the shifted artwork/controls and directly above the tab bar).
+    if (_stripView.superview != win) {
+        [win addSubview:_stripView];
     }
-    // miniBar.frame already reflects the -26pt transform, so CGRectGetMaxY(miniBar.frame) is its bottom edge
-    CGRect mf = miniBar.frame;
-    CGRect targetFrame = CGRectMake(mf.origin.x, CGRectGetMaxY(mf), mf.size.width, kIVLHomeBarHeight);
+    CGRect targetFrame = CGRectMake(fInWin.origin.x, CGRectGetMaxY(fInWin) - kIVLHomeBarHeight, fInWin.size.width, kIVLHomeBarHeight);
     if (!CGRectEqualToRect(_stripView.frame, targetFrame)) {
         _stripView.frame = targetFrame;
         _topHairline.frame = CGRectMake(0, 0, targetFrame.size.width, 0.5);
@@ -189,7 +207,7 @@ static const CGFloat kIVLHomeBarHeight = 26.0;
         _lyricLabel.frame = CGRectMake(34.0, 0, targetFrame.size.width - 48.0, kIVLHomeBarHeight);
     }
     _stripView.hidden = NO;
-    [parent bringSubviewToFront:_stripView];
+    [win bringSubviewToFront:_stripView];
 
     UIColor *bg = [self sampleColorFromView:miniBar depth:0] ?: [UIColor colorWithRed:0.129 green:0.129 blue:0.129 alpha:1.0];
     _stripView.backgroundColor = bg;
