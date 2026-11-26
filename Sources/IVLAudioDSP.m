@@ -2,6 +2,8 @@
 #import "IVLSettings.h"
 #import "IVLLocalization.h"
 #import <AudioToolbox/AudioToolbox.h>
+#import <MediaToolbox/MediaToolbox.h>
+#import <objc/runtime.h>
 #import <mach/mach.h>
 #import <mach/vm_map.h>
 #import <mach-o/dyld.h>
@@ -468,10 +470,89 @@ static void IVLRebindImage(const struct mach_header *header, intptr_t slide) {
     int path = atomic_load_explicit(&gActivePath, memory_order_relaxed);
     int hits = atomic_load_explicit(&gRebindHits, memory_order_relaxed);
     if (calls > 0) {
-        NSString *pName = (path == 1) ? @"AudioUnit CB" : ((path == 2) ? @"AudioUnit" : @"AudioQueue");
+        NSString *pName = @"DSP";
+        switch (path) {
+            case 1: pName = @"AudioUnit CB"; break;
+            case 2: pName = @"AudioUnit"; break;
+            case 3: pName = @"AudioQueue"; break;
+            case 4: pName = @"AVAudioPlayerNode"; break;
+            case 5: pName = @"SampleBuf PCM"; break;
+            case 6: pName = @"AVPlayerTap"; break;
+            case 7: pName = @"SampleBuf (encoded)"; break;
+            default: break;
+        }
         return [NSString stringWithFormat:@"Active (%@)", pName];
     }
     return [NSString stringWithFormat:@"Standby (hooks: %d)", hits];
+}
+
++ (void)processPCMBuffer:(AVAudioPCMBuffer *)buffer {
+    if (!buffer || buffer.frameLength == 0) return;
+    AudioBufferList *abl = buffer.mutableAudioBufferList;
+    if (abl) {
+        IVLProcessAudioBufferList(abl, buffer.frameLength, &gGlobalLPState, 4);
+    }
+}
+
++ (void)processSampleBuffer:(CMSampleBufferRef)sampleBuffer {
+    if (!sampleBuffer) return;
+    CMFormatDescriptionRef fmt = CMSampleBufferGetFormatDescription(sampleBuffer);
+    const AudioStreamBasicDescription *asbd = fmt ? CMAudioFormatDescriptionGetStreamBasicDescription(fmt) : NULL;
+    if (!asbd) return;
+    if (asbd->mFormatID != kAudioFormatLinearPCM) {
+        atomic_fetch_add_explicit(&gProcessedCalls, 1, memory_order_relaxed);
+        atomic_store_explicit(&gActivePath, 7, memory_order_relaxed);
+        return;
+    }
+    CMBlockBufferRef blockBuf = NULL;
+    AudioBufferList abl;
+    OSStatus st = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+        sampleBuffer, NULL, &abl, sizeof(abl), NULL, NULL,
+        kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment, &blockBuf);
+    if (st == noErr) {
+        UInt32 frames = (UInt32)CMSampleBufferGetNumSamples(sampleBuffer);
+        if (frames > 0) IVLProcessAudioBufferList(&abl, frames, &gGlobalLPState, 5);
+    }
+    if (blockBuf) CFRelease(blockBuf);
+}
+
+static void IVLTapProcess(MTAudioProcessingTapRef tap,
+                          CMItemCount numberFrames,
+                          MTAudioProcessingTapFlags flags,
+                          AudioBufferList *bufferListInOut,
+                          CMItemCount *numberFramesOut,
+                          MTAudioProcessingTapFlags *flagsOut) {
+    OSStatus st = MTAudioProcessingTapGetSourceAudio(tap, numberFrames, bufferListInOut, flagsOut, NULL, numberFramesOut);
+    if (st == noErr && numberFramesOut && *numberFramesOut > 0) {
+        IVLProcessAudioBufferList(bufferListInOut, (UInt32)(*numberFramesOut), &gGlobalLPState, 6);
+    }
+}
+
++ (void)attachTapToPlayerItem:(AVPlayerItem *)item {
+    if (!item || ![item isKindOfClass:[AVPlayerItem class]]) return;
+    static const void *kIVLTapAttachedKey = &kIVLTapAttachedKey;
+    if (objc_getAssociatedObject(item, kIVLTapAttachedKey)) return;
+    AVAsset *asset = item.asset;
+    if (!asset) return;
+    NSArray<AVAssetTrack *> *tracks = [asset tracksWithMediaType:AVMediaTypeAudio];
+    AVAssetTrack *track = tracks.firstObject;
+    if (!track) return;
+
+    MTAudioProcessingTapCallbacks callbacks;
+    memset(&callbacks, 0, sizeof(callbacks));
+    callbacks.version = kMTAudioProcessingTapCallbacksVersion_0;
+    callbacks.process = IVLTapProcess;
+    MTAudioProcessingTapRef tap = NULL;
+    if (MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, kMTAudioProcessingTapCreationFlag_PostEffects, &tap) != noErr || !tap) return;
+
+    AVMutableAudioMixInputParameters *params = [AVMutableAudioMixInputParameters audioMixInputParametersWithTrack:track];
+    params.audioTapProcessor = tap;
+    CFRelease(tap);
+
+    AVMutableAudioMix *mix = [AVMutableAudioMix audioMix];
+    mix.inputParameters = @[params];
+    item.audioMix = mix;
+    objc_setAssociatedObject(item, kIVLTapAttachedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
 + (void)presentQuickSheetFrom:(UIViewController *)vc {

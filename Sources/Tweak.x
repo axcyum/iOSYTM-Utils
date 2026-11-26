@@ -87,6 +87,57 @@ static const void *kIVLButtonKey = &kIVLButtonKey;
 %end
 %end
 
+#pragma mark - On-device Audio DSP hooks (AVAudioPlayerNode / AVSampleBufferAudioRenderer / AVPlayer)
+
+%group AudioDSPHooks
+%hook AVAudioPlayerNode
+
+- (void)scheduleBuffer:(AVAudioPCMBuffer *)buffer completionHandler:(id)completionHandler {
+    [IVLAudioDSP processPCMBuffer:buffer];
+    %orig;
+}
+
+- (void)scheduleBuffer:(AVAudioPCMBuffer *)buffer completionCallbackType:(NSInteger)callbackType completionHandler:(id)completionHandler {
+    [IVLAudioDSP processPCMBuffer:buffer];
+    %orig;
+}
+
+- (void)scheduleBuffer:(AVAudioPCMBuffer *)buffer atTime:(id)when options:(NSUInteger)options completionHandler:(id)completionHandler {
+    [IVLAudioDSP processPCMBuffer:buffer];
+    %orig;
+}
+
+- (void)scheduleBuffer:(AVAudioPCMBuffer *)buffer atTime:(id)when options:(NSUInteger)options completionCallbackType:(NSInteger)callbackType completionHandler:(id)completionHandler {
+    [IVLAudioDSP processPCMBuffer:buffer];
+    %orig;
+}
+
+%end
+
+%hook AVSampleBufferAudioRenderer
+
+- (void)enqueueSampleBuffer:(CMSampleBufferRef)sampleBuffer {
+    [IVLAudioDSP processSampleBuffer:sampleBuffer];
+    %orig;
+}
+
+%end
+
+%hook AVPlayer
+
+- (void)replaceCurrentItemWithPlayerItem:(AVPlayerItem *)item {
+    %orig;
+    [IVLAudioDSP attachTapToPlayerItem:item];
+}
+
+- (void)play {
+    [IVLAudioDSP attachTapToPlayerItem:self.currentItem];
+    %orig;
+}
+
+%end
+%end
+
 #pragma mark - System now-playing info (public API, version independent)
 
 %group NowPlayingInfo
@@ -201,6 +252,7 @@ static UIImage *IVLMenuIcon(void) {
     @autoreleasepool {
         %init(NowPlayingInfo);
         %init(RemoteCommands);
+        %init(AudioDSPHooks);
         dispatch_async(dispatch_get_main_queue(), ^{
             [IVLLockScreen shared];
             [IVLSpotify shared];
