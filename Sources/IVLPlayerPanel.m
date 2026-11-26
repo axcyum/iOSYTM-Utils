@@ -18,6 +18,7 @@
 #import "IVLLyricCell.h"
 #import "IVLLyricsViewController.h"
 #import "IVLAudioDSP.h"
+#import "IVLExternalDisplay.h"
 #import <AVKit/AVKit.h>
 #import <AVFoundation/AVFoundation.h>
 #import <MediaPlayer/MediaPlayer.h>
@@ -963,6 +964,10 @@ static NSString *IVLClock(double s) {
     [menuItems addObject:[UIAction actionWithTitle:IVLLoc(@"sec_audio") image:[UIImage systemImageNamed:@"music.mic"] identifier:nil handler:^(UIAction *a) {
         UIViewController *top = IVLTopViewController();
         if (top) [IVLAudioDSP presentQuickSheetFrom:top];
+    }]];
+    [menuItems addObject:[UIAction actionWithTitle:IVLLoc(@"external_display") image:[UIImage systemImageNamed:@"airplayvideo"] identifier:nil handler:^(UIAction *a) {
+        UIViewController *top = IVLTopViewController();
+        if (top) [IVLExternalDisplayManager presentQuickSheetFrom:top];
     }]];
     _amTransBtn.menu = [UIMenu menuWithTitle:@"" children:menuItems];
 }

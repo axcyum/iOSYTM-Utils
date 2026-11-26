@@ -11,6 +11,7 @@
 #import "IVLScrobbler.h"
 #import "IVLRecognizer.h"
 #import "IVLAudioDSP.h"
+#import "IVLExternalDisplay.h"
 
 #ifndef IVL_VERSION
 #define IVL_VERSION "1.1.1"
@@ -664,8 +665,12 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
         return IVLLoc([IVLSettings boolForKey:IVLKeyLockEnabled] ? @"on" : @"off");
     });
 
-    IVLRow *extDisplay = [[IVLRow type:IVLRowSwitch key:IVLKeyExternalDisplay title:IVLLoc(@"external_display")]
+    IVLRow *extDisplay = [[IVLRow type:IVLRowLink key:@"" title:IVLLoc(@"external_display")]
                           withBadge:@"airplayvideo" fallback:@"tv.fill" hex:@"32ADE6"];
+    extDisplay.detail = ^NSString *{ return [IVLExternalDisplayManager statusText]; };
+    extDisplay.action = ^(UIViewController *vc) {
+        [IVLExternalDisplayManager presentQuickSheetFrom:vc];
+    };
 
     IVLRow *audioPage = subpage(@"audio", IVLLoc(@"sec_audio"), @"waveform.path.ecg", @"speaker.wave.3.fill", @"FF375F", ^NSString *{
         BOOL k = [IVLSettings boolForKey:IVLKeyKaraokeMode];
