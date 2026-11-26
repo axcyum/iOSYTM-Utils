@@ -52,7 +52,7 @@ static NSString *IVLMPDecodeHTML(NSString *s) {
 
 @implementation IVLPetitWSYParser {
     IVLLyricLine *_curLine;
-    NSMutableArray<IVLLyricWord *> *_curWords;
+    NSMutableArray<IVLWord *> *_curWords;
     NSInteger _wStart, _wEnd;
     NSMutableString *_buf;
     NSString *_wText;
@@ -95,7 +95,7 @@ static NSString *IVLMPDecodeHTML(NSString *s) {
         else if ([el isEqualToString:@"word"]) {
             _inWord = NO;
             if (_wStart >= 0 && _wText.length) {
-                IVLLyricWord *w = [IVLLyricWord new];
+                IVLWord *w = [IVLWord new];
                 w.startMs = _wStart;
                 w.endMs = (_wEnd > _wStart) ? _wEnd : (_wStart + 250);
                 w.text = _wText;
@@ -109,7 +109,7 @@ static NSString *IVLMPDecodeHTML(NSString *s) {
             _curLine.words = [_curWords copy];
             if (!_curLine.text.length) {
                 NSMutableString *joined = [NSMutableString string];
-                for (IVLLyricWord *w in _curWords) [joined appendString:w.text ?: @""];
+                for (IVLWord *w in _curWords) [joined appendString:w.text ?: @""];
                 _curLine.text = joined;
             }
             if (_curLine.text.length) [_lines addObject:_curLine];
@@ -288,8 +288,8 @@ static NSString *IVLExtractXMLTag(NSString *xml, NSString *tag) {
             if (!syls.count) continue;
 
             IVLLyricLine *line = [IVLLyricLine new];
-            line.opposite = [cd[@"OppositeAligned"] respondsToSelector:@selector(boolValue)] && [cd[@"OppositeAligned"] boolValue];
-            NSMutableArray<IVLLyricWord *> *words = [NSMutableArray array];
+            line.alternateVoice = [cd[@"OppositeAligned"] respondsToSelector:@selector(boolValue)] && [cd[@"OppositeAligned"] boolValue];
+            NSMutableArray<IVLWord *> *words = [NSMutableArray array];
             NSMutableString *text = [NSMutableString string];
             for (id s in syls) {
                 NSDictionary *sd = IVLMPDict(s);
@@ -297,7 +297,7 @@ static NSString *IVLExtractXMLTag(NSString *xml, NSString *tag) {
                 if (!t.length) continue;
                 BOOL isPart = [sd[@"IsPartOfWord"] respondsToSelector:@selector(boolValue)] && [sd[@"IsPartOfWord"] boolValue];
                 NSString *wText = isPart ? t : [t stringByAppendingString:@" "];
-                IVLLyricWord *w = [IVLLyricWord new];
+                IVLWord *w = [IVLWord new];
                 w.startMs = (NSInteger)llround(IVLMPDouble(sd[@"StartTime"]) * 1000.0);
                 w.endMs = (NSInteger)llround(IVLMPDouble(sd[@"EndTime"]) * 1000.0);
                 if (w.endMs <= w.startMs) w.endMs = w.startMs + 200;
@@ -324,7 +324,7 @@ static NSString *IVLExtractXMLTag(NSString *xml, NSString *tag) {
             line.startMs = (NSInteger)llround(IVLMPDouble(cd[@"StartTime"]) * 1000.0);
             line.endMs = (NSInteger)llround(IVLMPDouble(cd[@"EndTime"]) * 1000.0);
             line.text = t;
-            line.opposite = [cd[@"OppositeAligned"] respondsToSelector:@selector(boolValue)] && [cd[@"OppositeAligned"] boolValue];
+            line.alternateVoice = [cd[@"OppositeAligned"] respondsToSelector:@selector(boolValue)] && [cd[@"OppositeAligned"] boolValue];
             [lines addObject:line];
         }
     } else if ([type isEqualToString:@"Static"]) {
