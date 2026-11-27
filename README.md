@@ -44,18 +44,22 @@
 <div align="center">
 <table>
   <tr>
-    <td align="center" width="33%">
-      <img src="assets/screenshot-player.jpg" width="230" alt="内部プレイヤー" />
+    <td align="center" width="25%">
+      <img src="assets/screenshot-player.jpg" width="185" alt="内部プレイヤー" />
     </td>
-    <td align="center" width="33%">
-      <img src="assets/screenshots/iphone-audio-eq.jpg" width="230" alt="オーディオ & 6バンド EQ" />
+    <td align="center" width="25%">
+      <img src="assets/screenshots/iphone-apple-music-ui.jpg" width="185" alt="Apple Music 風 UI" />
     </td>
-    <td align="center" width="33%">
-      <img src="assets/screenshots/iphone-subtitles.jpg" width="230" alt="動画字幕・同期歌詞" />
+    <td align="center" width="25%">
+      <img src="assets/screenshots/iphone-audio-eq.jpg" width="185" alt="オーディオ & 6バンド EQ" />
+    </td>
+    <td align="center" width="25%">
+      <img src="assets/screenshots/iphone-subtitles.jpg" width="185" alt="動画字幕・同期歌詞" />
     </td>
   </tr>
   <tr>
     <td align="center"><sub><b>内部プレイヤー</b><br>アンビエント背景・ミニ歌詞・AirPods 動的表示</sub></td>
+    <td align="center"><sub><b>Apple Music 風 UI（試験的）</b><br>フルブリード背景・モダン再生 UI</sub></td>
     <td align="center"><sub><b>オーディオ & EQ</b><br>6バンド EQ・カラオケ・音量ブースト</sub></td>
     <td align="center"><sub><b>字幕を歌詞へ</b><br>翻訳・発音表記</sub></td>
   </tr>
@@ -128,6 +132,25 @@
 </table>
 </div>
 </details>
+
+### ロック画面 & Discord Rich Presence
+
+<div align="center">
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="assets/screenshots/other-locklyrics.jpg" width="240" alt="ロック画面・コントロールセンター歌詞 (LockLyrics)" />
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/screenshots/other-discord-rpc.png" width="281" alt="Discord Rich Presence" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>ロック画面・コントロールセンター歌詞</b><br>LockLyrics 統合・カラオケ発音表記</sub></td>
+    <td align="center"><sub><b>Discord Rich Presence</b><br>再生位置プログレス・曲リンク共有</sub></td>
+  </tr>
+</table>
+</div>
 
 <sub>**スクリーンショット内の表示楽曲**：<br>
 [少女レイ — みきとP](https://music.youtube.com/watch?v=b6abJ4NlzsE) (iPhone 内部プレイヤー)<br>

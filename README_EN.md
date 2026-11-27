@@ -37,27 +37,31 @@ It unifies several companion tweaks and utilities into a single native experienc
 
 ---
 
-## Screenshots
+## Screenshots (v1.2.0)
 
-### iPhone 18 Pro (iOS 27.0.1 · Non-Jailbroken / Sideload)
+### iPhone 18 Pro (A20 Pro · iOS 27.0.1 · Non-Jailbroken / Sideload)
 
 <div align="center">
 <table>
   <tr>
-    <td align="center" width="33%">
-      <img src="assets/screenshot-player.jpg" width="230" alt="Internal Player" />
+    <td align="center" width="25%">
+      <img src="assets/screenshot-player.jpg" width="185" alt="Internal Player" />
     </td>
-    <td align="center" width="33%">
-      <img src="assets/screenshots/iphone-audio-eq.jpg" width="230" alt="Audio & 6-Band EQ" />
+    <td align="center" width="25%">
+      <img src="assets/screenshots/iphone-apple-music-ui.jpg" width="185" alt="Apple Music-Style UI" />
     </td>
-    <td align="center" width="33%">
-      <img src="assets/screenshots/iphone-subtitles.jpg" width="230" alt="Synced Lyrics & Video Subtitles" />
+    <td align="center" width="25%">
+      <img src="assets/screenshots/iphone-audio-eq.jpg" width="185" alt="Audio & 6-Band EQ" />
+    </td>
+    <td align="center" width="25%">
+      <img src="assets/screenshots/iphone-subtitles.jpg" width="185" alt="Subtitles as Lyrics" />
     </td>
   </tr>
   <tr>
     <td align="center"><sub><b>Internal Player</b><br>Ambient mesh · mini lyric · dynamic AirPods route</sub></td>
-    <td align="center"><sub><b>Audio & 6-Band EQ</b><br>Custom EQ · Karaoke · Volume Boost</sub></td>
-    <td align="center"><sub><b>Synced Lyrics & Subtitles</b><br>Translation · Pronunciation · Apple HIG Menu</sub></td>
+    <td align="center"><sub><b>Apple Music-Style UI (Experimental)</b><br>Full-bleed backdrop · modern controls</sub></td>
+    <td align="center"><sub><b>Audio & EQ</b><br>6-Band EQ · Karaoke · Volume Boost</sub></td>
+    <td align="center"><sub><b>Subtitles to Lyrics</b><br>Translation · Pronunciation</sub></td>
   </tr>
 </table>
 <table>
@@ -129,7 +133,29 @@ It unifies several companion tweaks and utilities into a single native experienc
 </div>
 </details>
 
-<sub>**Featured Tracks in Screenshots**: [Shoujo Rei — mikitoP](https://music.youtube.com/watch?v=b6abJ4NlzsE) (iPhone Internal Player) · [【音MAD】悔ーマニ・エンゲイザー — 伊夏5136](https://www.youtube.com/watch?v=XGvQghwuuS0) (iPhone Video Subtitles) · [Idea — Gen Hoshino](https://music.youtube.com/watch?v=bwqurkN3vhE) (Other iPhone & iPad screenshots)</sub>
+### Lock Screen & Discord Rich Presence
+
+<div align="center">
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="assets/screenshots/other-locklyrics.jpg" width="240" alt="Lock Screen & Control Center Lyrics (LockLyrics)" />
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/screenshots/other-discord-rpc.png" width="281" alt="Discord Rich Presence" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Lock Screen & Control Center Lyrics</b><br>LockLyrics integrated · live pronunciation</sub></td>
+    <td align="center"><sub><b>Discord Rich Presence</b><br>Live progress bar · direct YouTube Music link</sub></td>
+  </tr>
+</table>
+</div>
+
+<sub>**Featured Tracks in Screenshots**:<br>
+[Shoujo Rei — mikitoP](https://music.youtube.com/watch?v=b6abJ4NlzsE) (iPhone Internal Player)<br>
+[【音MAD】悔一マニ・エンゲイザー — 伊夏5136](https://www.youtube.com/watch?v=XGvQghwuuS0) (iPhone Video Subtitles)<br>
+[Idea — Gen Hoshino](https://music.youtube.com/watch?v=bwqurkN3vhE) (Other iPhone & iPad screenshots)</sub>
 
 ---
 
