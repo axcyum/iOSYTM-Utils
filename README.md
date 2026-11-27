@@ -129,6 +129,7 @@
 </div>
 </details>
 
+<sub>**スクリーンショット内の表示楽曲**：[少女レイ — みきとP](https://music.youtube.com/watch?v=b6abJ4NlzsE)（iPhone 内部プレイヤー） · [【音MAD】悔ーマニ・エンゲイザー — 伊夏5136](https://www.youtube.com/watch?v=XGvQghwuuS0)（iPhone 動画字幕） · [アイデア — 星野源](https://music.youtube.com/watch?v=bwqurkN3vhE)（その他 iPhone / iPad 全般）</sub>
 ---
 
 ## 主な機能

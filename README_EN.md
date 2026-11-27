@@ -129,8 +129,7 @@ It unifies several companion tweaks and utilities into a single native experienc
 </div>
 </details>
 
-> [!NOTE]
-> On older chips such as the iPad Pro 2020 (A12Z), toggling **Experimental** UI features (e.g., optical blur / immersive mode) may briefly feel heavier while layouts re-render.
+<sub>**Featured Tracks in Screenshots**: [Shoujo Rei — mikitoP](https://music.youtube.com/watch?v=b6abJ4NlzsE) (iPhone Internal Player) · [【音MAD】悔ーマニ・エンゲイザー — 伊夏5136](https://www.youtube.com/watch?v=XGvQghwuuS0) (iPhone Video Subtitles) · [Idea — Gen Hoshino](https://music.youtube.com/watch?v=bwqurkN3vhE) (Other iPhone & iPad screenshots)</sub>
 
 ---
 
