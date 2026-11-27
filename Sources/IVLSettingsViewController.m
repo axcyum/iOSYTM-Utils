@@ -257,8 +257,13 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
     immersive.getBool = ^BOOL { return [IVLSettings boolForKey:IVLKeyImmersivePlayer]; };
     immersive.setBool = ^(BOOL on) {
         [IVLSettings setBool:on forKey:IVLKeyImmersivePlayer];
-        if (on) [IVLSettings setBool:YES forKey:IVLKeyAMLyrics];
-        [weakSelf rebuild];
+        if (on && ![IVLSettings boolForKey:IVLKeyAMLyrics]) {
+            [IVLSettings setBool:YES forKey:IVLKeyAMLyrics];
+        }
+        // Defer table reload until after the UISwitch spring animation finishes (avoids stutter on older chips like A12Z)
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.26 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [weakSelf rebuild];
+        });
     };
 
     IVLRow *amLyrics = [IVLRow type:IVLRowSwitch key:IVLKeyAMLyrics title:IVLLoc(@"am_lyrics")];

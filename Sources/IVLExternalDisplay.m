@@ -869,10 +869,16 @@ static BOOL IVLIsExternalSceneRole(NSString *role) {
     [nc addObserver:self selector:@selector(syncDisplay) name:UIScreenDidConnectNotification object:nil];
     [nc addObserver:self selector:@selector(syncDisplay) name:UIScreenDidDisconnectNotification object:nil];
     [nc addObserver:self selector:@selector(syncDisplay) name:UIScreenModeDidChangeNotification object:nil];
-    [nc addObserver:self selector:@selector(syncDisplay) name:IVLSettingsDidChangeNotification object:nil];
+    [nc addObserver:self selector:@selector(onSettingsChanged:) name:IVLSettingsDidChangeNotification object:nil];
     [nc addObserver:self selector:@selector(onTrack) name:IVLTrackDidChangeNotification object:nil];
     [nc addObserver:self selector:@selector(onTrack) name:IVLArtworkDidChangeNotification object:nil];
     [nc addObserver:self selector:@selector(onLyrics) name:IVLLyricsDidChangeNotification object:nil];
+    [self syncDisplay];
+}
+
+- (void)onSettingsChanged:(NSNotification *)n {
+    NSString *k = n.object;
+    if (k && ![k isEqualToString:IVLKeyExternalDisplay] && ![k isEqualToString:IVLKeyEnabled]) return;
     [self syncDisplay];
 }
 

@@ -39,26 +39,98 @@ It unifies several companion tweaks and utilities into a single native experienc
 
 ## Screenshots
 
+### iPhone 18 Pro (iOS 27.0.1 · Non-Jailbroken / Sideload)
+
 <div align="center">
 <table>
   <tr>
     <td align="center" width="33%">
-      <img src="assets/screenshot-player.jpg" width="240" alt="Internal Player" />
+      <img src="assets/screenshot-player.jpg" width="230" alt="Internal Player" />
     </td>
     <td align="center" width="33%">
-      <img src="assets/screenshot-lyrics.jpg" width="240" alt="Apple Music-style Lyrics & Pronunciation" />
+      <img src="assets/screenshots/iphone-audio-eq.jpg" width="230" alt="Audio & 6-Band EQ" />
     </td>
     <td align="center" width="33%">
-      <img src="assets/screenshot-sources.jpg" width="240" alt="Lyrics Sources & Priority" />
+      <img src="assets/screenshots/iphone-subtitles.jpg" width="230" alt="Synced Lyrics & Video Subtitles" />
     </td>
   </tr>
   <tr>
     <td align="center"><sub><b>Internal Player</b><br>Ambient mesh · mini lyric · dynamic AirPods route</sub></td>
-    <td align="center"><sub><b>Apple Music-Style Lyrics (Experimental)</b><br>Optical blur · live translation & pronunciation</sub></td>
-    <td align="center"><sub><b>Lyrics Sources & Priority</b><br>11 parallel sources · drag-to-reorder</sub></td>
+    <td align="center"><sub><b>Audio & 6-Band EQ</b><br>Custom EQ · Karaoke · Volume Boost</sub></td>
+    <td align="center"><sub><b>Synced Lyrics & Subtitles</b><br>Translation · Pronunciation · Apple HIG Menu</sub></td>
+  </tr>
+</table>
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="assets/screenshots/iphone-airplay.jpg" width="410" alt="TV & AirPlay 16:9 Stage" />
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/screenshots/iphone-coverflow.jpg" width="410" alt="Landscape 3D Cover Flow" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>TV & AirPlay 16:9 Stage</b><br>HDMI & Screen Mirroring</sub></td>
+    <td align="center"><sub><b>Landscape 3D Cover Flow (Experimental)</b><br>Live queue synced · floor reflections</sub></td>
   </tr>
 </table>
 </div>
+
+### iPad Pro 2020 (A12Z · iPadOS 18.5 · Jailbroken)
+
+<details open>
+<summary><b>Show iPad Screenshots (7)</b></summary>
+<br>
+<div align="center">
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="assets/screenshots/ipad-apple-music-ui.jpg" width="400" alt="iPad Apple Music-Style UI" />
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/screenshots/ipad-apple-music-lyrics.jpg" width="400" alt="iPad Apple Music-Style Lyrics" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Apple Music-Style UI (Experimental)</b></sub></td>
+    <td align="center"><sub><b>Apple Music-Style Lyrics (Experimental)</b></sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="assets/screenshots/ipad-ivlyrics.jpg" width="400" alt="iPad ivLyrics Fullscreen" />
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/screenshots/ipad-audio-eq.jpg" width="400" alt="iPad Audio & 6-Band EQ" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>ivLyrics Fullscreen Lyrics</b></sub></td>
+    <td align="center"><sub><b>Audio & 6-Band EQ</b></sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="assets/screenshots/ipad-coverflow.jpg" width="400" alt="iPad 3D Cover Flow" />
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/screenshots/ipad-airplay.jpg" width="400" alt="iPad TV & AirPlay Stage" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>3D Cover Flow (Experimental)</b></sub></td>
+    <td align="center"><sub><b>TV & AirPlay 16:9 Stage</b></sub></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2">
+      <img src="assets/screenshots/ipad-sources.jpg" width="420" alt="iPad Lyrics Sources & Priority" />
+      <br><sub><b>Lyrics Sources & Priority (11 sources · drag-to-reorder)</b></sub>
+    </td>
+  </tr>
+</table>
+</div>
+</details>
+
+> [!NOTE]
+> On older chips such as the iPad Pro 2020 (A12Z), toggling **Experimental** UI features (e.g., optical blur / immersive mode) may briefly feel heavier while layouts re-render.
 
 ---
 

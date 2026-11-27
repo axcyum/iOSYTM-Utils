@@ -39,26 +39,98 @@
 
 ## スクリーンショット
 
+### iPhone 18 Pro（iOS 27.0.1 · Non-Jailbroken / Sideload）
+
 <div align="center">
 <table>
   <tr>
     <td align="center" width="33%">
-      <img src="assets/screenshot-player.jpg" width="240" alt="内部プレイヤー" />
+      <img src="assets/screenshot-player.jpg" width="230" alt="内部プレイヤー" />
     </td>
     <td align="center" width="33%">
-      <img src="assets/screenshot-lyrics.jpg" width="240" alt="Apple Music 風の歌詞表示・発音" />
+      <img src="assets/screenshots/iphone-audio-eq.jpg" width="230" alt="オーディオ & 6バンド EQ" />
     </td>
     <td align="center" width="33%">
-      <img src="assets/screenshot-sources.jpg" width="240" alt="歌詞ソースと優先順" />
+      <img src="assets/screenshots/iphone-subtitles.jpg" width="230" alt="動画字幕・同期歌詞" />
     </td>
   </tr>
   <tr>
     <td align="center"><sub><b>内部プレイヤー</b><br>アンビエント背景・ミニ歌詞・AirPods 動的表示</sub></td>
-    <td align="center"><sub><b>Apple Music 風 歌詞表示（試験的）</b><br>光学ブラー・リアルタイム翻訳＆発音表記</sub></td>
-    <td align="center"><sub><b>歌詞ソースと優先順</b><br>11 系統の並列検索・ドラッグ並び替え</sub></td>
+    <td align="center"><sub><b>オーディオ & EQ</b><br>6バンド EQ・カラオケ・音量ブースト</sub></td>
+    <td align="center"><sub><b>同期歌詞 & 字幕</b><br>翻訳・発音表記・Apple HIG メニュー</sub></td>
+  </tr>
+</table>
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="assets/screenshots/iphone-airplay.jpg" width="410" alt="TV・AirPlay 16:9 歌詞ステージ" />
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/screenshots/iphone-coverflow.jpg" width="410" alt="横画面 3D Cover Flow" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>TV・AirPlay 16:9 歌詞ステージ</b><br>HDMI / 画面ミラーリング対応</sub></td>
+    <td align="center"><sub><b>横画面 3D Cover Flow（試験的）</b><br>再生キュー連動・反射エフェクト</sub></td>
   </tr>
 </table>
 </div>
+
+### iPad Pro 2020（A12Z · iPadOS 18.5 · Jailbroken）
+
+<details open>
+<summary><b>iPad 実機スクリーンショットを表示（7 枚）</b></summary>
+<br>
+<div align="center">
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="assets/screenshots/ipad-apple-music-ui.jpg" width="400" alt="iPad Apple Music 風 UI" />
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/screenshots/ipad-apple-music-lyrics.jpg" width="400" alt="iPad Apple Music 風 歌詞表示" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Apple Music 風 UI（試験的）</b></sub></td>
+    <td align="center"><sub><b>Apple Music 風 歌詞表示（試験的）</b></sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="assets/screenshots/ipad-ivlyrics.jpg" width="400" alt="iPad ivLyrics フルスクリーン歌詞" />
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/screenshots/ipad-audio-eq.jpg" width="400" alt="iPad オーディオ & EQ" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>ivLyrics フルスクリーン歌詞</b></sub></td>
+    <td align="center"><sub><b>オーディオ & 6バンド EQ</b></sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="assets/screenshots/ipad-coverflow.jpg" width="400" alt="iPad Cover Flow" />
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/screenshots/ipad-airplay.jpg" width="400" alt="iPad TV・AirPlay ステージ" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>3D Cover Flow（試験的）</b></sub></td>
+    <td align="center"><sub><b>TV・AirPlay 16:9 歌詞ステージ</b></sub></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2">
+      <img src="assets/screenshots/ipad-sources.jpg" width="420" alt="iPad 歌詞ソースと優先順" />
+      <br><sub><b>歌詞ソースと優先順（11 系統・ドラッグ並び替え）</b></sub>
+    </td>
+  </tr>
+</table>
+</div>
+</details>
+
+> [!NOTE]
+> A12Z などの旧世代チップ搭載 iPad では、光学ブラー等を多用する **試験的機能** のオン／オフ切替時に一時的に描画が重くなる場合があります。
 
 ---
 

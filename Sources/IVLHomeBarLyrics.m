@@ -62,7 +62,7 @@ static const CGFloat kIVLHomeBarHeight = 26.0;
     [_stripView addGestureRecognizer:tap];
 
     NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
-    [nc addObserver:self selector:@selector(refresh) name:IVLSettingsDidChangeNotification object:nil];
+    [nc addObserver:self selector:@selector(onSettingsChanged:) name:IVLSettingsDidChangeNotification object:nil];
     [nc addObserver:self selector:@selector(refresh) name:IVLTrackDidChangeNotification object:nil];
     [nc addObserver:self selector:@selector(refresh) name:IVLLyricsDidChangeNotification object:nil];
 
@@ -73,6 +73,12 @@ static const CGFloat kIVLHomeBarHeight = 26.0;
 - (void)dealloc {
     [_timer invalidate];
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)onSettingsChanged:(NSNotification *)n {
+    NSString *k = n.object;
+    if (k && ![k isEqualToString:IVLKeyHomeBarLyrics] && ![k isEqualToString:IVLKeyEnabled]) return;
+    [self refresh];
 }
 
 - (void)openLyrics {
