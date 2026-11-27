@@ -45,10 +45,10 @@ It unifies several companion tweaks and utilities into a single native experienc
 <table>
   <tr>
     <td align="center" width="25%">
-      <img src="assets/screenshot-player.jpg" width="185" alt="Internal Player" />
+      <img src="assets/screenshots/iphone-apple-music-ui.jpg" width="185" alt="Apple Music-Style UI" />
     </td>
     <td align="center" width="25%">
-      <img src="assets/screenshots/iphone-apple-music-ui.jpg" width="185" alt="Apple Music-Style UI" />
+      <img src="assets/screenshots/iphone-apple-music-lyrics.jpg" width="185" alt="Apple Music-Style Lyrics" />
     </td>
     <td align="center" width="25%">
       <img src="assets/screenshots/iphone-audio-eq.jpg" width="185" alt="Audio & 6-Band EQ" />
@@ -58,8 +58,8 @@ It unifies several companion tweaks and utilities into a single native experienc
     </td>
   </tr>
   <tr>
-    <td align="center"><sub><b>Internal Player</b><br>Ambient mesh · mini lyric · dynamic AirPods route</sub></td>
-    <td align="center"><sub><b>Apple Music-Style UI (Experimental)</b><br>Full-bleed backdrop · modern controls</sub></td>
+    <td align="center"><sub><b>Apple Music-Style UI (Experimental)</b><br>Full-bleed backdrop · dynamic AirPods route</sub></td>
+    <td align="center"><sub><b>Apple Music-Style Lyrics (Experimental)</b><br>Optical blur · live pronunciation</sub></td>
     <td align="center"><sub><b>Audio & EQ</b><br>6-Band EQ · Karaoke · Volume Boost</sub></td>
     <td align="center"><sub><b>Subtitles to Lyrics</b><br>Translation · Pronunciation</sub></td>
   </tr>
@@ -153,9 +153,8 @@ It unifies several companion tweaks and utilities into a single native experienc
 </div>
 
 <sub>**Featured Tracks in Screenshots**:<br>
-[Shoujo Rei — mikitoP](https://music.youtube.com/watch?v=b6abJ4NlzsE) (iPhone Internal Player)<br>
-[【音MAD】悔一マニ・エンゲイザー — 伊夏5136](https://www.youtube.com/watch?v=XGvQghwuuS0) (iPhone Video Subtitles)<br>
-[Idea — Gen Hoshino](https://music.youtube.com/watch?v=bwqurkN3vhE) (Other iPhone & iPad screenshots)</sub>
+[Idea — Gen Hoshino](https://music.youtube.com/watch?v=bwqurkN3vhE) (iPhone & iPad screenshots)<br>
+[【音MAD】悔一マニ・エンゲイザー — 伊夏5136](https://www.youtube.com/watch?v=XGvQghwuuS0) (iPhone Subtitles to Lyrics)</sub>
 
 ---
 
