@@ -37,9 +37,9 @@
 
 ---
 
-## スクリーンショット
+## スクリーンショット v1.2.0時点
 
-### iPhone 18 Pro（iOS 27.0.1 · Non-Jailbroken / Sideload）
+### iPhone 18 Pro（A20 Pro · iOS 27.0.1 · Non-Jailbroken / Sideload）
 
 <div align="center">
 <table>
@@ -57,7 +57,7 @@
   <tr>
     <td align="center"><sub><b>内部プレイヤー</b><br>アンビエント背景・ミニ歌詞・AirPods 動的表示</sub></td>
     <td align="center"><sub><b>オーディオ & EQ</b><br>6バンド EQ・カラオケ・音量ブースト</sub></td>
-    <td align="center"><sub><b>同期歌詞 & 字幕</b><br>翻訳・発音表記・Apple HIG メニュー</sub></td>
+    <td align="center"><sub><b>字幕を歌詞へ</b><br>翻訳・発音表記</sub></td>
   </tr>
 </table>
 <table>
@@ -129,7 +129,11 @@
 </div>
 </details>
 
-<sub>**スクリーンショット内の表示楽曲**：[少女レイ — みきとP](https://music.youtube.com/watch?v=b6abJ4NlzsE)（iPhone 内部プレイヤー） · [【音MAD】悔ーマニ・エンゲイザー — 伊夏5136](https://www.youtube.com/watch?v=XGvQghwuuS0)（iPhone 動画字幕） · [アイデア — 星野源](https://music.youtube.com/watch?v=bwqurkN3vhE)（その他 iPhone / iPad 全般）</sub>
+<sub>**スクリーンショット内の表示楽曲**：<br>
+[少女レイ — みきとP](https://music.youtube.com/watch?v=b6abJ4NlzsE) (iPhone 内部プレイヤー)<br>
+[【音MAD】悔一マニ・エンゲイザー — 伊夏5136](https://www.youtube.com/watch?v=XGvQghwuuS0) (iPhone 動画字幕)<br>
+[アイデア — 星野源](https://music.youtube.com/watch?v=bwqurkN3vhE) (その他 iPhone / iPad 全般)</sub>
+
 ---
 
 ## 主な機能
