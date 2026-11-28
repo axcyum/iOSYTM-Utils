@@ -7,6 +7,10 @@
 + (BOOL)isAppleTranslationAvailable;
 + (BOOL)isAppleIntelligenceAvailable;
 + (NSString *)appleIntelligenceStatus;
++ (void)appendLog:(NSString *)message;
++ (NSString *)allLogs;
++ (void)clearLogs;
++ (void)presentModelDownloadFrom:(UIViewController *)presenter targetLang:(NSString *)targetLang;
 + (void)translateWithAppleTranslationWithLines:(NSArray<NSString *> *)lines
                                     sourceLang:(nullable NSString *)sourceLang
                                     targetLang:(NSString *)targetLang
@@ -36,6 +40,37 @@ NSString *IVLAppleIntelligenceStatusCode(void) {
     Class cls = IVLAppleBridgeClass();
     if (!cls || ![cls respondsToSelector:@selector(appleIntelligenceStatus)]) return @"no_bridge";
     return [(id<IVLAppleTranslationBridgeProtocol>)cls appleIntelligenceStatus] ?: @"unknown";
+}
+
+void IVLTranslatorAppendLog(NSString *message) {
+    if (!message.length) return;
+    Class cls = IVLAppleBridgeClass();
+    if (cls && [cls respondsToSelector:@selector(appendLog:)]) {
+        [(id<IVLAppleTranslationBridgeProtocol>)cls appendLog:message];
+    }
+}
+
+NSString *IVLTranslatorAllLogs(void) {
+    Class cls = IVLAppleBridgeClass();
+    if (cls && [cls respondsToSelector:@selector(allLogs)]) {
+        return [(id<IVLAppleTranslationBridgeProtocol>)cls allLogs] ?: @"";
+    }
+    return @"";
+}
+
+void IVLTranslatorClearLogs(void) {
+    Class cls = IVLAppleBridgeClass();
+    if (cls && [cls respondsToSelector:@selector(clearLogs)]) {
+        [(id<IVLAppleTranslationBridgeProtocol>)cls clearLogs];
+    }
+}
+
+void IVLPresentTranslationModelDownloader(UIViewController *presenter, NSString *targetLang) {
+    if (!presenter) return;
+    Class cls = IVLAppleBridgeClass();
+    if (cls && [cls respondsToSelector:@selector(presentModelDownloadFrom:targetLang:)]) {
+        [(id<IVLAppleTranslationBridgeProtocol>)cls presentModelDownloadFrom:presenter targetLang:(targetLang.length ? targetLang : @"ja")];
+    }
 }
 
 UIImage *IVLAppleIntelligenceIconImage(void) {
@@ -125,6 +160,12 @@ static NSString *IVLHash(NSString *s) {
     req.HTTPBody = [body dataUsingEncoding:NSUTF8StringEncoding];
 
     [[_session dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+        NSInteger status = [resp isKindOfClass:[NSHTTPURLResponse class]] ? ((NSHTTPURLResponse *)resp).statusCode : 0;
+        if (err || status >= 400) {
+            IVLTranslatorAppendLog([NSString stringWithFormat:@"Google Translate: HTTP %ld (%@)", (long)status, err.localizedDescription ?: @"rate-limit/error"]);
+            completion(nil);
+            return;
+        }
         id json = data.length ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
         if (![json isKindOfClass:[NSArray class]] || ![[json firstObject] isKindOfClass:[NSArray class]]) { completion(nil); return; }
         NSMutableString *out = [NSMutableString string];
@@ -235,6 +276,7 @@ static NSString *IVLHash(NSString *s) {
     }
     if (cached) {
         @synchronized (self) { _memory[key] = cached; }
+        IVLTranslatorAppendLog([NSString stringWithFormat:@"Cache hit [%@] (%@ -> %@, %lu lines)", engineTag, src ?: @"auto", lang, (unsigned long)texts.count]);
         apply(cached);
         completion(YES);
         return;
@@ -264,23 +306,35 @@ static NSString *IVLHash(NSString *s) {
     if (engine == IVLTranslationEngineAppleIntelligence && [bridge respondsToSelector:@selector(translateWithAppleIntelligenceWithLines:targetLang:completion:)]) {
         [(id<IVLAppleTranslationBridgeProtocol>)bridge translateWithAppleIntelligenceWithLines:texts targetLang:lang completion:^(NSArray<NSString *> *tr) {
             if (tr.count == texts.count) { finish(tr); return; }
+            IVLTranslatorAppendLog(@"Fallback: Apple Intelligence -> Apple Translation");
             // Graceful fallback to Apple Translation if Foundation Models hits a guardrail/context limit
             if (IVLIsAppleTranslationAvailable() && [bridge respondsToSelector:@selector(translateWithAppleTranslationWithLines:sourceLang:targetLang:completion:)]) {
                 [(id<IVLAppleTranslationBridgeProtocol>)bridge translateWithAppleTranslationWithLines:texts sourceLang:src.length ? src : nil targetLang:lang completion:^(NSArray<NSString *> *tr2) {
                     if (tr2.count == texts.count) finish(tr2);
-                    else [self translateLines:texts target:lang completion:finish];
+                    else {
+                        IVLTranslatorAppendLog(@"Fallback: Apple Translation -> Google Translate");
+                        [self translateLines:texts target:lang completion:finish];
+                    }
                 }];
             } else {
+                IVLTranslatorAppendLog(@"Fallback: Apple Intelligence -> Google Translate");
                 [self translateLines:texts target:lang completion:finish];
             }
         }];
     } else if (engine == IVLTranslationEngineApple && [bridge respondsToSelector:@selector(translateWithAppleTranslationWithLines:sourceLang:targetLang:completion:)]) {
         [(id<IVLAppleTranslationBridgeProtocol>)bridge translateWithAppleTranslationWithLines:texts sourceLang:src.length ? src : nil targetLang:lang completion:^(NSArray<NSString *> *tr) {
             if (tr.count == texts.count) finish(tr);
-            else [self translateLines:texts target:lang completion:finish];
+            else {
+                IVLTranslatorAppendLog(@"Fallback: Apple Translation -> Google Translate");
+                [self translateLines:texts target:lang completion:finish];
+            }
         }];
     } else {
-        [self translateLines:texts target:lang completion:finish];
+        IVLTranslatorAppendLog([NSString stringWithFormat:@"Google Translate: start (%@ -> %@, %lu lines)", src ?: @"auto", lang, (unsigned long)texts.count]);
+        [self translateLines:texts target:lang completion:^(NSArray<NSString *> *tr) {
+            IVLTranslatorAppendLog(tr ? [NSString stringWithFormat:@"Google Translate: OK (%lu lines)", (unsigned long)tr.count] : @"Google Translate: failed");
+            finish(tr);
+        }];
     }
 }
 

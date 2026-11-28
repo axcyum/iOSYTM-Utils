@@ -361,6 +361,69 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
         }
         [secs addObject:[IVLSection title:@"Apple Intelligence" footer:aiFooter rows:@[aiRow]]];
     }
+
+    NSMutableArray<IVLRow *> *toolRows = [NSMutableArray array];
+    if (IVLIsAppleTranslationAvailable()) {
+        IVLRow *dlModels = [[IVLRow type:IVLRowAction key:@"" title:IVLLoc(@"tr_download_models")] withBadge:@"arrow.down.circle.fill" fallback:@"arrow.down.circle" hex:@"0A84FF"];
+        dlModels.action = ^(UIViewController *vc) {
+            NSString *target = [IVLSettings objectForKey:IVLKeyTranslationLang] ?: @"ja";
+            IVLPresentTranslationModelDownloader(vc, target);
+        };
+        [toolRows addObject:dlModels];
+    }
+    IVLRow *viewLogs = [[IVLRow type:IVLRowAction key:@"" title:IVLLoc(@"tr_view_logs")] withBadge:@"doc.text.magnifyingglass" fallback:@"doc.text" hex:@"5E5CE6"];
+    viewLogs.action = ^(UIViewController *vc) {
+        UIViewController *logVC = [UIViewController new];
+        logVC.title = IVLLoc(@"tr_logs_title");
+        logVC.view.backgroundColor = UIColor.systemBackgroundColor;
+
+        UITextView *tv = [UITextView new];
+        tv.editable = NO;
+        tv.backgroundColor = UIColor.clearColor;
+        tv.textColor = UIColor.labelColor;
+        tv.font = [UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightRegular];
+        tv.textContainerInset = UIEdgeInsetsMake(14, 14, 14, 14);
+        tv.translatesAutoresizingMaskIntoConstraints = NO;
+
+        NSString *aiStatus = IVLAppleIntelligenceStatusCode();
+        NSString *logs = IVLTranslatorAllLogs();
+        NSString *header = [NSString stringWithFormat:@"Engine: %ld · Target: %@ · AppleTranslation: %@ · AppleIntelligence: %@\n----------------------------------------\n",
+                            (long)[IVLSettings integerForKey:IVLKeyTranslationEngine],
+                            [IVLSettings objectForKey:IVLKeyTranslationLang] ?: @"",
+                            IVLIsAppleTranslationAvailable() ? @"YES" : @"NO",
+                            aiStatus];
+        tv.text = [header stringByAppendingString:(logs.length ? logs : IVLLoc(@"tr_logs_empty"))];
+        [logVC.view addSubview:tv];
+        [NSLayoutConstraint activateConstraints:@[
+            [tv.topAnchor constraintEqualToAnchor:logVC.view.safeAreaLayoutGuide.topAnchor],
+            [tv.leadingAnchor constraintEqualToAnchor:logVC.view.leadingAnchor],
+            [tv.trailingAnchor constraintEqualToAnchor:logVC.view.trailingAnchor],
+            [tv.bottomAnchor constraintEqualToAnchor:logVC.view.bottomAnchor],
+        ]];
+
+        __weak UITextView *weakTV = tv;
+        UIBarButtonItem *clearBtn = [[UIBarButtonItem alloc] initWithTitle:IVLLoc(@"tr_logs_clear") style:UIBarButtonItemStylePlain target:nil action:nil];
+        clearBtn.primaryAction = [UIAction actionWithTitle:IVLLoc(@"tr_logs_clear") image:nil identifier:nil handler:^(UIAction *a) {
+            IVLTranslatorClearLogs();
+            weakTV.text = [header stringByAppendingString:IVLLoc(@"tr_logs_empty")];
+        }];
+        UIBarButtonItem *copyBtn = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"doc.on.doc"] primaryAction:[UIAction actionWithHandler:^(UIAction *a) {
+            UIPasteboard.generalPasteboard.string = weakTV.text ?: @"";
+        }]];
+        UIBarButtonItem *doneBtn = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone primaryAction:[UIAction actionWithHandler:^(UIAction *a) {
+            [logVC dismissViewControllerAnimated:YES completion:nil];
+        }]];
+        logVC.navigationItem.leftBarButtonItems = @[clearBtn, copyBtn];
+        logVC.navigationItem.rightBarButtonItem = doneBtn;
+
+        UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:logVC];
+        nav.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+        nav.modalPresentationStyle = UIModalPresentationPageSheet;
+        [vc presentViewController:nav animated:YES completion:nil];
+    };
+    [toolRows addObject:viewLogs];
+    [secs addObject:[IVLSection title:nil footer:IVLLoc(@"footer_tr_tools") rows:toolRows]];
+
     return secs;
 }
 

@@ -15,6 +15,14 @@ FOUNDATION_EXPORT BOOL IVLIsAppleTranslationAvailable(void);
 FOUNDATION_EXPORT BOOL IVLIsAppleIntelligenceAvailable(void);
 FOUNDATION_EXPORT NSString *IVLAppleIntelligenceStatusCode(void);
 
+/// Presents the built-in iOS Translation language model download UI (iOS 18+).
+FOUNDATION_EXPORT void IVLPresentTranslationModelDownloader(UIViewController *presenter, NSString *targetLang);
+
+/// Translation diagnostic log helpers.
+FOUNDATION_EXPORT void IVLTranslatorAppendLog(NSString *message);
+FOUNDATION_EXPORT NSString *IVLTranslatorAllLogs(void);
+FOUNDATION_EXPORT void IVLTranslatorClearLogs(void);
+
 /// Embedded Apple Intelligence UI assets (icon + top/bottom rainbow glow frame for Settings cell).
 FOUNDATION_EXPORT UIImage *_Nullable IVLAppleIntelligenceIconImage(void);
 FOUNDATION_EXPORT UIImage *_Nullable IVLAppleIntelligenceGlowImage(void);
