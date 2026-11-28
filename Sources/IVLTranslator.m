@@ -1,5 +1,90 @@
 #import "IVLTranslator.h"
+#import "IVLSettings.h"
+#import "IVLAppleIntelAssets.h"
 #import <CommonCrypto/CommonDigest.h>
+
+@protocol IVLAppleTranslationBridgeProtocol <NSObject>
++ (BOOL)isAppleTranslationAvailable;
++ (BOOL)isAppleIntelligenceAvailable;
++ (void)translateWithAppleTranslationWithLines:(NSArray<NSString *> *)lines
+                                    sourceLang:(nullable NSString *)sourceLang
+                                    targetLang:(NSString *)targetLang
+                                    completion:(void (^)(NSArray<NSString *> *_Nullable))completion;
++ (void)translateWithAppleIntelligenceWithLines:(NSArray<NSString *> *)lines
+                                     targetLang:(NSString *)targetLang
+                                     completion:(void (^)(NSArray<NSString *> *_Nullable))completion;
+@end
+
+static Class IVLAppleBridgeClass(void) {
+    return NSClassFromString(@"IVLAppleTranslationBridge");
+}
+
+BOOL IVLIsAppleTranslationAvailable(void) {
+    Class cls = IVLAppleBridgeClass();
+    if (!cls || ![cls respondsToSelector:@selector(isAppleTranslationAvailable)]) return NO;
+    return [(id<IVLAppleTranslationBridgeProtocol>)cls isAppleTranslationAvailable];
+}
+
+BOOL IVLIsAppleIntelligenceAvailable(void) {
+    Class cls = IVLAppleBridgeClass();
+    if (!cls || ![cls respondsToSelector:@selector(isAppleIntelligenceAvailable)]) return NO;
+    return [(id<IVLAppleTranslationBridgeProtocol>)cls isAppleIntelligenceAvailable];
+}
+
+UIImage *IVLAppleIntelligenceIconImage(void) {
+    static UIImage *img = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSData *d = [NSData dataWithBytesNoCopy:(void *)kIVLAppleIntelIconPNG length:kIVLAppleIntelIconPNGLen freeWhenDone:NO];
+        UIImage *raw = [UIImage imageWithData:d scale:3.0];
+        img = [raw imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+    });
+    return img;
+}
+
+static UIImage *IVLAppleIntelligenceGlowFull(void) {
+    static UIImage *img = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSData *d = [NSData dataWithBytesNoCopy:(void *)kIVLAppleIntelGlowPNG length:kIVLAppleIntelGlowPNGLen freeWhenDone:NO];
+        img = [UIImage imageWithData:d scale:2.0];
+    });
+    return img;
+}
+
+UIImage *IVLAppleIntelligenceTopGlowImage(void) {
+    static UIImage *img = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        CGImageRef cg = IVLAppleIntelligenceGlowFull().CGImage;
+        if (!cg) return;
+        size_t w = CGImageGetWidth(cg);
+        size_t h = CGImageGetHeight(cg);
+        CGImageRef crop = CGImageCreateWithImageInRect(cg, CGRectMake(0, 0, w, h / 2));
+        if (crop) {
+            img = [[UIImage imageWithCGImage:crop scale:2.0 orientation:UIImageOrientationUp] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+            CGImageRelease(crop);
+        }
+    });
+    return img;
+}
+
+UIImage *IVLAppleIntelligenceBottomGlowImage(void) {
+    static UIImage *img = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        CGImageRef cg = IVLAppleIntelligenceGlowFull().CGImage;
+        if (!cg) return;
+        size_t w = CGImageGetWidth(cg);
+        size_t h = CGImageGetHeight(cg);
+        CGImageRef crop = CGImageCreateWithImageInRect(cg, CGRectMake(0, h / 2, w, h - h / 2));
+        if (crop) {
+            img = [[UIImage imageWithCGImage:crop scale:2.0 orientation:UIImageOrientationUp] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+            CGImageRelease(crop);
+        }
+    });
+    return img;
+}
 
 static NSString *const kEndpoint = @"https://translate.googleapis.com/translate_a/single";
 static const NSUInteger kChunkLines = 30;
@@ -158,7 +243,15 @@ static NSString *IVLHash(NSString *s) {
         return;
     }
 
-    NSString *key = [NSString stringWithFormat:@"%@_%@_%@", videoID ?: @"x", lang, IVLHash([texts componentsJoinedByString:@"\n"])];
+    IVLTranslationEngine engine = (IVLTranslationEngine)[IVLSettings integerForKey:IVLKeyTranslationEngine];
+    if (engine == IVLTranslationEngineAppleIntelligence && !IVLIsAppleIntelligenceAvailable()) {
+        engine = IVLIsAppleTranslationAvailable() ? IVLTranslationEngineApple : IVLTranslationEngineGoogle;
+    } else if (engine == IVLTranslationEngineApple && !IVLIsAppleTranslationAvailable()) {
+        engine = IVLTranslationEngineGoogle;
+    }
+
+    NSString *engineTag = (engine == IVLTranslationEngineAppleIntelligence) ? @"ai" : (engine == IVLTranslationEngineApple ? @"apple" : @"google");
+    NSString *key = [NSString stringWithFormat:@"%@_%@_%@_%@", engineTag, videoID ?: @"x", lang, IVLHash([texts componentsJoinedByString:@"\n"])];
     NSArray *cached;
     @synchronized (self) { cached = _memory[key]; }
     if (!cached) {
@@ -178,7 +271,7 @@ static NSString *IVLHash(NSString *s) {
         [_inflight addObject:key];
     }
 
-    [self translateLines:texts target:lang completion:^(NSArray<NSString *> *tr) {
+    void (^finish)(NSArray<NSString *> *) = ^(NSArray<NSString *> *tr) {
         @synchronized (self) {
             [self->_inflight removeObject:key];
             if (tr) self->_memory[key] = tr;
@@ -192,7 +285,30 @@ static NSString *IVLHash(NSString *s) {
             if (tr) apply(tr);
             completion(tr != nil);
         });
-    }];
+    };
+
+    Class bridge = IVLAppleBridgeClass();
+    if (engine == IVLTranslationEngineAppleIntelligence && [bridge respondsToSelector:@selector(translateWithAppleIntelligenceWithLines:targetLang:completion:)]) {
+        [(id<IVLAppleTranslationBridgeProtocol>)bridge translateWithAppleIntelligenceWithLines:texts targetLang:lang completion:^(NSArray<NSString *> *tr) {
+            if (tr.count == texts.count) { finish(tr); return; }
+            // Graceful fallback to Apple Translation if Foundation Models hits a guardrail/context limit
+            if (IVLIsAppleTranslationAvailable() && [bridge respondsToSelector:@selector(translateWithAppleTranslationWithLines:sourceLang:targetLang:completion:)]) {
+                [(id<IVLAppleTranslationBridgeProtocol>)bridge translateWithAppleTranslationWithLines:texts sourceLang:src.length ? src : nil targetLang:lang completion:^(NSArray<NSString *> *tr2) {
+                    if (tr2.count == texts.count) finish(tr2);
+                    else [self translateLines:texts target:lang completion:finish];
+                }];
+            } else {
+                [self translateLines:texts target:lang completion:finish];
+            }
+        }];
+    } else if (engine == IVLTranslationEngineApple && [bridge respondsToSelector:@selector(translateWithAppleTranslationWithLines:sourceLang:targetLang:completion:)]) {
+        [(id<IVLAppleTranslationBridgeProtocol>)bridge translateWithAppleTranslationWithLines:texts sourceLang:src.length ? src : nil targetLang:lang completion:^(NSArray<NSString *> *tr) {
+            if (tr.count == texts.count) finish(tr);
+            else [self translateLines:texts target:lang completion:finish];
+        }];
+    } else {
+        [self translateLines:texts target:lang completion:finish];
+    }
 }
 
 @end

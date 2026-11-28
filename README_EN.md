@@ -266,6 +266,13 @@ netsh interface portproxy add v4tov4 listenport=8974 listenaddress=0.0.0.0 conne
 
 ---
 
+## Contributors
+
+- **[@axcyum](https://github.com/axcyum)** — Author & Maintainer
+- **[@gemini-code-assist[bot]](https://github.com/apps/gemini-code-assist) (Gemini)** — Co-author & AI Engineering
+
+---
+
 ## License
 
 Distributed under the **[GPL-3.0](LICENSE)** license.

@@ -35,6 +35,10 @@ NSNotificationName const IVLLyricsDidChangeNotification = @"IVLLyricsDidChangeNo
     BOOL _artworkIsFallback;
     BOOL _artworkURLInFlight;
     BOOL _vidSearchInFlight;
+    __weak UIImage *_prevTrackArtwork;
+    uint64_t _prevTrackArtworkSig;
+    uint64_t _currentArtworkSig;
+    CFTimeInterval _trackStartedAt;
     NSCache<NSString *, UIImage *> *_artCache;
     NSUInteger _activateCount, _heartbeatCount, _npCount;
 }
@@ -61,7 +65,7 @@ NSNotificationName const IVLLyricsDidChangeNotification = @"IVLLyricsDidChangeNo
         if ([IVLSettings boolForKey:IVLKeyEnabled] && !self.track) [self resolveImmediately];
         return;
     }
-    if ([key isEqualToString:IVLKeyTranslation] || [key isEqualToString:IVLKeyTranslationLang] || [key isEqualToString:IVLKeyPronunciation]) {
+    if ([key isEqualToString:IVLKeyTranslation] || [key isEqualToString:IVLKeyTranslationEngine] || [key isEqualToString:IVLKeyTranslationLang] || [key isEqualToString:IVLKeyPronunciation]) {
         [self refreshExtras];
     } else if ([key isEqualToString:IVLKeyProviderUnison] || [key isEqualToString:IVLKeyProviderLRCLIB] || [key isEqualToString:IVLKeyProviderOrder]
                || [key isEqualToString:IVLKeyProviderLyricsPlus] || [key isEqualToString:IVLKeyProviderYouTube]
@@ -130,12 +134,46 @@ static NSArray<NSString *> *IVLCandidateThumbURLs(NSString *rawThumb, NSString *
     return urls;
 }
 
+/// Fast 16x16 pixel fingerprint so we can detect when MPNowPlayingInfoCenter temporarily
+/// leaves the previous track's artwork attached to the new track's metadata.
+static uint64_t IVLArtworkSignature(UIImage *img) {
+    CGImageRef cg = img.CGImage;
+    if (!cg) return 0;
+    uint8_t buf[16 * 16 * 4];
+    memset(buf, 0, sizeof(buf));
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+    CGContextRef ctx = CGBitmapContextCreate(buf, 16, 16, 8, 16 * 4, cs,
+                                             kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(cs);
+    if (!ctx) return 0;
+    CGContextSetInterpolationQuality(ctx, kCGInterpolationLow);
+    CGContextDrawImage(ctx, CGRectMake(0, 0, 16, 16), cg);
+    CGContextRelease(ctx);
+    uint64_t h = 14695981039346656037ULL;
+    for (size_t i = 0; i < sizeof(buf); i++) {
+        // Quantize to 6-bit per channel so minor JPEG/resampling differences still match
+        h ^= (uint64_t)(buf[i] >> 2);
+        h *= 1099511628211ULL;
+    }
+    return h ? h : 1;
+}
+
+- (BOOL)isStalePreviousArtwork:(UIImage *)img {
+    if (!img || _prevTrackArtworkSig == 0) return NO;
+    // Allow identical cover art after 1.8s (e.g. consecutive songs from the same album)
+    if (CACurrentMediaTime() - _trackStartedAt >= 1.8) return NO;
+    if (img == _prevTrackArtwork) return YES;
+    return IVLArtworkSignature(img) == _prevTrackArtworkSig;
+}
+
 - (void)applyArtwork:(UIImage *)img isFallback:(BOOL)isFallback forTrack:(IVLTrack *)target {
     if (!img || self.track != target) return;
     if (target.artworkImage && !_artworkIsFallback && isFallback) return;
-    BOOL changed = (target.artworkImage != img);
+    uint64_t sig = IVLArtworkSignature(img);
+    BOOL changed = (target.artworkImage != img) && (sig == 0 || sig != _currentArtworkSig);
     target.artworkImage = img;
     _artworkIsFallback = isFallback;
+    if (sig) _currentArtworkSig = sig;
     if (changed) {
         [[NSNotificationCenter defaultCenter] postNotificationName:IVLArtworkDidChangeNotification object:self];
     }
@@ -163,7 +201,7 @@ static NSArray<NSString *> *IVLCandidateThumbURLs(NSString *rawThumb, NSString *
             continue;
         }
         UIImage *img = IVLExtractNPArtwork(info[MPMediaItemPropertyArtwork]);
-        if (img) return img;
+        if (img && ![self isStalePreviousArtwork:img]) return img;
     }
     return nil;
 }
@@ -338,10 +376,16 @@ static NSArray<NSString *> *IVLCandidateThumbURLs(NSString *rawThumb, NSString *
         if (self.track && (IVLLooseEqual(self.track.title, title) || [key isEqualToString:self->_committedNPKey ?: @""] || (movedOffStale && sameDurAsCurrent && self.track.youtubeVideoID.length > 0 && !self->_committedNPKey.length))) {
             self->_npKey = key;
             self->_committedNPKey = key;
-            if (!self.track.artworkImage || self->_artworkIsFallback) {
-                UIImage *img = IVLExtractNPArtwork(copy[MPMediaItemPropertyArtwork]);
-                if (!img) img = [self probeSystemArtworkForTrack:self.track];
-                if (img) [self applyArtwork:img isFallback:NO forTrack:self.track];
+            UIImage *img = IVLExtractNPArtwork(copy[MPMediaItemPropertyArtwork]);
+            if (img && [self isStalePreviousArtwork:img]) img = nil;
+            if (!img && (!self.track.artworkImage || self->_artworkIsFallback)) {
+                img = [self probeSystemArtworkForTrack:self.track];
+            }
+            if (img) {
+                uint64_t sig = IVLArtworkSignature(img);
+                if (!self.track.artworkImage || self->_artworkIsFallback || (sig != 0 && sig != self->_currentArtworkSig)) {
+                    [self applyArtwork:img isFallback:NO forTrack:self.track];
+                }
             }
             if (self.track.duration <= 0 && nDur > 0) {
                 self.track.duration = nDur;
@@ -397,15 +441,16 @@ static NSArray<NSString *> *IVLCandidateThumbURLs(NSString *rawThumb, NSString *
         }
         if ([details respondsToSelector:@selector(title)]) pTitle = IVLStr(details.title);
         if ([details respondsToSelector:@selector(author)]) pArtist = IVLStr(details.author);
+        NSString *dv = nil;
         if ([details respondsToSelector:@selector(videoId)]) {
-            NSString *dv = IVLStr(details.videoId);
+            dv = IVLStr(details.videoId);
             if (!pVid.length) pVid = dv;
             else if (dv.length && ![dv isEqualToString:pVid]) {
                 pTitle = nil; pArtist = nil; pThumb = nil;
             }
         }
         if ([p respondsToSelector:@selector(currentVideoTotalMediaTime)]) pDuration = p.currentVideoTotalMediaTime;
-        if (pTitle.length && [details respondsToSelector:@selector(thumbnail)]) {
+        if (pTitle.length && dv.length && [dv isEqualToString:pVid] && [details respondsToSelector:@selector(thumbnail)]) {
             YTIThumbnailDetails_Thumbnail *thumb = [details.thumbnail.thumbnailsArray lastObject];
             if ([thumb respondsToSelector:@selector(URL)]) pThumb = IVLStr(thumb.URL);
         }
@@ -528,12 +573,18 @@ static NSArray<NSString *> *IVLCandidateThumbURLs(NSString *rawThumb, NSString *
             if (duration > 0 && self.track.duration <= 0) self.track.duration = duration;
             if (!self.track.artworkImage || _artworkIsFallback) {
                 UIImage *img = IVLExtractNPArtwork(np[MPMediaItemPropertyArtwork]);
-                if (img) [self applyArtwork:img isFallback:NO forTrack:self.track];
+                if (img && ![self isStalePreviousArtwork:img]) [self applyArtwork:img isFallback:NO forTrack:self.track];
                 else [self ensureArtworkForTrack:self.track attempt:0];
             }
         }
         return;
     }
+
+    UIImage *oldArt = self.track.artworkImage;
+    _prevTrackArtwork = oldArt;
+    _prevTrackArtworkSig = oldArt ? IVLArtworkSignature(oldArt) : 0;
+    _currentArtworkSig = 0;
+    _trackStartedAt = CACurrentMediaTime();
 
     IVLTrack *t = [IVLTrack new];
     t.videoID = key;
@@ -546,7 +597,10 @@ static NSArray<NSString *> *IVLCandidateThumbURLs(NSString *rawThumb, NSString *
     }
     if (useNPArt) {
         UIImage *img = IVLExtractNPArtwork(np[MPMediaItemPropertyArtwork]);
-        if (img) t.artworkImage = img;
+        if (img && ![self isStalePreviousArtwork:img]) {
+            t.artworkImage = img;
+            _currentArtworkSig = IVLArtworkSignature(img);
+        }
     }
 
     _lastRaw = 0;

@@ -13,6 +13,7 @@ NSString *const IVLKeyKaraoke = @"karaoke";
 NSString *const IVLKeyShowBreaks = @"showBreaks";
 NSString *const IVLKeyBackground = @"background";
 NSString *const IVLKeyTranslation = @"translation";
+NSString *const IVLKeyTranslationEngine = @"translationEngine";
 NSString *const IVLKeyTranslationLang = @"translationLang";
 NSString *const IVLKeyPronunciation = @"pronunciation";
 NSString *const IVLKeyProviderUnison = @"providerUnison";
@@ -99,6 +100,7 @@ static NSString *IVLLocCaptionsName(void) {
             IVLKeyShowBreaks: @YES,
             IVLKeyBackground: @0,
             IVLKeyTranslation: @NO,
+            IVLKeyTranslationEngine: @0,
             IVLKeyTranslationLang: [self defaultTranslationLanguage],
             IVLKeyPronunciation: @0,
             IVLKeyProviderUnison: @YES,

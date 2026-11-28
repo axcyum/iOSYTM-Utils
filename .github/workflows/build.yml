@@ -21,8 +21,8 @@ permissions:
 
 jobs:
   build:
-    # arm64 macOS runners kept timing out in the queue ("job was not acquired")
-    runs-on: macos-15-intel
+    # Xcode 26+ SDK required for Apple Translation (iOS 18+) & FoundationModels (iOS 26+ Apple Intelligence)
+    runs-on: macos-26
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -82,6 +82,11 @@ jobs:
           make clean all DEBUG=0 FINALPACKAGE=1 ${DISCORD_SDK:+DISCORD_SDK="$DISCORD_SDK"}
           mkdir -p ../out
           cp "$(find .theos/obj -name 'ivLyricsYTM.dylib' -not -path '*/arm64/*' | head -n 1)" ../out/ivLyricsYTM.dylib
+          # Point any @rpath Swift runtime libraries to the OS copy so LiveContainer / sideloaded hosts load cleanly
+          for lib in $(otool -L ../out/ivLyricsYTM.dylib | awk '/@rpath\/libswift/ {print $1}'); do
+            install_name_tool -change "$lib" "/usr/lib/swift/${lib#@rpath/}" ../out/ivLyricsYTM.dylib
+          done
+          ldid -S ../out/ivLyricsYTM.dylib
           file ../out/ivLyricsYTM.dylib
           otool -L ../out/ivLyricsYTM.dylib
           if [ -n "$DISCORD_SDK" ]; then

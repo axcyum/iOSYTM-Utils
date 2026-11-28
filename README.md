@@ -355,6 +355,13 @@ Sources/
 
 ---
 
+## Contributors
+
+- **[@axcyum](https://github.com/axcyum)** — Author & Maintainer
+- **[@gemini-code-assist[bot]](https://github.com/apps/gemini-code-assist) (Gemini)** — Co-author & AI Engineering
+
+---
+
 ## ライセンス
 
 本プロジェクトは **[GPL-3.0](LICENSE)** ライセンスの下で配布されています。

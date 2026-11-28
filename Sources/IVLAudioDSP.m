@@ -59,6 +59,9 @@ typedef struct {
     float z2L[kIVLEQBandCount];
     float z1R[kIVLEQBandCount];
     float z2R[kIVLEQBandCount];
+    float limEnv;
+    float limGain;
+    BOOL limInited;
 } IVLFilterState;
 
 static void IVLBuildEQBank(IVLEQBank *bank, const double gainsDB[kIVLEQBandCount], double sr) {
@@ -156,10 +159,53 @@ static pthread_mutex_t gRenderersLock = PTHREAD_MUTEX_INITIALIZER;
 static const void *kIVLBaseVolumeKey = &kIVLBaseVolumeKey;
 static __thread BOOL tReapplyingVolume = NO;
 
-static inline float IVLSoftClip(float x) {
-    if (x > 0.82f) return 0.82f + 0.18f * tanhf((x - 0.82f) / 0.18f);
-    if (x < -0.82f) return -0.82f + 0.18f * tanhf((x + 0.82f) / 0.18f);
+// Transparent safety ceiling — only engages above 0.95 (-0.45 dBFS) if a sub-sample transient slips past the limiter.
+static inline float IVLSafetyCeiling(float x) {
+    if (x > 0.95f) return 0.95f + 0.035f * tanhf((x - 0.95f) / 0.035f);
+    if (x < -0.95f) return -0.95f + 0.035f * tanhf((x + 0.95f) / 0.035f);
     return x;
+}
+
+// Stereo-linked dynamic soft-knee compressor + brickwall peak limiter.
+// Keeps boosted audio loud and clean without static waveshaper harmonic distortion (clipping).
+static inline void IVLApplyDynamicBoostStereo(IVLFilterState *st, float gain, float relCoeff, float *ioL, float *ioR) {
+    float l = (*ioL) * gain;
+    float r = (*ioR) * gain;
+    float peak = fmaxf(fabsf(l), fabsf(r));
+
+    const float knee = 0.72f;     // -2.85 dBFS: gentle compression begins
+    const float ceiling = 0.91f;  // -0.82 dBFS: clean true-peak headroom for DAC / BT codecs
+
+    if (peak > st->limEnv) {
+        st->limEnv = peak; // instant attack catches transients cleanly
+    } else {
+        st->limEnv += relCoeff * (peak - st->limEnv);
+    }
+
+    float targetGain = 1.0f;
+    if (st->limEnv > knee) {
+        if (st->limEnv < ceiling) {
+            float excess = st->limEnv - knee;
+            float compressed = knee + excess / (1.0f + excess * 2.2f);
+            targetGain = compressed / st->limEnv;
+        } else {
+            targetGain = ceiling / st->limEnv;
+        }
+    }
+
+    if (targetGain < st->limGain) {
+        st->limGain += 0.65f * (targetGain - st->limGain);
+    } else {
+        st->limGain += relCoeff * (targetGain - st->limGain);
+    }
+
+    // Hard instantaneous overshoot protection so peaks never slam into the ceiling
+    if (peak * st->limGain > 0.945f && peak > 1e-6f) {
+        st->limGain = 0.945f / peak;
+    }
+
+    *ioL = IVLSafetyCeiling(l * st->limGain);
+    *ioR = IVLSafetyCeiling(r * st->limGain);
 }
 
 static void IVLProcessAudioBufferList(AudioBufferList *ioData, UInt32 inNumberFrames, IVLFilterState *fltPtr, int pathID) {
@@ -180,6 +226,15 @@ static void IVLProcessAudioBufferList(AudioBufferList *ioData, UInt32 inNumberFr
     const IVLEQBank *eqBank = eqOn ? &gEQBanks[atomic_load_explicit(&gActiveEQBank, memory_order_acquire) & 1] : NULL;
     IVLFilterState localFlt = {0};
     IVLFilterState *st = fltPtr ?: &localFlt;
+    if (!st->limInited) {
+        st->limGain = 1.0f;
+        st->limEnv = 0.0f;
+        st->limInited = YES;
+    }
+    float sr = (float)atomic_load_explicit(&gSampleRateHz, memory_order_relaxed);
+    if (sr < 8000.0f) sr = 48000.0f;
+    // ~115 ms smooth release envelope
+    float relCoeff = 1.0f - expf(-1.0f / (0.115f * sr));
 
     // Band-limited vocal isolator: preserves bass/kick (< ~180 Hz) AND crisp hi-hats (> ~6.8 kHz)
     const float alphaLow = 0.023f;
@@ -207,8 +262,9 @@ static void IVLProcessAudioBufferList(AudioBufferList *ioData, UInt32 inNumberFr
                     r -= kStr * vocal;
                 }
                 if (eqBank) IVLApplyEQSampleStereo(eqBank, st, &l, &r);
-                L[i] = IVLSoftClip(l * gain);
-                R[i] = IVLSoftClip(r * gain);
+                IVLApplyDynamicBoostStereo(st, gain, relCoeff, &l, &r);
+                L[i] = l;
+                R[i] = r;
             }
             st->lpLow = lpLow; st->lpHigh = lpHigh;
             return;
@@ -232,8 +288,9 @@ static void IVLProcessAudioBufferList(AudioBufferList *ioData, UInt32 inNumberFr
                     r -= kStr * vocal;
                 }
                 if (eqBank) IVLApplyEQSampleStereo(eqBank, st, &l, &r);
-                buf[i * 2] = IVLSoftClip(l * gain);
-                buf[i * 2 + 1] = IVLSoftClip(r * gain);
+                IVLApplyDynamicBoostStereo(st, gain, relCoeff, &l, &r);
+                buf[i * 2] = l;
+                buf[i * 2 + 1] = r;
             }
             st->lpLow = lpLow; st->lpHigh = lpHigh;
             return;
@@ -249,7 +306,8 @@ static void IVLProcessAudioBufferList(AudioBufferList *ioData, UInt32 inNumberFr
             for (UInt32 i = 0; i < inNumberFrames; i++) {
                 float m = buf[i], dummy = m;
                 if (eqBank) IVLApplyEQSampleStereo(eqBank, st, &m, &dummy);
-                buf[i] = IVLSoftClip(m * gain);
+                IVLApplyDynamicBoostStereo(st, gain, relCoeff, &m, &dummy);
+                buf[i] = m;
             }
             return;
         }
@@ -273,8 +331,9 @@ static void IVLProcessAudioBufferList(AudioBufferList *ioData, UInt32 inNumberFr
                     r -= kStr * vocal;
                 }
                 if (eqBank) IVLApplyEQSampleStereo(eqBank, st, &l, &r);
-                l = fmaxf(-1.0f, fminf(1.0f, IVLSoftClip(l * gain)));
-                r = fmaxf(-1.0f, fminf(1.0f, IVLSoftClip(r * gain)));
+                IVLApplyDynamicBoostStereo(st, gain, relCoeff, &l, &r);
+                l = fmaxf(-1.0f, fminf(1.0f, l));
+                r = fmaxf(-1.0f, fminf(1.0f, r));
                 buf[i * 2] = (int16_t)(l * 32767.0f);
                 buf[i * 2 + 1] = (int16_t)(r * 32767.0f);
             }
@@ -1517,8 +1576,9 @@ static void IVLTapProcess(MTAudioProcessingTapRef tap,
     IVLBuildEQBank(&gEQBanks[nextIdx], eqBands, (double)sr);
     atomic_store_explicit(&gActiveEQBank, nextIdx, memory_order_release);
 
-    // Exponential loudness curve: 150% -> 1.84x, 200% -> 2.83x, 250% -> 3.95x, 300% -> 5.20x
-    float gain = (bPct <= 100.0) ? 1.0f : powf((float)(bPct / 100.0), 1.5f);
+    // Clean dynamic boost curve: 150% -> 1.64x, 200% -> 2.33x, 250% -> 3.06x, 300% -> 3.82x
+    // Paired with the stereo-linked peak limiter, this raises perceived loudness without clipping.
+    float gain = (bPct <= 100.0) ? 1.0f : powf((float)(bPct / 100.0), 1.22f);
 
     atomic_store_explicit(&gKaraokeOn, kOn, memory_order_relaxed);
     atomic_store_explicit(&gKaraokeStrength, (float)(kStr / 100.0), memory_order_relaxed);

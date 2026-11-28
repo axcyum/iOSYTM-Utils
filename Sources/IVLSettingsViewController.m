@@ -118,6 +118,7 @@ typedef NS_ENUM(NSInteger, IVLRowType) {
 @property (nonatomic, copy) NSString *symbol;
 @property (nonatomic, copy) NSString *fallbackSymbol;
 @property (nonatomic, copy) NSString *badgeHex;
+@property (nonatomic, strong) UIImage *customIcon;
 @property (nonatomic, copy) NSString *placeholder;
 @property (nonatomic) UIKeyboardType keyboard;
 @property (nonatomic) double danger;
@@ -309,16 +310,49 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
 }
 
 - (NSArray<IVLSection *> *)translationSections {
+    BOOL hasAI = IVLIsAppleIntelligenceAvailable();
     IVLRow *tr = [IVLRow type:IVLRowSwitch key:IVLKeyTranslation title:IVLLoc(@"translation")];
+
+    IVLRow *engine = [IVLRow type:IVLRowSegment key:IVLKeyTranslationEngine title:IVLLoc(@"translation_engine")];
+    if (hasAI) {
+        engine.options = @[IVLLoc(@"tr_engine_apple"), IVLLoc(@"tr_engine_google"), IVLLoc(@"tr_engine_ai")];
+        engine.values = @[@(IVLTranslationEngineApple), @(IVLTranslationEngineGoogle), @(IVLTranslationEngineAppleIntelligence)];
+    } else {
+        engine.options = @[IVLLoc(@"tr_engine_apple"), IVLLoc(@"tr_engine_google")];
+        engine.values = @[@(IVLTranslationEngineApple), @(IVLTranslationEngineGoogle)];
+    }
+
     IVLRow *lang = [IVLRow type:IVLRowLink key:IVLKeyTranslationLang title:IVLLoc(@"translation_lang")];
     lang.detail = ^NSString *{ return [IVLLanguagePickerViewController nameForCode:[IVLSettings objectForKey:IVLKeyTranslationLang]]; };
     lang.action = ^(UIViewController *vc) { [vc.navigationController pushViewController:[IVLLanguagePickerViewController new] animated:YES]; };
 
     IVLRow *pron = [IVLRow type:IVLRowSegment key:IVLKeyPronunciation title:IVLLoc(@"pronunciation")];
     pron.options = @[IVLLoc(@"off"), IVLLoc(@"romaji"), IVLLoc(@"kana")];
-    return @[
-        [IVLSection title:nil footer:IVLLoc(@"footer_translation") rows:@[tr, lang, pron]],
-    ];
+
+    NSMutableArray<IVLSection *> *secs = [NSMutableArray array];
+    [secs addObject:[IVLSection title:nil footer:IVLLoc(@"footer_translation_engine") rows:@[tr, engine, lang, pron]]];
+
+    if (hasAI) {
+        __weak typeof(self) weakSelf = self;
+        IVLRow *aiRow = [IVLRow type:IVLRowSwitch key:@"" title:IVLLoc(@"tr_ai_btn")];
+        aiRow.customIcon = IVLAppleIntelligenceIconImage();
+        aiRow.getBool = ^BOOL {
+            return [IVLSettings boolForKey:IVLKeyTranslation] && [IVLSettings integerForKey:IVLKeyTranslationEngine] == IVLTranslationEngineAppleIntelligence;
+        };
+        aiRow.setBool = ^(BOOL on) {
+            if (on) {
+                [IVLSettings setObject:@(IVLTranslationEngineAppleIntelligence) forKey:IVLKeyTranslationEngine];
+                [IVLSettings setBool:YES forKey:IVLKeyTranslation];
+            } else {
+                [IVLSettings setObject:@(IVLTranslationEngineApple) forKey:IVLKeyTranslationEngine];
+            }
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.24 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                [weakSelf rebuild];
+            });
+        };
+        [secs addObject:[IVLSection title:@"Apple Intelligence" footer:IVLLoc(@"footer_translation_ai") rows:@[aiRow]]];
+    }
+    return secs;
 }
 
 - (NSArray<IVLSection *> *)syncSections {
@@ -973,7 +1007,13 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
     c.textLabel.numberOfLines = 0;
     c.selectionStyle = UITableViewCellSelectionStyleNone;
 
-    if (row.badgeHex.length) {
+    if (row.customIcon) {
+        UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(28, 28)];
+        c.imageView.image = [[r imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+            [[UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, 28, 28) cornerRadius:7.0] addClip];
+            [row.customIcon drawInRect:CGRectMake(0, 0, 28, 28)];
+        }] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+    } else if (row.badgeHex.length) {
         c.imageView.image = IVLBadgeImage(row.symbol, row.fallbackSymbol, row.badgeHex);
     } else if (row.symbol.length) {
         c.imageView.image = [UIImage systemImageNamed:row.symbol];

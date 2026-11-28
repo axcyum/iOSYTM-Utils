@@ -16,6 +16,7 @@ extern NSString *const IVLKeyKaraoke;            // BOOL  word-by-word fill
 extern NSString *const IVLKeyShowBreaks;         // BOOL  instrumental "• • •"
 extern NSString *const IVLKeyBackground;         // 0 = artwork blur, 1 = solid
 extern NSString *const IVLKeyTranslation;        // BOOL
+extern NSString *const IVLKeyTranslationEngine;  // NSInteger 0 = Apple Translation, 1 = Google Translate, 2 = Apple Intelligence
 extern NSString *const IVLKeyTranslationLang;    // NSString (BCP-47, e.g. "ja")
 extern NSString *const IVLKeyPronunciation;      // 0 = off, 1 = romaji/latin, 2 = kana (Japanese)
 extern NSString *const IVLKeyProviderUnison;     // BOOL

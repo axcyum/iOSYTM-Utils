@@ -19,6 +19,7 @@
 #import "IVLLyricsViewController.h"
 #import "IVLAudioDSP.h"
 #import "IVLExternalDisplay.h"
+#import "IVLTranslator.h"
 #import <AVKit/AVKit.h>
 #import <AVFoundation/AVFoundation.h>
 #import <MediaPlayer/MediaPlayer.h>
@@ -508,6 +509,13 @@ static NSString *IVLClock(double s) {
     UILabel *_amStateLabel;
     UIActivityIndicatorView *_amSpinner;
     UIButton *_amTransBtn;
+    UIButton *_amSyncBtn;
+    UIButton *_amAIBtn;
+    UIImageView *_aiTopGlow;
+    UIImageView *_aiBottomGlow;
+    UIStackView *_amOffsetPanel;
+    UILabel *_amOffsetLabel;
+    BOOL _amOffsetVisible;
     NSArray<IVLLyricLine *> *_amLines;
     BOOL _amSynced;
     NSInteger _amActiveIndex;
@@ -537,6 +545,7 @@ static NSString *IVLClock(double s) {
     BOOL _lyricsMode;
     BOOL _needsAMInitialScroll;
     NSString *_imageKey;
+    NSString *_shownVideoID;
     UIPanGestureRecognizer *_pan;
     UITapGestureRecognizer *_artTap;
 }
@@ -691,6 +700,7 @@ static NSString *IVLClock(double s) {
         [self syncVolume];
         [self updateAudioRoute];
         [self reloadAMLyrics];
+        [self refreshAppleIntelligenceGlow];
     }
     return self;
 }
@@ -770,7 +780,91 @@ static NSString *IVLClock(double s) {
     _amTransBtn.alpha = 0;
     _amTransBtn.hidden = YES;
     [self addSubview:_amTransBtn];
+
+    _amSyncBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    _amSyncBtn.layer.cornerRadius = 10;
+    _amSyncBtn.layer.cornerCurve = kCACornerCurveContinuous;
+    _amSyncBtn.alpha = 0;
+    _amSyncBtn.hidden = YES;
+    [_amSyncBtn addTarget:self action:@selector(toggleAMOffsetPanel) forControlEvents:UIControlEventTouchUpInside];
+    [self addSubview:_amSyncBtn];
+
+    if (IVLIsAppleIntelligenceAvailable()) {
+        _amAIBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+        _amAIBtn.layer.cornerRadius = 10;
+        _amAIBtn.layer.cornerCurve = kCACornerCurveContinuous;
+        _amAIBtn.clipsToBounds = YES;
+        _amAIBtn.imageView.contentMode = UIViewContentModeScaleAspectFill;
+        [_amAIBtn setImage:IVLAppleIntelligenceIconImage() forState:UIControlStateNormal];
+        _amAIBtn.alpha = 0;
+        _amAIBtn.hidden = YES;
+        [_amAIBtn addTarget:self action:@selector(amAITranslateTapped) forControlEvents:UIControlEventTouchUpInside];
+        [self addSubview:_amAIBtn];
+
+        _aiTopGlow = [[UIImageView alloc] initWithImage:IVLAppleIntelligenceTopGlowImage()];
+        _aiTopGlow.contentMode = UIViewContentModeScaleToFill;
+        _aiTopGlow.userInteractionEnabled = NO;
+        _aiTopGlow.alpha = 0;
+        [self addSubview:_aiTopGlow];
+
+        _aiBottomGlow = [[UIImageView alloc] initWithImage:IVLAppleIntelligenceBottomGlowImage()];
+        _aiBottomGlow.contentMode = UIViewContentModeScaleToFill;
+        _aiBottomGlow.userInteractionEnabled = NO;
+        _aiBottomGlow.alpha = 0;
+        [self addSubview:_aiBottomGlow];
+    }
+
+    __weak typeof(self) ws = self;
+    UIButton *(^mkStep)(NSString *, NSInteger) = ^UIButton *(NSString *title, NSInteger delta) {
+        UIButtonConfiguration *cfg = [UIButtonConfiguration filledButtonConfiguration];
+        cfg.title = title;
+        cfg.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
+        cfg.baseBackgroundColor = [UIColor colorWithWhite:1 alpha:0.15];
+        cfg.baseForegroundColor = UIColor.whiteColor;
+        cfg.contentInsets = NSDirectionalEdgeInsetsMake(6, 6, 6, 6);
+        cfg.titleTextAttributesTransformer = ^NSDictionary *(NSDictionary *inc) {
+            NSMutableDictionary *d = [inc mutableCopy];
+            d[NSFontAttributeName] = [UIFont monospacedDigitSystemFontOfSize:13 weight:UIFontWeightSemibold];
+            return d;
+        };
+        return [UIButton buttonWithConfiguration:cfg primaryAction:[UIAction actionWithHandler:^(UIAction *a) {
+            [ws adjustAMOffset:delta];
+        }]];
+    };
+    _amOffsetLabel = [UILabel new];
+    _amOffsetLabel.textColor = UIColor.whiteColor;
+    _amOffsetLabel.font = [UIFont monospacedDigitSystemFontOfSize:13.5 weight:UIFontWeightBold];
+    _amOffsetLabel.textAlignment = NSTextAlignmentCenter;
+    _amOffsetLabel.userInteractionEnabled = YES;
+    [_amOffsetLabel addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(resetAMOffset)]];
+    [_amOffsetLabel.widthAnchor constraintGreaterThanOrEqualToConstant:58].active = YES;
+
+    UIButton *closeOff = [UIButton buttonWithType:UIButtonTypeSystem];
+    [closeOff setImage:[UIImage systemImageNamed:@"xmark" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:12 weight:UIImageSymbolWeightBold]] forState:UIControlStateNormal];
+    closeOff.tintColor = IVLSecondary;
+    [closeOff addTarget:self action:@selector(toggleAMOffsetPanel) forControlEvents:UIControlEventTouchUpInside];
+    [closeOff.widthAnchor constraintEqualToConstant:28].active = YES;
+
+    _amOffsetPanel = [[UIStackView alloc] initWithArrangedSubviews:@[
+        mkStep(@"−0.5", -500), mkStep(@"−0.1", -100), _amOffsetLabel, mkStep(@"+0.1", 100), mkStep(@"+0.5", 500), closeOff
+    ]];
+    _amOffsetPanel.axis = UILayoutConstraintAxisHorizontal;
+    _amOffsetPanel.spacing = 5;
+    _amOffsetPanel.alignment = UIStackViewAlignmentCenter;
+    _amOffsetPanel.distribution = UIStackViewDistributionFill;
+    _amOffsetPanel.layoutMargins = UIEdgeInsetsMake(6, 10, 6, 8);
+    _amOffsetPanel.layoutMarginsRelativeArrangement = YES;
+    _amOffsetPanel.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.86];
+    _amOffsetPanel.layer.cornerRadius = 22;
+    _amOffsetPanel.layer.cornerCurve = kCACornerCurveContinuous;
+    _amOffsetPanel.layer.borderWidth = 0.75;
+    _amOffsetPanel.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.16].CGColor;
+    _amOffsetPanel.alpha = 0;
+    _amOffsetPanel.hidden = YES;
+    [self addSubview:_amOffsetPanel];
+
     [self refreshAMTranslateButton];
+    [self refreshAMOffsetUI];
 }
 
 #pragma mark - Audio Route (AirPods / Headphones / AirPlay)
@@ -833,16 +927,23 @@ static NSString *IVLClock(double s) {
         if (![self usesAMLyrics] && _lyricsMode) [self setLyricsMode:NO animated:NO];
         [self setNeedsLayout];
     }
-    if (!k || [k isEqualToString:IVLKeyTranslation] || [k isEqualToString:IVLKeyPronunciation] || [k isEqualToString:IVLKeyShowBreaks]) {
+    if (!k || [k isEqualToString:IVLKeyTranslation] || [k isEqualToString:IVLKeyTranslationEngine] || [k isEqualToString:IVLKeyPronunciation] || [k isEqualToString:IVLKeyShowBreaks]) {
         [[IVLAMLyricCell blurCache] removeAllObjects];
         [self refreshAMTranslateButton];
+        [self refreshAppleIntelligenceGlow];
         [self reloadAMLyrics];
+    }
+    if (!k || [k isEqualToString:IVLKeySongOffsets] || [k isEqualToString:IVLKeyGlobalOffset]) {
+        [self refreshAMOffsetUI];
+        [self updateAMLyricsProgress];
     }
 }
 
 - (void)trackDidChange {
     IVLTrack *t = [IVLPlaybackManager shared].track;
+    _shownVideoID = t.videoID;
     [self setArtwork:t.artworkImage];
+    [self refreshAMOffsetUI];
     [self reloadAMLyrics];
 }
 
@@ -874,10 +975,15 @@ static NSString *IVLClock(double s) {
     if (on) {
         _compactHeader.hidden = NO;
         _amStage.hidden = NO;
-        _amTransBtn.hidden = NO;
+        _amTransBtn.hidden = _amOffsetVisible;
+        _amSyncBtn.hidden = _amOffsetVisible;
+        _amAIBtn.hidden = _amOffsetVisible;
+        _amOffsetPanel.hidden = !_amOffsetVisible;
         _amFollowing = YES;
         _needsAMInitialScroll = YES;
         [self reloadAMLyrics];
+        [self refreshAMOffsetUI];
+        [self refreshAppleIntelligenceGlow];
     }
     [_lyricsBtn setSymbol:(on ? @"quote.bubble.fill" : @"quote.bubble") size:19];
     _lyricsBtn.tintColor = on ? [UIColor colorWithWhite:0.08 alpha:1.0] : IVLTertiary;
@@ -886,7 +992,10 @@ static NSString *IVLClock(double s) {
         [self layoutSubviews];
         self->_compactHeader.alpha = on ? 1 : 0;
         self->_amStage.alpha = on ? 1 : 0;
-        self->_amTransBtn.alpha = on ? 1 : 0;
+        self->_amTransBtn.alpha = (on && !self->_amOffsetVisible) ? 1 : 0;
+        self->_amSyncBtn.alpha = (on && !self->_amOffsetVisible) ? 1 : 0;
+        self->_amAIBtn.alpha = (on && !self->_amOffsetVisible) ? 1 : 0;
+        self->_amOffsetPanel.alpha = (on && self->_amOffsetVisible) ? 1 : 0;
         self->_lyricsDim.alpha = on ? 1 : 0;
         self->_lyricsActivePill.alpha = on ? 1 : 0;
         self->_artHost.alpha = on ? 0 : 1;
@@ -901,6 +1010,9 @@ static NSString *IVLClock(double s) {
             self->_compactHeader.hidden = YES;
             self->_amStage.hidden = YES;
             self->_amTransBtn.hidden = YES;
+            self->_amSyncBtn.hidden = YES;
+            self->_amAIBtn.hidden = YES;
+            self->_amOffsetPanel.hidden = YES;
         } else {
             [self scrollAMToActiveAnimated:NO];
         }
@@ -963,12 +1075,31 @@ static NSString *IVLClock(double s) {
         UIViewController *top = IVLTopViewController();
         if (top) [IVLExternalDisplayManager presentQuickSheetFrom:top];
     }];
-    UIMenu *quickGrid = [UIMenu menuWithTitle:@"" image:nil identifier:nil options:UIMenuOptionsDisplayInline children:@[audioAct, tvAct]];
+    UIAction *syncAct = [UIAction actionWithTitle:IVLLoc(@"sync") image:[UIImage systemImageNamed:@"timer"] identifier:nil handler:^(UIAction *a) {
+        [ws toggleAMOffsetPanel];
+    }];
+    if ([[IVLPlaybackManager shared] songOffsetMs] != 0 || _amOffsetVisible) syncAct.state = UIMenuElementStateOn;
+
+    UIMenu *quickGrid = [UIMenu menuWithTitle:@"" image:nil identifier:nil options:UIMenuOptionsDisplayInline children:@[audioAct, tvAct, syncAct]];
     if (@available(iOS 16.0, *)) {
         quickGrid.preferredElementSize = UIMenuElementSizeMedium;
     }
 
-    NSMutableArray *langItems = [NSMutableArray arrayWithObjects:trAct, pronMenu, nil];
+    NSMutableArray *langItems = [NSMutableArray arrayWithObjects:trAct, nil];
+    if (IVLIsAppleIntelligenceAvailable()) {
+        BOOL aiOn = trOn && [IVLSettings integerForKey:IVLKeyTranslationEngine] == IVLTranslationEngineAppleIntelligence;
+        UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(20, 20)];
+        UIImage *menuIcon = [[r imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+            [[UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, 20, 20) cornerRadius:5.0] addClip];
+            [IVLAppleIntelligenceIconImage() drawInRect:CGRectMake(0, 0, 20, 20)];
+        }] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+        UIAction *aiAct = [UIAction actionWithTitle:IVLLoc(@"tr_ai_btn") image:menuIcon identifier:nil handler:^(UIAction *a) {
+            [ws amAITranslateTapped];
+        }];
+        aiAct.state = aiOn ? UIMenuElementStateOn : UIMenuElementStateOff;
+        [langItems addObject:aiAct];
+    }
+    [langItems addObject:pronMenu];
     if (self.onOpenProviderPicker) {
         UIAction *srcAct = [UIAction actionWithTitle:IVLLoc(@"menu_source") image:[UIImage systemImageNamed:@"globe"] identifier:nil handler:^(UIAction *a) {
             if (ws.onOpenProviderPicker) ws.onOpenProviderPicker();
@@ -979,6 +1110,93 @@ static NSString *IVLClock(double s) {
     }
     UIMenu *langSection = [UIMenu menuWithTitle:@"" image:nil identifier:nil options:UIMenuOptionsDisplayInline children:langItems];
     _amTransBtn.menu = [UIMenu menuWithTitle:@"" children:@[quickGrid, langSection]];
+}
+
+- (void)amAITranslateTapped {
+    if (!IVLIsAppleIntelligenceAvailable()) return;
+    [[UIImpactFeedbackGenerator new] impactOccurred];
+    BOOL trOn = [IVLSettings boolForKey:IVLKeyTranslation];
+    BOOL isAI = [IVLSettings integerForKey:IVLKeyTranslationEngine] == IVLTranslationEngineAppleIntelligence;
+    if (trOn && isAI) {
+        [IVLSettings setBool:NO forKey:IVLKeyTranslation];
+    } else {
+        [IVLSettings setObject:@(IVLTranslationEngineAppleIntelligence) forKey:IVLKeyTranslationEngine];
+        [IVLSettings setBool:YES forKey:IVLKeyTranslation];
+    }
+    [self refreshAMTranslateButton];
+    [self refreshAppleIntelligenceGlow];
+}
+
+- (void)refreshAppleIntelligenceGlow {
+    if (!_aiTopGlow || !_aiBottomGlow) return;
+    BOOL aiActive = IVLIsAppleIntelligenceAvailable()
+                 && [IVLSettings boolForKey:IVLKeyTranslation]
+                 && [IVLSettings integerForKey:IVLKeyTranslationEngine] == IVLTranslationEngineAppleIntelligence;
+    if (_amAIBtn) {
+        _amAIBtn.layer.borderWidth = aiActive ? 2.0 : 0.0;
+        _amAIBtn.layer.borderColor = aiActive ? UIColor.whiteColor.CGColor : UIColor.clearColor.CGColor;
+    }
+    [self bringSubviewToFront:_aiTopGlow];
+    [self bringSubviewToFront:_aiBottomGlow];
+    [UIView animateWithDuration:0.35 delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
+        self->_aiTopGlow.alpha = aiActive ? 0.96 : 0.0;
+        self->_aiBottomGlow.alpha = aiActive ? 0.96 : 0.0;
+    } completion:nil];
+}
+
+- (void)refreshAMOffsetUI {
+    NSInteger ms = [[IVLPlaybackManager shared] songOffsetMs];
+    _amOffsetLabel.text = [NSString stringWithFormat:@"%+.1fs", ms / 1000.0];
+    _amOffsetLabel.accessibilityHint = IVLLoc(@"reset");
+    BOOL active = _amOffsetVisible || ms != 0;
+    UIImageSymbolConfiguration *cfg = [UIImageSymbolConfiguration configurationWithPointSize:15.5 weight:UIImageSymbolWeightSemibold];
+    UIImage *sym = [UIImage systemImageNamed:@"timer" withConfiguration:cfg];
+    [_amSyncBtn setImage:[sym imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate] forState:UIControlStateNormal];
+    _amSyncBtn.backgroundColor = active ? IVLPrimary : [UIColor colorWithWhite:1 alpha:0.16];
+    _amSyncBtn.tintColor = active ? [UIColor colorWithWhite:0.08 alpha:1.0] : IVLPrimary;
+}
+
+- (void)toggleAMOffsetPanel {
+    _amOffsetVisible = !_amOffsetVisible;
+    [self refreshAMOffsetUI];
+    if (!_lyricsMode) return;
+    if (_amOffsetVisible) {
+        _amOffsetPanel.hidden = NO;
+        _amOffsetPanel.alpha = 0;
+    } else {
+        _amTransBtn.hidden = NO;
+        _amSyncBtn.hidden = NO;
+        _amAIBtn.hidden = NO;
+    }
+    [UIView animateWithDuration:0.24 delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
+        self->_amOffsetPanel.alpha = self->_amOffsetVisible ? 1 : 0;
+        self->_amTransBtn.alpha = self->_amOffsetVisible ? 0 : 1;
+        self->_amSyncBtn.alpha = self->_amOffsetVisible ? 0 : 1;
+        self->_amAIBtn.alpha = self->_amOffsetVisible ? 0 : 1;
+    } completion:^(BOOL f) {
+        if (self->_amOffsetVisible) {
+            self->_amTransBtn.hidden = YES;
+            self->_amSyncBtn.hidden = YES;
+            self->_amAIBtn.hidden = YES;
+        } else {
+            self->_amOffsetPanel.hidden = YES;
+        }
+    }];
+}
+
+- (void)adjustAMOffset:(NSInteger)delta {
+    IVLPlaybackManager *m = [IVLPlaybackManager shared];
+    [m setSongOffsetMs:[m songOffsetMs] + delta];
+    [[UISelectionFeedbackGenerator new] selectionChanged];
+    [self refreshAMOffsetUI];
+    [self updateAMLyricsProgress];
+}
+
+- (void)resetAMOffset {
+    [[IVLPlaybackManager shared] setSongOffsetMs:0];
+    [[UIImpactFeedbackGenerator new] impactOccurred];
+    [self refreshAMOffsetUI];
+    [self updateAMLyricsProgress];
 }
 
 - (void)reloadAMLyrics {
@@ -1285,6 +1503,19 @@ static NSString *IVLClock(double s) {
     UIEdgeInsets amInset = _amSynced ? UIEdgeInsetsMake(stageH * 0.24, 0, stageH * 0.58, 0) : UIEdgeInsetsMake(20, 0, 64, 0);
     if (!UIEdgeInsetsEqualToEdgeInsets(_amTable.contentInset, amInset)) _amTable.contentInset = amInset;
     _amTransBtn.frame = CGRectMake(W - kPad - 36, stageBottom - 40, 36, 36);
+    _amSyncBtn.frame = CGRectMake(CGRectGetMinX(_amTransBtn.frame) - 44, stageBottom - 40, 36, 36);
+    if (_amAIBtn) {
+        _amAIBtn.frame = CGRectMake(CGRectGetMinX(_amSyncBtn.frame) - 44, stageBottom - 40, 36, 36);
+    }
+    CGFloat offW = MIN(inner, 348);
+    _amOffsetPanel.frame = CGRectMake((W - offW) * 0.5, stageBottom - 44, offW, 44);
+    if (_aiTopGlow && _aiBottomGlow) {
+        CGFloat glowH = 42;
+        _aiTopGlow.frame = CGRectMake(0, 0, W, glowH);
+        _aiBottomGlow.frame = CGRectMake(0, H - glowH, W, glowH);
+        [self bringSubviewToFront:_aiTopGlow];
+        [self bringSubviewToFront:_aiBottomGlow];
+    }
 
     if (inLyrics) {
         if ([self.subviews indexOfObject:_heroBlur] > [self.subviews indexOfObject:_lyricsDim]) {
@@ -1382,7 +1613,12 @@ static NSString *IVLClock(double s) {
 - (void)refresh {
     IVLPlaybackManager *m = [IVLPlaybackManager shared];
     IVLTrack *t = m.track;
-    if (t.artworkImage && _hero.image != t.artworkImage) {
+    NSString *vid = t.videoID ?: @"";
+    if (![vid isEqualToString:_shownVideoID ?: @""]) {
+        _shownVideoID = vid;
+        [self setArtwork:t.artworkImage];
+        [self refreshAMOffsetUI];
+    } else if (t.artworkImage && _hero.image != t.artworkImage) {
         [self setArtwork:t.artworkImage];
     }
     NSString *title = t.title ?: @"";
