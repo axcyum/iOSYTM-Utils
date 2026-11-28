@@ -23,12 +23,40 @@ public final class IVLAppleTranslationBridge: NSObject {
     @objc public static func isAppleIntelligenceAvailable() -> Bool {
         #if canImport(FoundationModels)
         if #available(iOS 26.0, *) {
-            if case .available = SystemLanguageModel.default.availability {
+            switch SystemLanguageModel.default.availability {
+            case .available:
+                return true
+            case .unavailable(.deviceNotEligible):
+                return false
+            case .unavailable(.appleIntelligenceNotEnabled),
+                 .unavailable(.modelNotReady):
+                return true
+            @unknown default:
                 return true
             }
         }
         #endif
         return false
+    }
+
+    @objc public static func appleIntelligenceStatus() -> String {
+        #if canImport(FoundationModels)
+        if #available(iOS 26.0, *) {
+            switch SystemLanguageModel.default.availability {
+            case .available:
+                return "ready"
+            case .unavailable(.deviceNotEligible):
+                return "ineligible"
+            case .unavailable(.appleIntelligenceNotEnabled):
+                return "disabled"
+            case .unavailable(.modelNotReady):
+                return "not_ready"
+            @unknown default:
+                return "not_ready"
+            }
+        }
+        #endif
+        return "ineligible"
     }
 
     // MARK: - Apple Translation Framework (iOS 18+)
@@ -75,7 +103,7 @@ public final class IVLAppleTranslationBridge: NSObject {
                 return
             }
             let model = SystemLanguageModel.default
-            guard case .available = model.availability else {
+            if case .unavailable(.deviceNotEligible) = model.availability {
                 DispatchQueue.main.async { completion(nil) }
                 return
             }

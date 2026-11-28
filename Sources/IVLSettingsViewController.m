@@ -350,7 +350,14 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
                 [weakSelf rebuild];
             });
         };
-        [secs addObject:[IVLSection title:@"Apple Intelligence" footer:IVLLoc(@"footer_translation_ai") rows:@[aiRow]]];
+        NSString *aiStatus = IVLAppleIntelligenceStatusCode();
+        NSString *aiFooter = IVLLoc(@"footer_translation_ai");
+        if ([aiStatus isEqualToString:@"disabled"]) {
+            aiFooter = [aiFooter stringByAppendingString:@"\n⚠️ iOS「設定」→ Apple Intelligence と Siri で有効にしてください。"];
+        } else if ([aiStatus isEqualToString:@"not_ready"]) {
+            aiFooter = [aiFooter stringByAppendingString:@"\n⏳ オンデバイスモデルを準備中です（未完了時は Apple 翻訳へ自動フォールバックします）。"];
+        }
+        [secs addObject:[IVLSection title:@"Apple Intelligence" footer:aiFooter rows:@[aiRow]]];
     }
     return secs;
 }

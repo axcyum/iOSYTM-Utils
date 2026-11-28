@@ -6,6 +6,7 @@
 @protocol IVLAppleTranslationBridgeProtocol <NSObject>
 + (BOOL)isAppleTranslationAvailable;
 + (BOOL)isAppleIntelligenceAvailable;
++ (NSString *)appleIntelligenceStatus;
 + (void)translateWithAppleTranslationWithLines:(NSArray<NSString *> *)lines
                                     sourceLang:(nullable NSString *)sourceLang
                                     targetLang:(NSString *)targetLang
@@ -29,6 +30,12 @@ BOOL IVLIsAppleIntelligenceAvailable(void) {
     Class cls = IVLAppleBridgeClass();
     if (!cls || ![cls respondsToSelector:@selector(isAppleIntelligenceAvailable)]) return NO;
     return [(id<IVLAppleTranslationBridgeProtocol>)cls isAppleIntelligenceAvailable];
+}
+
+NSString *IVLAppleIntelligenceStatusCode(void) {
+    Class cls = IVLAppleBridgeClass();
+    if (!cls || ![cls respondsToSelector:@selector(appleIntelligenceStatus)]) return @"no_bridge";
+    return [(id<IVLAppleTranslationBridgeProtocol>)cls appleIntelligenceStatus] ?: @"unknown";
 }
 
 UIImage *IVLAppleIntelligenceIconImage(void) {

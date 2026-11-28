@@ -13,6 +13,7 @@ typedef NS_ENUM(NSInteger, IVLTranslationEngine) {
 /// Availability checks for on-device Apple translation frameworks.
 FOUNDATION_EXPORT BOOL IVLIsAppleTranslationAvailable(void);
 FOUNDATION_EXPORT BOOL IVLIsAppleIntelligenceAvailable(void);
+FOUNDATION_EXPORT NSString *IVLAppleIntelligenceStatusCode(void);
 
 /// Embedded Apple Intelligence UI assets (icon + top/bottom rainbow glow strips).
 FOUNDATION_EXPORT UIImage *_Nullable IVLAppleIntelligenceIconImage(void);
