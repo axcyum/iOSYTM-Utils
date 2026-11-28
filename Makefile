@@ -43,6 +43,7 @@ ifneq ($(DISCORD_SDK),)
 _IVL_DISCORD_STUBS := $(shell python3 tools/gen_discord_stubs.py "$(DISCORD_SDK)/discord_partner_sdk.framework/Headers/cdiscord.h" Sources/IVLDiscordStubs.c 1>&2 && echo Sources/IVLDiscordStubs.c)
 ivLyricsYTM_FILES += $(_IVL_DISCORD_STUBS)
 ivLyricsYTM_CFLAGS += -DIVL_DISCORD=1 -F$(DISCORD_SDK)
+Sources/IVLDiscord.mm_CFLAGS += -I$(DISCORD_SDK)/discord_partner_sdk.framework/Headers
 endif
 # Hooks use the ObjC runtime directly -> the dylib has no CydiaSubstrate/ElleKit dependency
 ivLyricsYTM_LOGOS_DEFAULT_GENERATOR = internal

@@ -88,7 +88,7 @@ static BOOL IVLDiscordLoad(void) {
 #if IVL_DISCORD
 
 #define DISCORDPP_IMPLEMENTATION
-#include <discord_partner_sdk/discordpp.h>
+#include "discordpp.h"
 
 static NSString *const kAccount = @IVL_DISCORD_APP_ID_STRING;
 static std::string UTF8(NSString *s) { return s ? std::string(s.UTF8String ?: "") : ""; }
