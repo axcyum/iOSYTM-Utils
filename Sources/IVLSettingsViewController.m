@@ -407,7 +407,7 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
             IVLTranslatorClearLogs();
             weakTV.text = [header stringByAppendingString:IVLLoc(@"tr_logs_empty")];
         }];
-        UIBarButtonItem *copyBtn = [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"doc.on.doc"] primaryAction:[UIAction actionWithHandler:^(UIAction *a) {
+        UIBarButtonItem *copyBtn = [[UIBarButtonItem alloc] initWithPrimaryAction:[UIAction actionWithTitle:@"" image:[UIImage systemImageNamed:@"doc.on.doc"] identifier:nil handler:^(UIAction *a) {
             UIPasteboard.generalPasteboard.string = weakTV.text ?: @"";
         }]];
         UIBarButtonItem *doneBtn = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone primaryAction:[UIAction actionWithHandler:^(UIAction *a) {
