@@ -530,11 +530,12 @@ static NSInteger IVLLyricsQuality(IVLLyrics *ly, IVLTrack *track) {
 + (NSString *)detectLanguage:(IVLLyrics *)lyrics {
     NSString *text = [lyrics plainText];
     if (!text.length) return nil;
+    // Kana or Hangul script is 100% decisive regardless of English chorus lines mixed in
+    if ([text rangeOfString:@"[\\u3040-\\u30ff]" options:NSRegularExpressionSearch].location != NSNotFound) return @"ja";
+    if ([text rangeOfString:@"[\\uac00-\\ud7af]" options:NSRegularExpressionSearch].location != NSNotFound) return @"ko";
     NLLanguageRecognizer *r = [NLLanguageRecognizer new];
     [r processString:text.length > 4000 ? [text substringToIndex:4000] : text];
     NSString *lang = r.dominantLanguage;
-    // Japanese lyrics full of kanji are sometimes classified as Chinese: kana decides.
-    if ([lang hasPrefix:@"zh"] && [text rangeOfString:@"[\\u3040-\\u30ff]" options:NSRegularExpressionSearch].location != NSNotFound) lang = @"ja";
     return lang;
 }
 

@@ -344,7 +344,9 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
         aiRow.setBool = ^(BOOL on) {
             if (on) {
                 [IVLSettings setObject:@(IVLTranslationEngineAppleIntelligence) forKey:IVLKeyTranslationEngine];
-                [IVLSettings setBool:YES forKey:IVLKeyTranslation];
+                if (![IVLSettings boolForKey:IVLKeyTranslation]) {
+                    [IVLSettings setBool:YES forKey:IVLKeyTranslation];
+                }
             } else {
                 [IVLSettings setObject:@(IVLTranslationEngineApple) forKey:IVLKeyTranslationEngine];
             }
@@ -357,7 +359,7 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
         if ([aiStatus isEqualToString:@"disabled"]) {
             aiFooter = [aiFooter stringByAppendingString:@"\n⚠️ iOS「設定」→ Apple Intelligence と Siri で有効にしてください。"];
         } else if ([aiStatus isEqualToString:@"not_ready"]) {
-            aiFooter = [aiFooter stringByAppendingString:@"\n⏳ オンデバイスモデルを準備中です（未完了時は Apple 翻訳へ自動フォールバックします）。"];
+            aiFooter = [aiFooter stringByAppendingString:@"\n⏳ モデル未応答（LiveContainer / サイドロード署名のサンドボックス制限、集中モード、またはモデル準備中）。その間は Google ではなく端末内の Apple 翻訳が自動で使われます。"];
         }
         [secs addObject:[IVLSection title:@"Apple Intelligence" footer:aiFooter rows:@[aiRow]]];
     }

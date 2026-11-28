@@ -98,6 +98,85 @@ public final class IVLAppleTranslationBridge: NSObject {
         return "ineligible"
     }
 
+    // MARK: - Deterministic Script + Constrained Language Detection (Apple Translation Supported Set)
+
+    @objc(detectSupportedSourceLanguageForLines:)
+    public static func detectSupportedSourceLanguage(for lines: [String]) -> String {
+        let text = lines.joined(separator: "\n")
+        if text.isEmpty { return "en" }
+
+        var kanaCount = 0
+        var hangulCount = 0
+        var hanCount = 0
+        var cyrillicCount = 0
+        var thaiCount = 0
+        var arabicCount = 0
+        var devanagariCount = 0
+        var nonASCIILatinCount = 0
+        var asciiAlphaCount = 0
+
+        for scalar in text.unicodeScalars {
+            let v = scalar.value
+            if (0x3040...0x30FF).contains(v) || (0x31F0...0x31FF).contains(v) {
+                kanaCount += 1
+            } else if (0xAC00...0xD7AF).contains(v) || (0x1100...0x11FF).contains(v) || (0x3130...0x318F).contains(v) {
+                hangulCount += 1
+            } else if (0x4E00...0x9FFF).contains(v) || (0x3400...0x4DBF).contains(v) {
+                hanCount += 1
+            } else if (0x0400...0x04FF).contains(v) {
+                cyrillicCount += 1
+            } else if (0x0E00...0x0E7F).contains(v) {
+                thaiCount += 1
+            } else if (0x0600...0x06FF).contains(v) {
+                arabicCount += 1
+            } else if (0x0900...0x097F).contains(v) {
+                devanagariCount += 1
+            } else if (0x0041...0x005A).contains(v) || (0x0061...0x007A).contains(v) {
+                asciiAlphaCount += 1
+            } else if (0x00C0...0x024F).contains(v) || (0x1E00...0x1EFF).contains(v) {
+                nonASCIILatinCount += 1
+            }
+        }
+
+        if kanaCount >= 2 { return "ja" }
+        if hangulCount >= 2 { return "ko" }
+        if hanCount >= 2 {
+            let rec = NLLanguageRecognizer()
+            rec.languageConstraints = [.simplifiedChinese, .traditionalChinese, .japanese]
+            rec.processString(String(text.prefix(3000)))
+            if rec.dominantLanguage == .traditionalChinese { return "zh-Hant" }
+            return "zh-Hans"
+        }
+        if cyrillicCount >= 2 {
+            let rec = NLLanguageRecognizer()
+            rec.languageConstraints = [.russian, .ukrainian]
+            rec.processString(String(text.prefix(3000)))
+            return rec.dominantLanguage == .ukrainian ? "uk" : "ru"
+        }
+        if thaiCount >= 2 { return "th" }
+        if arabicCount >= 2 { return "ar" }
+        if devanagariCount >= 2 { return "hi" }
+
+        // Latin script: strictly constrain NLLanguageRecognizer to languages supported by Apple Translation
+        // so short/slang pop lyrics can NEVER be misclassified as Czech (cs), Slovak (sk), Latin (la), etc.
+        let rec = NLLanguageRecognizer()
+        rec.languageConstraints = [
+            .english, .spanish, .french, .german, .italian,
+            .portuguese, .dutch, .polish, .indonesian, .turkish, .vietnamese
+        ]
+        rec.processString(String(text.prefix(3000)))
+        let hyps = rec.languageHypotheses(withMaximum: 3)
+        if let top = rec.dominantLanguage, top != .undetermined {
+            let conf = hyps[top] ?? 0.0
+            // Pure ASCII lyrics without European diacritics are overwhelmingly English unless high confidence otherwise
+            if nonASCIILatinCount == 0 && asciiAlphaCount > 0 && top != .english && conf < 0.82 {
+                return "en"
+            }
+            return top.rawValue
+        }
+        return "en"
+    }
+
     // MARK: - Native iOS Translation Model Download UI (iOS 18+)
 
     @objc(presentModelDownloadFrom:targetLang:)
@@ -124,14 +203,6 @@ public final class IVLAppleTranslationBridge: NSObject {
 
     // MARK: - Apple Translation Framework (iOS 18+)
 
-    private static func detectSourceLanguage(for lines: [String]) -> String? {
-        let sample = lines.prefix(12).joined(separator: "\n")
-        let rec = NLLanguageRecognizer()
-        rec.processString(sample)
-        guard let dominant = rec.dominantLanguage, dominant != .undetermined else { return nil }
-        return dominant.rawValue
-    }
-
     @objc(translateWithAppleTranslationWithLines:sourceLang:targetLang:completion:)
     public static func translateWithAppleTranslation(
         lines: [String],
@@ -145,13 +216,18 @@ public final class IVLAppleTranslationBridge: NSObject {
                 DispatchQueue.main.async { completion(nil) }
                 return
             }
-            let resolvedSrc = (sourceLang?.isEmpty == false) ? sourceLang : detectSourceLanguage(for: lines)
-            appendLog("Apple Translation: start (\(resolvedSrc ?? "auto") -> \(targetLang), \(lines.count) lines)")
+            let detected = detectSupportedSourceLanguage(for: lines)
+            let normalizedTarget = normalizeAppleTranslationCode(targetLang)
+            if detected.lowercased().hasPrefix(normalizedTarget.lowercased()) || normalizedTarget.lowercased().hasPrefix(detected.lowercased()) {
+                appendLog("Apple Translation: skipped (source=\(detected) matches target=\(normalizedTarget))")
+                DispatchQueue.main.async { completion(lines) }
+                return
+            }
             Task { @MainActor in
                 IVLAppleTranslationRunner.shared.enqueue(
                     lines: lines,
-                    sourceLang: resolvedSrc,
-                    targetLang: targetLang,
+                    sourceLang: detected,
+                    targetLang: normalizedTarget,
                     completion: completion
                 )
             }
@@ -160,6 +236,13 @@ public final class IVLAppleTranslationBridge: NSObject {
         #endif
         appendLog("Apple Translation: unavailable on this OS")
         DispatchQueue.main.async { completion(nil) }
+    }
+
+    private static func normalizeAppleTranslationCode(_ code: String) -> String {
+        let low = code.lowercased()
+        if low == "zh-cn" || low == "zh-sg" || low == "zh" { return "zh-Hans" }
+        if low == "zh-tw" || low == "zh-hk" { return "zh-Hant" }
+        return code
     }
 
     // MARK: - Apple Foundation Models Framework (Apple Intelligence On-Device LLM, iOS 26+)
@@ -177,16 +260,31 @@ public final class IVLAppleTranslationBridge: NSObject {
                 return
             }
             let model = SystemLanguageModel.default
-            let statusStr = appleIntelligenceStatus()
-            appendLog("Apple Intelligence: start (status=\(statusStr), target=\(targetLang), \(lines.count) lines)")
-            if case .unavailable(.deviceNotEligible) = model.availability {
+            switch model.availability {
+            case .available:
+                break
+            case .unavailable(.appleIntelligenceNotEnabled):
+                appendLog("Apple Intelligence: disabled in iOS Settings -> using Apple Translation")
+                DispatchQueue.main.async { completion(nil) }
+                return
+            case .unavailable(.modelNotReady):
+                appendLog("Apple Intelligence: model not ready (downloading / Focus / LiveContainer sandbox) -> using Apple Translation")
+                DispatchQueue.main.async { completion(nil) }
+                return
+            case .unavailable(.deviceNotEligible):
                 appendLog("Apple Intelligence: device not eligible")
                 DispatchQueue.main.async { completion(nil) }
                 return
+            @unknown default:
+                appendLog("Apple Intelligence: unavailable -> using Apple Translation")
+                DispatchQueue.main.async { completion(nil) }
+                return
             }
+
             let targetName = Locale.current.localizedString(forIdentifier: targetLang)
                 ?? Locale(identifier: "en").localizedString(forIdentifier: targetLang)
                 ?? targetLang
+            appendLog("Apple Intelligence: start (target=\(targetLang), \(lines.count) lines)")
 
             Task.detached(priority: .userInitiated) {
                 let result = await runFoundationModelsTranslation(lines: lines, targetLanguageName: targetName)
@@ -222,6 +320,13 @@ private struct IVLTranslationModelSheetView: View {
     @State private var downloadingCode: String?
     @State private var statusBanner: String?
 
+    private var normalizedTarget: String {
+        let low = targetLang.lowercased()
+        if low == "zh-cn" || low == "zh" { return "zh-Hans" }
+        if low == "zh-tw" || low == "zh-hk" { return "zh-Hant" }
+        return targetLang
+    }
+
     private static let commonSources: [(String, String)] = [
         ("en", "English"),
         ("ja", "日本語"),
@@ -241,7 +346,7 @@ private struct IVLTranslationModelSheetView: View {
 
     private var rows: [IVLLangPairRow] {
         Self.commonSources
-            .filter { !targetLang.lowercased().hasPrefix($0.0.lowercased()) && !$0.0.lowercased().hasPrefix(targetLang.lowercased()) }
+            .filter { !normalizedTarget.lowercased().hasPrefix($0.0.lowercased()) && !$0.0.lowercased().hasPrefix(normalizedTarget.lowercased()) }
             .map { IVLLangPairRow(id: $0.0, code: $0.0, name: $0.1) }
     }
 
@@ -256,7 +361,7 @@ private struct IVLTranslationModelSheetView: View {
                     }
                 }
                 Section(
-                    header: Text("→ \(Locale.current.localizedString(forIdentifier: targetLang) ?? targetLang)"),
+                    header: Text("→ \(Locale.current.localizedString(forIdentifier: normalizedTarget) ?? normalizedTarget)"),
                     footer: Text("言語をタップすると iPhone 内蔵の翻訳モデルダウンロード画面が開きます。")
                 ) {
                     ForEach(rows) { row in
@@ -293,19 +398,19 @@ private struct IVLTranslationModelSheetView: View {
             await refreshStatuses()
         }
         .translationTask(activeConfig) { session in
-            let code = downloadingCode ?? "?"
-            IVLAppleTranslationBridge.appendLog("Model download sheet: prepareTranslation(\(code) -> \(targetLang))")
+            guard let code = downloadingCode else { return }
+            IVLAppleTranslationBridge.appendLog("Model download sheet: prepareTranslation(\(code) -> \(normalizedTarget))")
             do {
                 try await session.prepareTranslation()
-                IVLAppleTranslationBridge.appendLog("Model download: completed (\(code) -> \(targetLang))")
+                IVLAppleTranslationBridge.appendLog("Model download: completed (\(code) -> \(normalizedTarget))")
                 await refreshStatuses()
                 await MainActor.run {
-                    statusBanner = "\(code) → \(targetLang) のモデル準備が完了しました。"
+                    statusBanner = "\(code) → \(normalizedTarget) のモデル準備が完了しました。"
                     downloadingCode = nil
                     activeConfig = nil
                 }
             } catch {
-                IVLAppleTranslationBridge.appendLog("Model download error (\(code) -> \(targetLang)): \(error.localizedDescription)")
+                IVLAppleTranslationBridge.appendLog("Model download error (\(code) -> \(normalizedTarget)): \(error.localizedDescription)")
                 await refreshStatuses()
                 await MainActor.run {
                     statusBanner = "エラー: \(error.localizedDescription)"
@@ -345,14 +450,17 @@ private struct IVLTranslationModelSheetView: View {
         statusBanner = nil
         let cfg = TranslationSession.Configuration(
             source: Locale.Language(identifier: sourceCode),
-            target: Locale.Language(identifier: targetLang)
+            target: Locale.Language(identifier: normalizedTarget)
         )
+        if activeConfig != nil {
+            activeConfig?.invalidate()
+        }
         activeConfig = cfg
     }
 
     private func refreshStatuses() async {
         let avail = LanguageAvailability()
-        let dst = Locale.Language(identifier: targetLang)
+        let dst = Locale.Language(identifier: normalizedTarget)
         var next: [String: LanguageAvailability.Status] = [:]
         for row in rows {
             let src = Locale.Language(identifier: row.code)
@@ -373,7 +481,7 @@ private final class IVLAppleTranslationRunner {
 
     private struct Job {
         let lines: [String]
-        let sourceLang: String?
+        let sourceLang: String
         let targetLang: String
         let completion: ([String]?) -> Void
     }
@@ -382,10 +490,10 @@ private final class IVLAppleTranslationRunner {
     private var activeHost: UIHostingController<IVLHiddenTranslationHostView>?
     private var isRunning = false
 
-    func enqueue(lines: [String], sourceLang: String?, targetLang: String, completion: @escaping ([String]?) -> Void) {
+    func enqueue(lines: [String], sourceLang: String, targetLang: String, completion: @escaping ([String]?) -> Void) {
         queue.append(Job(lines: lines, sourceLang: sourceLang, targetLang: targetLang, completion: completion))
         if !isRunning {
-            runNext()
+            Task { await runNext() }
         }
     }
 
@@ -403,43 +511,57 @@ private final class IVLAppleTranslationRunner {
         return nil
     }
 
-    private func runNext() {
+    private func runNext() async {
         guard !queue.isEmpty else {
             isRunning = false
             return
         }
+        isRunning = true
         let job = queue.removeFirst()
+
         guard let window = activeWindow() else {
             IVLAppleTranslationBridge.appendLog("Apple Translation: no active UIWindow")
             job.completion(nil)
-            runNext()
+            await runNext()
             return
         }
 
-        isRunning = true
-        var finished = false
+        let avail = LanguageAvailability()
+        let dst = Locale.Language(identifier: job.targetLang)
+        var chosenSrc = Locale.Language(identifier: job.sourceLang)
+        var pairStatus = await avail.status(from: chosenSrc, to: dst)
 
+        if pairStatus == .unsupported && job.sourceLang != "en" && !job.targetLang.lowercased().hasPrefix("en") {
+            chosenSrc = Locale.Language(identifier: "en")
+            pairStatus = await avail.status(from: chosenSrc, to: dst)
+        }
+
+        if pairStatus == .unsupported {
+            IVLAppleTranslationBridge.appendLog("Apple Translation: unsupported pair (\(job.sourceLang) -> \(job.targetLang))")
+            job.completion(nil)
+            await runNext()
+            return
+        }
+
+        let needsPrepare = (pairStatus == .supported)
+        IVLAppleTranslationBridge.appendLog("Apple Translation: start (\(chosenSrc.minimalIdentifier) -> \(job.targetLang), \(job.lines.count) lines, model=\(needsPrepare ? "download_needed" : "installed"))")
+
+        var finished = false
         let finish: @MainActor ([String]?) -> Void = { [weak self] result in
             guard !finished else { return }
             finished = true
             self?.activeHost?.view.removeFromSuperview()
             self?.activeHost = nil
             job.completion(result)
-            self?.runNext()
+            if let self = self {
+                Task { await self.runNext() }
+            }
         }
 
-        let target = Locale.Language(identifier: job.targetLang)
-        let source: Locale.Language? = {
-            if let s = job.sourceLang, !s.isEmpty {
-                return Locale.Language(identifier: s)
-            }
-            return nil
-        }()
-        let config = TranslationSession.Configuration(source: source, target: target)
-
+        let config = TranslationSession.Configuration(source: chosenSrc, target: dst)
         let hostView = IVLHiddenTranslationHostView(
             configuration: config,
-            hasExplicitSource: source != nil,
+            needsPrepare: needsPrepare,
             lines: job.lines,
             onFinish: { result in
                 Task { @MainActor in
@@ -467,7 +589,7 @@ private final class IVLAppleTranslationRunner {
 @available(iOS 18.0, *)
 private struct IVLHiddenTranslationHostView: View {
     let configuration: TranslationSession.Configuration
-    let hasExplicitSource: Bool
+    let needsPrepare: Bool
     let lines: [String]
     let onFinish: @Sendable ([String]?) -> Void
 
@@ -477,7 +599,7 @@ private struct IVLHiddenTranslationHostView: View {
             .translationTask(configuration) { session in
                 let t0 = CFAbsoluteTimeGetCurrent()
                 do {
-                    if hasExplicitSource {
+                    if needsPrepare {
                         try await session.prepareTranslation()
                     }
                     let requests = lines.enumerated().map { idx, text in

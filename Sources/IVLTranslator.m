@@ -7,6 +7,7 @@
 + (BOOL)isAppleTranslationAvailable;
 + (BOOL)isAppleIntelligenceAvailable;
 + (NSString *)appleIntelligenceStatus;
++ (NSString *)detectSupportedSourceLanguageForLines:(NSArray<NSString *> *)lines;
 + (void)appendLog:(NSString *)message;
 + (NSString *)allLogs;
 + (void)clearLogs;
@@ -235,24 +236,52 @@ static NSString *IVLHash(NSString *s) {
 #pragma mark - Public
 
 - (void)translateLyrics:(IVLLyrics *)lyrics videoID:(NSString *)videoID target:(NSString *)lang completion:(void (^)(BOOL))completion {
+    BOOL targetIsJA = [lang.lowercaseString hasPrefix:@"ja"];
+    BOOL targetIsKO = [lang.lowercaseString hasPrefix:@"ko"];
+
     NSMutableArray<IVLLyricLine *> *targets = [NSMutableArray array];
     NSMutableArray<NSString *> *texts = [NSMutableArray array];
     for (IVLLyricLine *l in lyrics.lines) {
-        if (!l.instrumental && l.text.length) { [targets addObject:l]; [texts addObject:l.text]; }
+        if (l.instrumental || !l.text.length) continue;
+        // Skip lines that are already written in Japanese kana or Korean hangul when translating to JA / KO
+        if (targetIsJA && [l.text rangeOfString:@"[\\u3040-\\u30ff]" options:NSRegularExpressionSearch].location != NSNotFound) {
+            l.translation = nil;
+            continue;
+        }
+        if (targetIsKO && [l.text rangeOfString:@"[\\uac00-\\ud7af]" options:NSRegularExpressionSearch].location != NSNotFound) {
+            l.translation = nil;
+            continue;
+        }
+        // Skip lines with zero letters (pure punctuation / symbols / musical notes)
+        if ([l.text rangeOfCharacterFromSet:[NSCharacterSet letterCharacterSet]].location == NSNotFound) {
+            l.translation = nil;
+            continue;
+        }
+        [targets addObject:l];
+        [texts addObject:l.text];
     }
+
     void (^apply)(NSArray<NSString *> *) = ^(NSArray<NSString *> *tr) {
         for (NSUInteger i = 0; i < targets.count && i < tr.count; i++) {
             NSString *t = [tr[i] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-            // hide translations identical to the original (already in target language)
             targets[i].translation = (t.length && ![t isEqualToString:targets[i].text]) ? t : nil;
         }
     };
 
-    if (!texts.count) { completion(NO); return; }
-    // skip when lyrics are already in the target language
+    if (!texts.count) {
+        IVLTranslatorAppendLog([NSString stringWithFormat:@"Skipped: all lines already in target language (%@)", lang]);
+        completion(NO);
+        return;
+    }
+
+    Class bridge = IVLAppleBridgeClass();
     NSString *src = lyrics.language;
-    if (src.length && ([lang hasPrefix:src] || [src hasPrefix:lang])) {
+    if (bridge && [bridge respondsToSelector:@selector(detectSupportedSourceLanguageForLines:)]) {
+        src = [(id<IVLAppleTranslationBridgeProtocol>)bridge detectSupportedSourceLanguageForLines:texts];
+    }
+    if (src.length && ([lang.lowercaseString hasPrefix:src.lowercaseString] || [src.lowercaseString hasPrefix:lang.lowercaseString])) {
         for (IVLLyricLine *l in targets) l.translation = nil;
+        IVLTranslatorAppendLog([NSString stringWithFormat:@"Skipped: detected source (%@) matches target (%@)", src, lang]);
         completion(NO);
         return;
     }
@@ -264,16 +293,24 @@ static NSString *IVLHash(NSString *s) {
         engine = IVLTranslationEngineGoogle;
     }
 
+    NSString *textHash = IVLHash([texts componentsJoinedByString:@"\n"]);
     NSString *engineTag = (engine == IVLTranslationEngineAppleIntelligence) ? @"ai" : (engine == IVLTranslationEngineApple ? @"apple" : @"google");
-    NSString *key = [NSString stringWithFormat:@"%@_%@_%@_%@", engineTag, videoID ?: @"x", lang, IVLHash([texts componentsJoinedByString:@"\n"])];
-    NSArray *cached;
-    @synchronized (self) { cached = _memory[key]; }
-    if (!cached) {
-        NSString *path = [[self cacheDir] stringByAppendingPathComponent:[key stringByAppendingPathExtension:@"json"]];
-        NSData *d = [NSData dataWithContentsOfFile:path];
-        id json = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:nil] : nil;
-        if ([json isKindOfClass:[NSArray class]] && [json count] == texts.count) cached = json;
-    }
+    NSString *key = [NSString stringWithFormat:@"%@_%@_%@_%@", engineTag, videoID ?: @"x", lang, textHash];
+    NSString *appleKey = [NSString stringWithFormat:@"apple_%@_%@_%@", videoID ?: @"x", lang, textHash];
+
+    NSArray *(^loadCache)(NSString *) = ^NSArray *(NSString *k) {
+        NSArray *c = nil;
+        @synchronized (self) { c = self->_memory[k]; }
+        if (!c) {
+            NSString *path = [[self cacheDir] stringByAppendingPathComponent:[k stringByAppendingPathExtension:@"json"]];
+            NSData *d = [NSData dataWithContentsOfFile:path];
+            id json = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:nil] : nil;
+            if ([json isKindOfClass:[NSArray class]] && [json count] == texts.count) c = json;
+        }
+        return c;
+    };
+
+    NSArray *cached = loadCache(key);
     if (cached) {
         @synchronized (self) { _memory[key] = cached; }
         IVLTranslatorAppendLog([NSString stringWithFormat:@"Cache hit [%@] (%@ -> %@, %lu lines)", engineTag, src ?: @"auto", lang, (unsigned long)texts.count]);
@@ -281,20 +318,22 @@ static NSString *IVLHash(NSString *s) {
         completion(YES);
         return;
     }
+
+    NSString *inflightKey = [NSString stringWithFormat:@"%@_%@_%@", videoID ?: @"x", lang, textHash];
     @synchronized (self) {
-        if ([_inflight containsObject:key]) return;   // the first caller gets notified
-        [_inflight addObject:key];
+        if ([_inflight containsObject:inflightKey]) return;
+        [_inflight addObject:inflightKey];
     }
 
-    void (^finish)(NSArray<NSString *> *) = ^(NSArray<NSString *> *tr) {
+    void (^finishWithCacheKey)(NSArray<NSString *> *, NSString *) = ^(NSArray<NSString *> *tr, NSString *saveKey) {
         @synchronized (self) {
-            [self->_inflight removeObject:key];
-            if (tr) self->_memory[key] = tr;
+            [self->_inflight removeObject:inflightKey];
+            if (tr && saveKey.length) self->_memory[saveKey] = tr;
         }
-        if (tr) {
+        if (tr && saveKey.length) {
             NSString *dir = [self cacheDir];
             [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
-            [[NSJSONSerialization dataWithJSONObject:tr options:0 error:nil] writeToFile:[dir stringByAppendingPathComponent:[key stringByAppendingPathExtension:@"json"]] atomically:YES];
+            [[NSJSONSerialization dataWithJSONObject:tr options:0 error:nil] writeToFile:[dir stringByAppendingPathComponent:[saveKey stringByAppendingPathExtension:@"json"]] atomically:YES];
         }
         dispatch_async(dispatch_get_main_queue(), ^{
             if (tr) apply(tr);
@@ -302,38 +341,34 @@ static NSString *IVLHash(NSString *s) {
         });
     };
 
-    Class bridge = IVLAppleBridgeClass();
+    // NOTE: When Apple Translation or Apple Intelligence is selected, we NEVER fall back to Google Translate
+    // (avoiding Google's HTTP 429 rate limits). Google Translate is ONLY used when explicitly selected.
     if (engine == IVLTranslationEngineAppleIntelligence && [bridge respondsToSelector:@selector(translateWithAppleIntelligenceWithLines:targetLang:completion:)]) {
         [(id<IVLAppleTranslationBridgeProtocol>)bridge translateWithAppleIntelligenceWithLines:texts targetLang:lang completion:^(NSArray<NSString *> *tr) {
-            if (tr.count == texts.count) { finish(tr); return; }
-            IVLTranslatorAppendLog(@"Fallback: Apple Intelligence -> Apple Translation");
-            // Graceful fallback to Apple Translation if Foundation Models hits a guardrail/context limit
+            if (tr.count == texts.count) { finishWithCacheKey(tr, key); return; }
+            NSArray *appleCached = loadCache(appleKey);
+            if (appleCached) {
+                IVLTranslatorAppendLog([NSString stringWithFormat:@"Fallback cache hit [apple] (%@ -> %@, %lu lines)", src ?: @"auto", lang, (unsigned long)texts.count]);
+                finishWithCacheKey(appleCached, appleKey);
+                return;
+            }
             if (IVLIsAppleTranslationAvailable() && [bridge respondsToSelector:@selector(translateWithAppleTranslationWithLines:sourceLang:targetLang:completion:)]) {
-                [(id<IVLAppleTranslationBridgeProtocol>)bridge translateWithAppleTranslationWithLines:texts sourceLang:src.length ? src : nil targetLang:lang completion:^(NSArray<NSString *> *tr2) {
-                    if (tr2.count == texts.count) finish(tr2);
-                    else {
-                        IVLTranslatorAppendLog(@"Fallback: Apple Translation -> Google Translate");
-                        [self translateLines:texts target:lang completion:finish];
-                    }
+                [(id<IVLAppleTranslationBridgeProtocol>)bridge translateWithAppleTranslationWithLines:texts sourceLang:src targetLang:lang completion:^(NSArray<NSString *> *tr2) {
+                    finishWithCacheKey(tr2.count == texts.count ? tr2 : nil, appleKey);
                 }];
             } else {
-                IVLTranslatorAppendLog(@"Fallback: Apple Intelligence -> Google Translate");
-                [self translateLines:texts target:lang completion:finish];
+                finishWithCacheKey(nil, nil);
             }
         }];
     } else if (engine == IVLTranslationEngineApple && [bridge respondsToSelector:@selector(translateWithAppleTranslationWithLines:sourceLang:targetLang:completion:)]) {
-        [(id<IVLAppleTranslationBridgeProtocol>)bridge translateWithAppleTranslationWithLines:texts sourceLang:src.length ? src : nil targetLang:lang completion:^(NSArray<NSString *> *tr) {
-            if (tr.count == texts.count) finish(tr);
-            else {
-                IVLTranslatorAppendLog(@"Fallback: Apple Translation -> Google Translate");
-                [self translateLines:texts target:lang completion:finish];
-            }
+        [(id<IVLAppleTranslationBridgeProtocol>)bridge translateWithAppleTranslationWithLines:texts sourceLang:src targetLang:lang completion:^(NSArray<NSString *> *tr) {
+            finishWithCacheKey(tr.count == texts.count ? tr : nil, key);
         }];
     } else {
         IVLTranslatorAppendLog([NSString stringWithFormat:@"Google Translate: start (%@ -> %@, %lu lines)", src ?: @"auto", lang, (unsigned long)texts.count]);
         [self translateLines:texts target:lang completion:^(NSArray<NSString *> *tr) {
             IVLTranslatorAppendLog(tr ? [NSString stringWithFormat:@"Google Translate: OK (%lu lines)", (unsigned long)tr.count] : @"Google Translate: failed");
-            finish(tr);
+            finishWithCacheKey(tr, key);
         }];
     }
 }
