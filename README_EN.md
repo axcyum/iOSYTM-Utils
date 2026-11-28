@@ -7,7 +7,7 @@
 **All-in-one synced lyrics, real-time Audio DSP, TV stage & utility suite for YouTube Music on iOS**
 
 [![Build](https://img.shields.io/github/actions/workflow/status/axcyum/iOSYTM-Utils/build.yml?branch=main&style=flat-square&label=Build&color=FF2D55)](https://github.com/axcyum/iOSYTM-Utils/actions/workflows/build.yml)
-![Version](https://img.shields.io/badge/Version-v1.2.0-FF375F?style=flat-square)
+![Version](https://img.shields.io/badge/Version-v1.3.0-FF375F?style=flat-square)
 ![Platform](https://img.shields.io/badge/Platform-iOS%2018%2B-1C1C1E?style=flat-square&logo=apple&logoColor=white)
 ![Injection](https://img.shields.io/badge/Works%20With-Sideload%20%C2%B7%20LiveContainer%20%C2%B7%20Jailbreak-2C2C2E?style=flat-square)
 [![License](https://img.shields.io/badge/License-GPL--3.0-FF3B30?style=flat-square)](LICENSE)

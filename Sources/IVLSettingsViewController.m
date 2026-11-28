@@ -14,7 +14,7 @@
 #import "IVLExternalDisplay.h"
 
 #ifndef IVL_VERSION
-#define IVL_VERSION "1.2.0"
+#define IVL_VERSION "1.3.0"
 #endif
 
 #ifndef IVL_COMMIT
