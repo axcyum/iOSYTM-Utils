@@ -15,10 +15,9 @@ FOUNDATION_EXPORT BOOL IVLIsAppleTranslationAvailable(void);
 FOUNDATION_EXPORT BOOL IVLIsAppleIntelligenceAvailable(void);
 FOUNDATION_EXPORT NSString *IVLAppleIntelligenceStatusCode(void);
 
-/// Embedded Apple Intelligence UI assets (icon + top/bottom rainbow glow strips).
+/// Embedded Apple Intelligence UI assets (icon + top/bottom rainbow glow frame for Settings cell).
 FOUNDATION_EXPORT UIImage *_Nullable IVLAppleIntelligenceIconImage(void);
-FOUNDATION_EXPORT UIImage *_Nullable IVLAppleIntelligenceTopGlowImage(void);
-FOUNDATION_EXPORT UIImage *_Nullable IVLAppleIntelligenceBottomGlowImage(void);
+FOUNDATION_EXPORT UIImage *_Nullable IVLAppleIntelligenceGlowImage(void);
 
 /// Multi-engine lyric translator (Apple Translation / Google Translate / Apple Foundation Models).
 @interface IVLTranslator : NSObject

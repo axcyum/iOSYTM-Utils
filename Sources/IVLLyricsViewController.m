@@ -12,7 +12,6 @@
 #import "IVLProviderPickerViewController.h"
 #import "IVLSettingsViewController.h"
 #import "IVLRemoteControl.h"
-#import "IVLTranslator.h"
 
 #pragma mark - Helpers
 
@@ -112,8 +111,7 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     UILabel *_offsetLabel;
 
     UIStackView *_toolbar;
-    UIButton *_trButton, *_aiButton, *_pronButton, *_sizeButton, *_syncButton, *_settingsButton;
-    UIImageView *_aiTopGlow, *_aiBottomGlow;
+    UIButton *_trButton, *_pronButton, *_sizeButton, *_syncButton, *_settingsButton;
     UILabel *_toast;
 
     NSArray<IVLLyricLine *> *_lines;
@@ -157,7 +155,6 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     [self buildTable];
     [self buildStateView];
     [self buildOverlays];
-    [self buildAppleIntelligenceGlow];
     [self buildPlayerPanel];
 
     NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
@@ -204,41 +201,6 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     CGFloat edge = MIN(0.12, 48.0 / h);
     _fadeMask.locations = @[@0, @(edge), @(1 - edge), @1];
     [self applyInsets];
-    if (_aiTopGlow && _aiBottomGlow) {
-        CGFloat W = self.view.bounds.size.width;
-        CGFloat H = self.view.bounds.size.height;
-        CGFloat glowH = 42;
-        _aiTopGlow.frame = CGRectMake(0, 0, W, glowH);
-        _aiBottomGlow.frame = CGRectMake(0, H - glowH, W, glowH);
-    }
-}
-
-- (void)buildAppleIntelligenceGlow {
-    if (!IVLIsAppleIntelligenceAvailable()) return;
-    _aiTopGlow = [[UIImageView alloc] initWithImage:IVLAppleIntelligenceTopGlowImage()];
-    _aiTopGlow.contentMode = UIViewContentModeScaleToFill;
-    _aiTopGlow.userInteractionEnabled = NO;
-    _aiTopGlow.alpha = 0;
-    [self.view addSubview:_aiTopGlow];
-
-    _aiBottomGlow = [[UIImageView alloc] initWithImage:IVLAppleIntelligenceBottomGlowImage()];
-    _aiBottomGlow.contentMode = UIViewContentModeScaleToFill;
-    _aiBottomGlow.userInteractionEnabled = NO;
-    _aiBottomGlow.alpha = 0;
-    [self.view addSubview:_aiBottomGlow];
-    [self refreshAppleIntelligenceGlow];
-}
-
-- (void)refreshAppleIntelligenceGlow {
-    if (!_aiTopGlow || !_aiBottomGlow) return;
-    BOOL aiActive = IVLIsAppleIntelligenceAvailable()
-                 && [IVLSettings boolForKey:IVLKeyTranslation]
-                 && [IVLSettings integerForKey:IVLKeyTranslationEngine] == IVLTranslationEngineAppleIntelligence;
-    if (_aiButton) IVLSetToolOn(_aiButton, aiActive);
-    [UIView animateWithDuration:0.35 delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
-        self->_aiTopGlow.alpha = aiActive ? 0.96 : 0.0;
-        self->_aiBottomGlow.alpha = aiActive ? 0.96 : 0.0;
-    } completion:nil];
 }
 
 - (void)applyInsets {
@@ -388,26 +350,6 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(translationLongPress:)];
     [_trButton addGestureRecognizer:lp];
 
-    NSMutableArray<UIView *> *barItems = [NSMutableArray arrayWithObject:_trButton];
-    if (IVLIsAppleIntelligenceAvailable()) {
-        UIButtonConfiguration *aiCfg = [UIButtonConfiguration plainButtonConfiguration];
-        UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(22, 22)];
-        aiCfg.image = [[r imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
-            [[UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, 22, 22) cornerRadius:5.5] addClip];
-            [IVLAppleIntelligenceIconImage() drawInRect:CGRectMake(0, 0, 22, 22)];
-        }] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
-        aiCfg.imagePlacement = NSDirectionalRectEdgeTop;
-        aiCfg.imagePadding = 5;
-        aiCfg.baseForegroundColor = [UIColor colorWithWhite:1 alpha:0.82];
-        NSAttributedString *aiTitle = [[NSAttributedString alloc] initWithString:@"AI" attributes:@{ NSFontAttributeName: [UIFont systemFontOfSize:11 weight:UIFontWeightSemibold] }];
-        aiCfg.attributedTitle = aiTitle;
-        aiCfg.contentInsets = NSDirectionalEdgeInsetsMake(8, 4, 8, 4);
-        _aiButton = [UIButton buttonWithConfiguration:aiCfg primaryAction:nil];
-        _aiButton.accessibilityLabel = IVLLoc(@"tr_ai_btn");
-        [_aiButton addTarget:self action:@selector(toggleAITranslation) forControlEvents:UIControlEventTouchUpInside];
-        [barItems addObject:_aiButton];
-    }
-
     _pronButton = IVLToolButton(@"textformat.abc", IVLLoc(@"pronunciation"));
     _pronButton.showsMenuAsPrimaryAction = YES;
 
@@ -420,8 +362,7 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     _settingsButton = IVLToolButton(@"gearshape", IVLLoc(@"settings"));
     [_settingsButton addTarget:self action:@selector(openSettings) forControlEvents:UIControlEventTouchUpInside];
 
-    [barItems addObjectsFromArray:@[_pronButton, _sizeButton, _syncButton, _settingsButton]];
-    _toolbar = [[UIStackView alloc] initWithArrangedSubviews:barItems];
+    _toolbar = [[UIStackView alloc] initWithArrangedSubviews:@[_trButton, _pronButton, _sizeButton, _syncButton, _settingsButton]];
     _toolbar.axis = UILayoutConstraintAxisHorizontal;
     _toolbar.distribution = UIStackViewDistributionFillEqually;
     _toolbar.spacing = 6;
@@ -777,7 +718,6 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
 
 - (void)refreshToolbar {
     IVLSetToolOn(_trButton, [IVLSettings boolForKey:IVLKeyTranslation]);
-    [self refreshAppleIntelligenceGlow];
     NSInteger pron = [IVLSettings integerForKey:IVLKeyPronunciation];
     IVLSetToolOn(_pronButton, pron != 0);
     IVLSetToolOn(_sizeButton, NO);
@@ -1109,21 +1049,6 @@ static void IVLSetToolOn(UIButton *b, BOOL on) {
     [IVLSettings setBool:on forKey:IVLKeyTranslation];
     [[UISelectionFeedbackGenerator new] selectionChanged];
     if (on) [self showToast:IVLLoc(@"translating")];
-}
-
-- (void)toggleAITranslation {
-    if (!IVLIsAppleIntelligenceAvailable()) return;
-    BOOL trOn = [IVLSettings boolForKey:IVLKeyTranslation];
-    BOOL isAI = [IVLSettings integerForKey:IVLKeyTranslationEngine] == IVLTranslationEngineAppleIntelligence;
-    if (trOn && isAI) {
-        [IVLSettings setBool:NO forKey:IVLKeyTranslation];
-    } else {
-        [IVLSettings setObject:@(IVLTranslationEngineAppleIntelligence) forKey:IVLKeyTranslationEngine];
-        [IVLSettings setBool:YES forKey:IVLKeyTranslation];
-        [self showToast:IVLLoc(@"translating")];
-    }
-    [[UIImpactFeedbackGenerator new] impactOccurred];
-    [self refreshToolbar];
 }
 
 - (void)translationLongPress:(UILongPressGestureRecognizer *)g {

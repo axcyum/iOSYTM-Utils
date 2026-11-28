@@ -119,6 +119,7 @@ typedef NS_ENUM(NSInteger, IVLRowType) {
 @property (nonatomic, copy) NSString *fallbackSymbol;
 @property (nonatomic, copy) NSString *badgeHex;
 @property (nonatomic, strong) UIImage *customIcon;
+@property (nonatomic, assign) BOOL rainbowFrame;
 @property (nonatomic, copy) NSString *placeholder;
 @property (nonatomic) UIKeyboardType keyboard;
 @property (nonatomic) double danger;
@@ -336,6 +337,7 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
         __weak typeof(self) weakSelf = self;
         IVLRow *aiRow = [IVLRow type:IVLRowSwitch key:@"" title:IVLLoc(@"tr_ai_btn")];
         aiRow.customIcon = IVLAppleIntelligenceIconImage();
+        aiRow.rainbowFrame = YES;
         aiRow.getBool = ^BOOL {
             return [IVLSettings boolForKey:IVLKeyTranslation] && [IVLSettings integerForKey:IVLKeyTranslationEngine] == IVLTranslationEngineAppleIntelligence;
         };
@@ -1013,6 +1015,19 @@ extern void IVLScrobblerSetSecret(NSString *account, NSString *value);
     c.textLabel.text = row.title;
     c.textLabel.numberOfLines = 0;
     c.selectionStyle = UITableViewCellSelectionStyleNone;
+
+    if (row.rainbowFrame) {
+        UIView *bg = [UIView new];
+        bg.backgroundColor = UIColor.secondarySystemGroupedBackgroundColor;
+        bg.clipsToBounds = YES;
+        UIImageView *glow = [[UIImageView alloc] initWithImage:IVLAppleIntelligenceGlowImage()];
+        glow.contentMode = UIViewContentModeScaleToFill;
+        glow.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        glow.frame = bg.bounds;
+        [bg addSubview:glow];
+        c.backgroundView = bg;
+        c.backgroundColor = UIColor.clearColor;
+    }
 
     if (row.customIcon) {
         UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(28, 28)];

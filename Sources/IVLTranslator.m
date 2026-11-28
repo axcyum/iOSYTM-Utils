@@ -49,46 +49,12 @@ UIImage *IVLAppleIntelligenceIconImage(void) {
     return img;
 }
 
-static UIImage *IVLAppleIntelligenceGlowFull(void) {
+UIImage *IVLAppleIntelligenceGlowImage(void) {
     static UIImage *img = nil;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         NSData *d = [NSData dataWithBytesNoCopy:(void *)kIVLAppleIntelGlowPNG length:kIVLAppleIntelGlowPNGLen freeWhenDone:NO];
-        img = [UIImage imageWithData:d scale:2.0];
-    });
-    return img;
-}
-
-UIImage *IVLAppleIntelligenceTopGlowImage(void) {
-    static UIImage *img = nil;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        CGImageRef cg = IVLAppleIntelligenceGlowFull().CGImage;
-        if (!cg) return;
-        size_t w = CGImageGetWidth(cg);
-        size_t h = CGImageGetHeight(cg);
-        CGImageRef crop = CGImageCreateWithImageInRect(cg, CGRectMake(0, 0, w, h / 2));
-        if (crop) {
-            img = [[UIImage imageWithCGImage:crop scale:2.0 orientation:UIImageOrientationUp] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
-            CGImageRelease(crop);
-        }
-    });
-    return img;
-}
-
-UIImage *IVLAppleIntelligenceBottomGlowImage(void) {
-    static UIImage *img = nil;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        CGImageRef cg = IVLAppleIntelligenceGlowFull().CGImage;
-        if (!cg) return;
-        size_t w = CGImageGetWidth(cg);
-        size_t h = CGImageGetHeight(cg);
-        CGImageRef crop = CGImageCreateWithImageInRect(cg, CGRectMake(0, h / 2, w, h - h / 2));
-        if (crop) {
-            img = [[UIImage imageWithCGImage:crop scale:2.0 orientation:UIImageOrientationUp] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
-            CGImageRelease(crop);
-        }
+        img = [[UIImage imageWithData:d scale:2.0] imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
     });
     return img;
 }
